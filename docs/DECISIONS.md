@@ -322,3 +322,113 @@ Zweite Regel: der Zustand liegt in der Datenbank. Ein gespeicherter Lockout gilt
 bis zum Ablauf seiner Abkühlzeit — auch wenn die auslösende Bedingung gerade
 nicht mehr zutrifft. Sonst genügt ein kurz erholtes Portfolio, um sofort
 weiterzuhandeln.
+
+
+---
+
+# Phasen 9 & 10 — Paper-Ausführung, Positionsverwaltung, Statistik
+
+## 16. Die Drift geht immer zulasten des Trades
+
+Zwischen Quote und Fill vergehen Sekunden. Wer annimmt, dass die Preisbewegung in
+dieser Zeit „mal so, mal so" ausfällt und sich im Mittel aufhebt, mittelt einen
+Vorteil ein, den es im Live-Betrieb nicht gibt: die Trades, bei denen der Preis
+günstig läuft, werden häufiger gefüllt, und die ungünstigen scheitern an der
+Slippage-Grenze — mit Gebühren, aber ohne Gegenwert.
+
+Der `PaperExecutor` verwendet deshalb `Math.max(0, drift)`: eine günstige Drift
+wird als 0 gewertet, eine ungünstige voll angesetzt. Ein Test hält das fest.
+
+Zweiter Punkt: Zufallsquellen sind **injiziert**, nicht `Math.random`. Ein
+Backtest, der bei jedem Lauf etwas anderes ergibt, ist keine Messung.
+
+## 17. Keine Teilausführung, sondern Fehlschlag
+
+Auf Solana-AMMs gibt es keine Teilausführung im Orderbuchsinn — eine
+Swap-Transaktion geht ganz durch oder revertiert. Modelliert wird deshalb der
+reale Mechanismus: Fehlschlag bei überschrittener Slippage, mit anfallenden
+Gebühren und ohne Gegenwert. Dazu ein davon unabhängiger Fehlschlag (abgelaufener
+Blockhash, Programmfehler) mit derselben Rate, die auch im Kostenmodell steht.
+
+Ein Abbruch **vor** dem Senden verursacht dagegen keine Kosten — dort wären sie
+eine Erfindung. Auch das ist ein eigener Test.
+
+## 18. Rangfolge in der Positionsverwaltung
+
+Vier Ebenen, in dieser Reihenfolge:
+
+1. **Sofortausstieg aus Risikogründen** — schlägt alles andere
+2. **Stop Loss**
+3. **Trailing Stop**, mit den Anpassungen der dynamischen Regeln
+4. **Take-Profit-Stufen**
+
+Der Stop steht bewusst **vor** den TP-Stufen: fällt der Kurs in einem Tick unter
+den Stop und überschreitet gleichzeitig eine TP-Schwelle, ist der Verlustschutz
+das Dringendere. Bei Memecoins ist das kein Randfall.
+
+Umgekehrt lösen bei einem Sprung **mehrere TP-Stufen gemeinsam** aus. Wer nur die
+nächste nimmt, lässt die übersprungenen liegen und verkauft sie später zu
+schlechteren Kursen.
+
+Zwei weitere Regeln: bei mehreren Verengungsvorschlägen für den Trailing Stop
+gewinnt der **engste**, und **gelockert wird nie**, solange irgendeine Regel
+verengen will. Im Zweifel schützen, nicht hoffen.
+
+## 19. Risiko-Stops sind Ereignisse, keine Kursbewegungen
+
+Ein Liquiditätsabzug, ein verkaufender Entwickler, ein verschlechterter
+Sicherheitsstatus — das sind Gründe zum Ausstieg, unabhängig davon, ob die
+Position im Plus steht. Getestet mit einer Position bei +200 %.
+
+Ausnahme mit Absicht: aussteigendes Smart Money zieht nur den Trailing Stop eng,
+statt sofort zu verkaufen. Es ist ein Signal, keine Notlage — ein weiterlaufender
+Kurs soll noch mitgenommen werden.
+
+## 20. Ein Fund beim Notausstieg
+
+Der erste Entwurf prüfte bei zu vielen Tranchen nur noch, ob die **ganze**
+Position zum höheren Impact auf einmal herausgeht. Fiel auch das durch, war das
+Ergebnis `NO_VIABLE_EXIT` — obwohl **größere Tranchen** zum höheren Impact
+funktioniert hätten.
+
+Aufgefallen beim Nachrechnen der Testzahlen (die zunächst falsch waren, nicht der
+Code). Ergänzt: bei zu vielen Tranchen wird erst der Komplettverkauf zum
+Maximal-Impact geprüft, dann Tranchen zum Maximal-Impact, und erst danach
+aufgegeben.
+
+**Warum das zählt:** jede zusätzliche Transaktion ist im Notfall selbst ein
+Risiko, weil der Kurs zwischen ihnen weiterläuft. Die Reihenfolge — wenige große
+Tranchen vor vielen kleinen — ist deshalb nicht beliebig.
+
+`NO_VIABLE_EXIT` bleibt eine **Feststellung, keine Handlungsanweisung**: hier muss
+ein Mensch entscheiden.
+
+## 21. Die Statistik verweigert Urteile
+
+Drei Vorkehrungen in `packages/analytics`, jede mit einem eigenen Test:
+
+| Fall | Verhalten | Warum |
+|---|---|---|
+| Keine Trades | `winRate = null` | Null Trades ergeben keine Trefferquote — nicht 0 %, nicht 50 % |
+| Keine Verluste | `profitFactor = null` | Bei einer Stichprobe ohne einen einzigen Verlust ist die Stichprobe das Problem, nicht die Strategie |
+| Unter 100 Trades | `sufficientSample = false` | Eine Win Rate aus neun Trades ist Rauschen, und die Zahl allein sieht nicht danach aus |
+
+In der Faktorforschung zusätzlich: ein Bucket unter der Mindestgröße bekommt
+**kein Urteil**, auch wenn er gut aussieht. Und ein Unterschied, dessen
+Wilson-Intervalle sich überschneiden, gilt als **nicht beobachtet** — egal wie
+verlockend die Punktschätzung ist.
+
+`splitByThreshold` schließt Trades **ohne** Merkmalswert aus beiden Buckets aus.
+Sie einer Seite zuzuschlagen wäre genau die stille Verzerrung, die eine
+Faktoranalyse wertlos macht.
+
+Und die Formulierung der Ergebnisse ist Absicht: „Unterschied beobachtet — kein
+Kausalitätsnachweis und keine Zusage für die Zukunft."
+
+## 22. Exit-Regeln einzeln schaltbar — und warum
+
+Acht Regeln, jede mit eigener ID, einzeln aktivierbar. Nicht aus Bequemlichkeit:
+ein Regelsatz, den man nur als Ganzes an- und ausschalten kann, ist nicht
+auswertbar. Man weiß am Ende nicht, welche Regel geholfen und welche geschadet
+hat — und optimiert dann das Ganze auf ein Ergebnis, das eine einzelne Regel
+verursacht hat.
