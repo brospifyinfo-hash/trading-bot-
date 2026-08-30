@@ -103,6 +103,33 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/backtest:
+    dependencies:
+      '@sae/analytics':
+        specifier: workspace:*
+        version: link:../analytics
+      '@sae/config':
+        specifier: workspace:*
+        version: link:../config
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
+      '@sae/decision':
+        specifier: workspace:*
+        version: link:../decision
+      '@sae/risk':
+        specifier: workspace:*
+        version: link:../risk
+      '@sae/scoring':
+        specifier: workspace:*
+        version: link:../scoring
+      '@sae/simulation':
+        specifier: workspace:*
+        version: link:../simulation
+      '@sae/trading':
+        specifier: workspace:*
+        version: link:../trading
+
   packages/config:
     dependencies:
       '@sae/core':

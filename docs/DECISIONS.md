@@ -432,3 +432,92 @@ ein Regelsatz, den man nur als Ganzes an- und ausschalten kann, ist nicht
 auswertbar. Man weiß am Ende nicht, welche Regel geholfen und welche geschadet
 hat — und optimiert dann das Ganze auf ein Ergebnis, das eine einzelne Regel
 verursacht hat.
+
+
+---
+
+# Phase 11 — Backtest
+
+## 23. Der No-Look-Ahead-Test ist eine Falle, keine Prüfung
+
+Der Harness ruft seine Datenquellen ausschließlich mit der aktuellen
+Simulationszeit auf. Der Test dazu prüft nicht einen Rückgabewert, sondern
+installiert eine Quelle, die **wirft**, sobald ein Zeitpunkt jenseits der
+Simulationszeit angefragt wird.
+
+Der Unterschied ist wichtig: eine Prüfung auf Rückgabewerte übersieht, wenn der
+Harness in die Zukunft greift und das Ergebnis zufällig gleich aussieht. Eine
+Falle lässt den Lauf abstürzen, statt ein schönes Ergebnis zu liefern.
+
+Zusätzlich prüft ein Test, dass die angefragten Zeitpunkte lückenlos und
+sprungfrei in Schrittweiten fortschreiten.
+
+## 24. Der Erwartungswert kennt nur die eigene Vergangenheit
+
+Innerhalb eines Backtest-Laufs wird die EV-Schätzung aus den **bis dahin
+geschlossenen** Trades gebildet, nicht aus dem Gesamtergebnis. Das ist eine
+eigene Form von Look-Ahead, die leicht zu übersehen ist: man rechnet den
+Erwartungswert am Ende aus und wendet ihn rückwirkend auf alle Entscheidungen an.
+
+Praktische Folge: mit der Standard-Mindeststichprobe von 100 Trades bleibt
+`EV = UNKNOWN` über kurze Läufe hinweg — und wird im Paper-Modus akzeptiert. Genau
+so ist der Bootstrap gedacht.
+
+## 25. Der Fund: kostenlose Ausstiege
+
+Der erste Entwurf des Harness ließ Positionen über `evaluatePosition` schließen
+und verbuchte dabei **nur die Einstiegskosten**. Die Ausstiege liefen nicht über
+den Executor und waren damit gratis.
+
+Das ist die stillste Art, einen Backtest zu beschönigen: in der Statistik stehen
+ja Kosten — nur eben die halben. Niemandem fällt eine fehlende Zahl auf, die
+nirgends steht.
+
+Gemessene Wirkung auf dem Test-Fixture:
+
+| | vorher | nachher |
+|---|---|---|
+| Kosten | 1,47 € | **3,01 €** |
+| Netto-PnL | −11,89 € | **−13,40 €** |
+| Max Drawdown | 13,10 € | 13,90 € |
+
+Behoben: jeder Teilverkauf wird mit demselben Kostenmodell belastet wie der
+Einstieg. Regressionstest vergleicht die Durchschnittskosten je Trade mit und
+ohne Take-Profit-Stufen — mehr Teilverkäufe müssen teurer sein.
+
+**Muster dahinter:** ein Kostenposten, der an einer Stelle korrekt gebucht und an
+einer anderen vergessen wird, ist schwerer zu finden als einer, der ganz fehlt.
+Beim nächsten Pfad, der Kapital bewegt (Live-Execution, Reconciliation), gezielt
+danach suchen.
+
+## 26. Reihenfolge im Simulationsschritt
+
+Erst offene Positionen verwalten, dann neue Einstiege suchen. Umgekehrt würde
+jede bestehende Position mit einem Schritt Verzögerung verwaltet — und genau in
+dieser Verzögerung passieren die Verluste. Ein eigener Test hält die Reihenfolge
+fest.
+
+## 27. Walk-Forward: lieber ein Fehler als ein gekürztes Fenster
+
+Reicht der Zeitraum nicht für ein vollständiges Fenster, wirft der Aufbau —
+statt ein verkürztes Out-of-Sample-Fenster zu erzeugen. Ein gekürztes Fenster
+sähe wie ein gültiges Ergebnis aus, wäre aber auf weniger Daten gestützt, als die
+Berichtszeile behauptet.
+
+Ebenso: `stepDays`, `trainingDays` und die übrigen müssen positive ganze Zahlen
+sein; ein negativer Schritt würde eine Endlosschleife erzeugen.
+
+## 28. Determinismus per Konstruktion
+
+`Math.random` kommt im Backtest nicht vor. Der Zufall stammt aus einem
+gesäten mulberry32-Generator, die Preisdrift aus einer halbnormalen Ziehung
+darüber. Zwei Läufe mit gleichem Startwert liefern bit-identische Ergebnisse —
+ein Test hält das fest, ein zweiter, dass ein anderer Startwert etwas anderes
+ergibt.
+
+Ohne das lässt sich nicht sagen, ob eine Verbesserung von der Änderung kommt oder
+vom Würfel.
+
+**Die Skalierung der Drift ist die unsicherste Annahme des gesamten Modells.**
+Sie ist ein Parameter, kein Messwert, und wird erst durch den Vergleich mit
+realen Ausführungen zu einem.

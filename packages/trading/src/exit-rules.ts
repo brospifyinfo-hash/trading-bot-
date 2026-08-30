@@ -47,6 +47,12 @@ export interface PositionMarketState {
   readonly devSold: boolean | null;
   readonly securityDowngraded: boolean;
   readonly holdingSeconds: number;
+  /**
+   * Erwarteter Price Impact eines Ausstiegs in dieser Groesse, zum
+   * Bewertungszeitpunkt. Wird von den Regeln nicht gelesen, aber vom Backtest
+   * und vom Positions-Worker fuer die Ausstiegskosten gebraucht.
+   */
+  readonly priceImpactBps?: number;
 }
 
 export interface ExitRuleContext {
