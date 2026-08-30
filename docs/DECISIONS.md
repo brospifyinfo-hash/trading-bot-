@@ -521,3 +521,88 @@ vom Würfel.
 **Die Skalierung der Drift ist die unsicherste Annahme des gesamten Modells.**
 Sie ist ein Parameter, kein Messwert, und wird erst durch den Vergleich mit
 realen Ausführungen zu einem.
+
+
+---
+
+# Phasen 3 & 13 — Discovery und Manual-Mode-Sicherheit
+
+## 29. Das Vorsieb ist ein Kostenmodell, keine Bewertung
+
+Rund neun von zehn entdeckten Tokens fallen im billigen Vorsieb heraus — mit
+Daten, die die Discovery-Quelle ohnehin mitliefert oder die ein einziger
+RPC-Aufruf ergibt. Erst der Rest geht in die teure Anreicherung.
+
+Deshalb ist das Sieb **absichtlich grob**: die Liquiditätsschwelle liegt bei der
+*Hälfte* des eigentlichen Gates, weil Liquidität zunehmen kann. Wer hier fein
+filtert, verliert Kandidaten, bevor die eigentliche Analyse sie je gesehen hat —
+und merkt es nie, weil sie im Rejection-Log unter einem groben Grund
+verschwinden.
+
+## 30. Endgültig ausgeschlossen ist etwas anderes als gerade nicht geeignet
+
+| Grund | terminal? | Warum |
+|---|---|---|
+| Mint-/Freeze-Authority aktiv | ja | Ändert sich in aller Regel nicht |
+| Bereits als Betrug bekannt | ja | Ergebnis früherer Läufe |
+| Liquidität zu dünn | **nein** | Momentaufnahme, kann in fünf Minuten anders sein |
+| Token zu jung | **nein** | Wird von allein älter |
+| Market Cap zu hoch | **nein** | Kann fallen |
+
+Nur die nicht-terminalen Fälle bleiben in Beobachtung — und genau die sind später
+die **Kontrollgruppe**. Ohne sie beruht jede Faktoranalyse ausschließlich auf dem,
+was tatsächlich gehandelt wurde.
+
+## 31. Eine ausgefallene Quelle wird benannt, nicht verschwiegen
+
+Der Discovery-Durchlauf ist tolerant gegenüber ausgefallenen Quellen — aber
+**nicht** gegenüber stillem Datenverlust. Jede Quelle, die nichts geliefert hat,
+steht mit ihrem Grund im Ergebnis.
+
+Ohne das sieht ein Lauf mit halber Abdeckung aus wie ein ruhiger Markt. Das ist
+derselbe Fehlertyp wie ein Defaultwert für fehlende Daten, nur eine Ebene höher.
+
+Nebenbei: die Autoritätsprüfung läuft nur für **neue** Mints. Sie kostet je Mint
+einen RPC-Aufruf; sie für längst bekannte Tokens zu wiederholen wäre reine
+Budgetverschwendung. Ein Test hält das fest.
+
+## 32. Der Einmal-Token identifiziert, er autorisiert nicht
+
+Der wichtigste Satz zum `INVEST NOW`-Button. Konkret umgesetzt in drei
+Eigenschaften:
+
+1. **Gespeichert wird nur der SHA-256-Hash.** Der Klartext existiert nur in der
+   E-Mail. Wer die Datenbank liest, kann keinen Trade auslösen.
+2. **`session` ist ein Pflichtparameter** der Prüffunktion und wird als erstes
+   geprüft. Die Signatur macht es unmöglich, den Token allein als Berechtigung zu
+   behandeln — das wäre genau der Fehler, gegen den das Verfahren gebaut ist.
+   Ein Test prüft, dass ein *gültiger* Token ohne Session abgelehnt wird.
+3. **Einmalig und kurzlebig** (15 Minuten). Ein zweiter Klick läuft ins Leere,
+   ein alter Link aus dem Postfach ebenso.
+
+Die Reihenfolge der Prüfungen ist dabei selbst eine Entscheidung: Session zuerst,
+damit die Antwort nichts darüber verrät, ob der Token überhaupt existiert.
+
+## 33. Die Revalidierung zeigt einen Diff, keine Momentaufnahme
+
+Zwischen Alert und Klick vergehen Minuten. Bei Memecoins ist das eine Ewigkeit.
+
+Der Nutzer sieht deshalb nicht „so sieht es jetzt aus", sondern „das hat sich
+geändert, seit du die Mail bekamst" — Preis, Liquidität, Score und Risikostufe
+jeweils mit beiden Werten und der Veränderung. Jede blockierende Änderung ist als
+solche markiert.
+
+Eine Verschlechterung der **Sicherheitsbewertung blockiert immer**, unabhängig von
+jeder Schwelle: sie bedeutet, dass die Grundlage des Alerts nicht mehr gilt.
+
+## 34. Drei unabhängige Prüfungen, nicht eine
+
+| Zeitpunkt | Was geprüft wird |
+|---|---|
+| Alert | Vollständige Entscheidungskette, Hard Gates, EV |
+| Bestätigungsseite | Alles neu erhoben, gegen den Alert-Stand gestellt |
+| Execution-Worker | Revalidierung jünger als 60 Sekunden und passend zum Intent |
+
+Zwischen jeder vergehen Sekunden — und in Sekunden passiert bei Memecoins genug.
+Die Revalidierung bekommt deshalb eine eigene, kurzlebige Kennung, die der Worker
+gegenprüft; eine abgelaufene oder fremde Kennung wird abgelehnt.

@@ -2,7 +2,7 @@
 
 Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 
-**Status: Fundament, Provider-Layer, Scoring, Risk-Engine, Entscheidungslogik, Paper-Ausführung, Positionsverwaltung, Statistik und Backtest implementiert. Kein Live-Trading, keine validierte Strategie.**
+**Status: Discovery, Provider-Layer, Scoring, Risk-Engine, Entscheidungslogik, Paper-Ausführung, Positionsverwaltung, Statistik, Backtest und Manual-Mode-Sicherheit implementiert. Kein Live-Trading, keine validierte Strategie.**
 
 ## Dokumente
 
@@ -35,6 +35,8 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 | `packages/trading` | `Executor`-Interface, `PaperExecutor`, Positionsverwaltung mit TP/SL/Trailing, acht einzeln schaltbare Exit-Regeln, Notausstieg mit Tranchenplanung |
 | `packages/analytics` | Trade-Kennzahlen nach §4, Faktorforschung mit Konfidenzintervallen und Stichproben-Schranke |
 | `packages/backtest` | Simulationsschleife über den `PitReader`, Walk-Forward-Aufteilung, deterministischer Zufallsgenerator |
+| `packages/discovery` | Quellen-Schnittstelle, Deduplizierung, billiges Vorsieb, Discovery-Durchlauf |
+| `packages/alerts` | Einmal-Tokens, Alert-Cooldown, Live-Revalidierung mit Diff |
 | `apps/signer` | Policy-Engine mit Programm-Allowlist, Abflussgrenzen, Replay-Schutz |
 | `apps/worker` | Rollenbasierter Prozess, Queue-Definitionen, Graceful Shutdown |
 | `apps/web` | Trading-Terminal-Shell mit Modus-Anzeige und Emergency Stop |
@@ -44,7 +46,7 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 ```bash
 pnpm install
 pnpm check        # typecheck + lint + test
-pnpm test         # 359 Tests, inkl. No-Look-Ahead gegen echtes Postgres (PGlite)
+pnpm test         # 421 Tests, inkl. No-Look-Ahead gegen echtes Postgres (PGlite)
 ```
 
 Lokal mit Docker:

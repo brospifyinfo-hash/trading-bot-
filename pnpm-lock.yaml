@@ -97,6 +97,15 @@ importers:
         specifier: ^5.4.2
         version: 5.11.1
 
+  packages/alerts:
+    dependencies:
+      '@sae/config':
+        specifier: workspace:*
+        version: link:../config
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/analytics:
     dependencies:
       '@sae/core':
@@ -177,6 +186,15 @@ importers:
       '@sae/simulation':
         specifier: workspace:*
         version: link:../simulation
+
+  packages/discovery:
+    dependencies:
+      '@sae/config':
+        specifier: workspace:*
+        version: link:../config
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/observability:
     dependencies:
