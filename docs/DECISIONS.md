@@ -606,3 +606,98 @@ jeder Schwelle: sie bedeutet, dass die Grundlage des Alerts nicht mehr gilt.
 Zwischen jeder vergehen Sekunden — und in Sekunden passiert bei Memecoins genug.
 Die Revalidierung bekommt deshalb eine eigene, kurzlebige Kennung, die der Worker
 gegenprüft; eine abgelaufene oder fremde Kennung wird abgelehnt.
+
+
+---
+
+# Phase 12/17 — Sicherheitsnetz für den Kapitalpfad
+
+## 35. Der Fund: die Validierung kannte nur den Kauf
+
+Die Pre-Trade-Validierung war implizit auf einen Einstieg gebaut. Sichtbar wurde
+es erst beim Durchsehen, nicht durch einen fehlgeschlagenen Test — die Tests
+prüften ja auch nur Käufe.
+
+Für einen Verkauf stimmt fast nichts davon:
+
+| Prüfung | Kauf | Verkauf |
+|---|---|---|
+| `inAmount` | Lamports | **Token-Einheiten** |
+| Zielbestand | muss **leer** sein | muss **reichen** |
+| SOL-Abfluss | Betrag + Gebühren | **nur Gebühren** |
+| Relevanter Mint | `outputMint` | **`inputMint`** |
+
+Ohne die Unterscheidung hätte `POSITION_ALREADY_HELD` jeden Ausstieg blockiert —
+also genau den Pfad, auf den es im Ernstfall ankommt.
+
+Dabei fiel ein zweiter Fall auf, der jetzt einen eigenen Test hat: eine voll
+investierte Wallet ohne SOL für die Gebühren kommt aus ihrer Position **nicht
+heraus**. Der Verkauf kostet zwar kein Kapital, aber die Transaktion kostet
+Gebühren, und ohne die geht gar nichts.
+
+**Muster:** eine Validierung, die nur den häufigeren Pfad kennt, sieht vollständig
+aus. Der seltenere Pfad ist hier der wichtigere.
+
+## 36. Der Guthabencheck deckt Betrag UND Gebühren ab
+
+Nur den Handelsbetrag zu prüfen ist der klassische Fehler. Die Transaktion
+scheitert dann on-chain, kostet trotzdem Gebühren, und im Log steht ein
+nichtssagender Programmfehler. Zwei getrennte Ablehnungsgründe
+(`INSUFFICIENT_SOL_FOR_TRADE` und `INSUFFICIENT_SOL_FOR_FEES`), damit im
+Rejection-Log unterscheidbar bleibt, was tatsächlich fehlte.
+
+Dazu eine Mietreserve, damit die Wallet nicht auf null fällt.
+
+## 37. Was die Pre-Trade-Validierung ausdrücklich NICHT prüft
+
+Sie prüft nicht, ob der Trade eine gute Idee ist — das haben Score, Hard Gates
+und Erwartungswert erledigt. Sie prüft, ob die Transaktion, die gleich gebaut
+wird, das tut, was der Intent sagt.
+
+Konkret: bei unbekanntem Erwartungswert lehnt sie **nicht** ab. Diese Entscheidung
+fällt in der Decision-Engine, die den Modus kennt (Paper erlaubt `UNKNOWN`, Live
+nicht). Dieselbe Regel an zwei Stellen zu prüfen führt dazu, dass sie irgendwann
+auseinanderlaufen — und dann gilt die strengere, ohne dass jemand es beschlossen
+hat.
+
+Sie sammelt außerdem **alle** Fehler statt beim ersten abzubrechen. Wer nur den
+ersten meldet, repariert im Zweifel dreimal.
+
+## 38. `STILL_UNKNOWN` ist nicht `FAILED` — und wird es erst mit Ablauf
+
+Der Reconciler kennt vier Ausgänge für eine gesendete Transaktion:
+
+- `CONFIRMED` / `FAILED` — der Knoten weiß es
+- `STILL_UNKNOWN` — der Knoten hat sie noch nicht gesehen. **Kein Fehlschlag.**
+- `EXPIRED_UNCONFIRMABLE` — älter als die Blockhash-Lebensdauer
+
+Der Unterschied zwischen den letzten beiden ist der Kern: `EXPIRED` bedeutet
+nicht „wir wissen es nicht", sondern „sie kann nicht mehr eingebracht werden".
+Erst das rechtfertigt, sie als gescheitert zu behandeln.
+
+Eine unbekannte Transaktion vorschnell als fehlgeschlagen zu werten, ist die
+Ursache der doppelten Position — und die ist teuer, weil niemand sie bemerkt, bis
+der Bestandsabgleich anschlägt.
+
+## 39. Bestandsabgleich: Toleranz ist kein Nachlassen
+
+Eine harte Gleichheitsprüfung würde das System ständig anhalten:
+Transferabgaben, Rundung bei Rebasing-Tokens, ein noch nicht verbuchter
+Teilverkauf. Und ein System, das ständig grundlos anhält, wird abgeschaltet —
+dann greift die Prüfung nie mehr.
+
+Deshalb 1 % relative Toleranz für gewöhnliche Abweichungen. **Immer materiell**
+sind dagegen:
+
+- **Position verschwunden** — entweder wurde ohne unser Wissen verkauft, oder der
+  Einstieg ist nie erfolgt
+- **Verwaister Bestand** — ein Token, von dem die Buchhaltung nichts weiß. Der
+  gefährlichere Fall: eine Position, die niemand überwacht, hat weder Stop noch
+  Take Profit
+
+Ein zu **hoher** Bestand ist ebenfalls eine Abweichung, keine gute Nachricht:
+vielleicht wurde zweimal gekauft.
+
+Materielle Abweichung hält **alles** an, auch Verkäufe. Wenn interner und
+tatsächlicher Bestand auseinanderlaufen, ist jede weitere Order ein Schuss ins
+Dunkle.

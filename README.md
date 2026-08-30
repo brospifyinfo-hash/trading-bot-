@@ -37,6 +37,7 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 | `packages/backtest` | Simulationsschleife über den `PitReader`, Walk-Forward-Aufteilung, deterministischer Zufallsgenerator |
 | `packages/discovery` | Quellen-Schnittstelle, Deduplizierung, billiges Vorsieb, Discovery-Durchlauf |
 | `packages/alerts` | Einmal-Tokens, Alert-Cooldown, Live-Revalidierung mit Diff |
+| `packages/execution` | Pre-Trade-Validierung für Kauf und Verkauf, Signatur-Auflösung, Bestandsabgleich |
 | `apps/signer` | Policy-Engine mit Programm-Allowlist, Abflussgrenzen, Replay-Schutz |
 | `apps/worker` | Rollenbasierter Prozess, Queue-Definitionen, Graceful Shutdown |
 | `apps/web` | Trading-Terminal-Shell mit Modus-Anzeige und Emergency Stop |
@@ -46,7 +47,7 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 ```bash
 pnpm install
 pnpm check        # typecheck + lint + test
-pnpm test         # 421 Tests, inkl. No-Look-Ahead gegen echtes Postgres (PGlite)
+pnpm test         # 462 Tests, inkl. No-Look-Ahead gegen echtes Postgres (PGlite)
 ```
 
 Lokal mit Docker:

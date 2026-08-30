@@ -196,6 +196,15 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/execution:
+    dependencies:
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
+      '@sae/simulation':
+        specifier: workspace:*
+        version: link:../simulation
+
   packages/observability:
     dependencies:
       '@sae/core':
