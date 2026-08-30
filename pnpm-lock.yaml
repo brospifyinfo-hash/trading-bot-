@@ -127,6 +127,24 @@ importers:
         specifier: ^0.30.1
         version: 0.30.6
 
+  packages/decision:
+    dependencies:
+      '@sae/config':
+        specifier: workspace:*
+        version: link:../config
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
+      '@sae/risk':
+        specifier: workspace:*
+        version: link:../risk
+      '@sae/scoring':
+        specifier: workspace:*
+        version: link:../scoring
+      '@sae/simulation':
+        specifier: workspace:*
+        version: link:../simulation
+
   packages/observability:
     dependencies:
       '@sae/core':
@@ -147,6 +165,27 @@ importers:
       zod:
         specifier: ^3.24.1
         version: 3.25.76
+
+  packages/risk:
+    dependencies:
+      '@sae/config':
+        specifier: workspace:*
+        version: link:../config
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
+      '@sae/simulation':
+        specifier: workspace:*
+        version: link:../simulation
+
+  packages/scoring:
+    dependencies:
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
+      '@sae/simulation':
+        specifier: workspace:*
+        version: link:../simulation
 
   packages/simulation:
     dependencies:

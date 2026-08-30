@@ -220,3 +220,105 @@ Anbieter sich daran hält.
 Diese Lücke schließt die Laufzeitvalidierung, nicht ein weiterer Test. Sobald der
 Host erreichbar ist, wird eine echte Antwort aufgezeichnet und als zusätzliches
 Fixture ergänzt.
+
+
+---
+
+# Phasen 8 & 11 — Scoring, Risk, Entscheidung
+
+## 10. „Nicht berechenbar" ist kein mittlerer Score
+
+Ein Teilscore, dessen Eingaben fehlen, liefert `NOT_COMPUTABLE` — nicht 50. Ein
+neutraler Ersatzwert wäre die bequemste Art, fehlende Daten unbemerkt in eine
+Entscheidung einfließen zu lassen: der Endscore sähe unauffällig aus, obwohl die
+Hälfte der Grundlage fehlt.
+
+Der Endscore wird deshalb auf das **tatsächlich abgedeckte Gewicht** normiert,
+und die Abdeckung ist selbst ein Hard Gate (`MIN_WEIGHT_COVERAGE = 0.6`). Unter
+dieser Schwelle gibt es gar keinen Endscore — `null`, nicht eine niedrige Zahl.
+Eine Zahl ohne Aussage ist gefährlicher als keine Zahl.
+
+## 11. Der Bootstrap-Widerspruch beim Erwartungswert
+
+`EV = p(win) · E[R|win] − (1−p) · E[|R||loss] − Kosten` braucht eine eigene
+realisierte Verteilung. Ohne Trades gibt es keine Verteilung, ohne Verteilung
+keine Schätzung — und ohne Schätzung dürfte nicht gehandelt werden. Das ist ein
+Zirkelschluss, kein Detail.
+
+Aufgelöst über den Modus, nicht über einen Kompromisswert:
+
+| Modus | `EV = UNKNOWN` | Begründung |
+|---|---|---|
+| Paper | **zulässig**, wird als Grund protokolliert | Genau hier wird die Stichprobe erzeugt |
+| Live | **Ablehnung** (`EV_UNKNOWN_INSUFFICIENT_HISTORY`) | Echtes Geld wird nicht auf eine unbekannte Größe gesetzt |
+
+Das ist zugleich die technische Umsetzung des Calibration Gate: Live-Trading ist
+nicht nur durch einen Schalter gesperrt, sondern durch das Fehlen der Daten,
+ohne die die Entscheidung gar nicht getroffen werden kann.
+
+## 12. Entschieden wird auf der Untergrenze, nicht auf der Punktschätzung
+
+Bei 12 Trades und 75 % Trefferquote ist die Punktschätzung schmeichelhaft und
+statistisch bedeutungslos. Die Engine benutzt deshalb die untere Grenze des
+95-%-**Wilson-Intervalls** auf die Trefferquote und setzt sie in dieselbe
+EV-Formel ein.
+
+Praktische Folge: bei drei von drei Gewinnern liefert der naive Anteil 100 % und
+Wilson unter 50 %. Der Unterschied ist genau der Betrag, um den ein
+optimistischer Backtest danebenliegt.
+
+Die Konfidenz ergibt sich aus der **Breite** des Intervalls, nicht aus seiner
+Lage: eine enge Schätzung ist vertrauenswürdiger als eine breite, unabhängig
+davon, wie günstig sie ausfällt. Sie skaliert die Positionsgröße (Faktor 0,25 bis
+1,0) — sie verkleinert also, statt heimlich zu blockieren. Ob überhaupt gehandelt
+wird, entscheiden die Hard Gates, sichtbar und mit Begründung.
+
+## 13. Ein Kalibrierungsbefund aus dem Test, kein Bug
+
+Der ursprüngliche Test-Fixture war als „guter Token" gedacht: saubere Security,
+120.000 $ Liquidität, Volumenbeschleunigung 2,4×, 900 Holder, drei qualifizierte
+Käufer. Er erreicht **73** — und fällt damit unter die Standardschwelle von 75.
+
+Erste Reaktion wäre gewesen, die Schwelle zu senken. Das wäre der Anfang von
+Parameteranpassung an ein Wunschergebnis. Stattdessen: der Befund ist
+festgehalten (`solidButNotEnoughFeatures`, eigener Test) und der Fixture zu einem
+tatsächlich starken Token gemacht.
+
+Was der Befund zeigt: mit den Standardgewichten reicht „überall solide" nicht für
+einen Einstieg. Drei qualifizierte Käufer ergeben im Smart-Money-Teilscore 38 von
+100, und bei 12 % Gewicht zieht das den Endscore unter die Schwelle. Das ist die
+beabsichtigte Konservativität — und es ist gut, dass sie messbar ist, statt
+behauptet.
+
+**Die Gewichte in `WEIGHTS` sind begründete Ausgangswerte, keine validierten
+Parameter.** Sie stammen aus Überlegung, nicht aus Daten. Genau dafür gibt es das
+Research-Dashboard: es soll zeigen, welche Faktoren tatsächlich Erwartungswert
+erzeugen, und die Gewichte danach korrigieren — nicht umgekehrt.
+
+## 14. Positionsgröße: das Minimum, nie ein Mittelwert
+
+Vier unabhängige Obergrenzen — Risikobudget, Liquidität, Portfolio-Deckel,
+EV-Konfidenz. Es gilt die kleinste. Jede beschreibt eine andere Art, sich zu
+ruinieren, und keine lässt sich durch die anderen ausgleichen.
+
+Der Property-Test hält fest, dass das Ergebnis nie eine der vier überschreitet.
+Bei Memecoins bindet fast immer die Liquidität — genau die Grenze, die die
+meisten Bots nicht kennen.
+
+## 15. Circuit Breaker: die Asymmetrie ist Absicht
+
+Breaker blockieren **Einstiege** härter als **Ausstiege**. Genau zwei dürfen alles
+anhalten: `EMERGENCY_STOP` (manuell) und `RECONCILIATION_DRIFT` (interner und
+tatsächlicher Bestand laufen auseinander — dann ist auch ein Verkauf ein Schuss
+ins Dunkle). Alle anderen, Tagesverlust eingeschlossen, lassen die
+Positionsverwaltung weiterlaufen.
+
+Der Grund: ein System, das wegen eines Provider-Ausfalls seine laufenden
+Positionen nicht mehr schließen kann, hat das Risiko vergrößert statt
+verkleinert. Ein eigener Test hält die Liste der `ALL_TRADING`-Breaker fest,
+damit sie nicht versehentlich wächst.
+
+Zweite Regel: der Zustand liegt in der Datenbank. Ein gespeicherter Lockout gilt
+bis zum Ablauf seiner Abkühlzeit — auch wenn die auslösende Bedingung gerade
+nicht mehr zutrifft. Sonst genügt ein kurz erholtes Portfolio, um sofort
+weiterzuhandeln.

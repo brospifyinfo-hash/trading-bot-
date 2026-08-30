@@ -1,0 +1,15 @@
+{
+  "name": "@sae/decision",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@sae/config": "workspace:*",
+    "@sae/core": "workspace:*",
+    "@sae/risk": "workspace:*",
+    "@sae/scoring": "workspace:*",
+    "@sae/simulation": "workspace:*"
+  }
+}
