@@ -621,9 +621,14 @@ Das System braucht dauerhafte WebSocket-Verbindungen, sekündliches Position-Mon
 ### 15.2 Compose-Topologie
 ```
 networks:
-  public    → web (Reverse Proxy, TLS)
-  backend   → web, worker, postgres, redis
+  public    → web                            (Reverse Proxy, TLS)
+  data      → postgres, redis, worker, web   [internal: true — kein Internet]
+  egress    → worker                         (Provider-Aufrufe: RPC, DEX, Social)
   signing   → worker(execution), signer      [internal: true — kein Internet]
+
+  → Postgres, Redis und Signer haben KEINE Route nach draussen.
+  → Nur der execution-Worker haengt im signing-Netz.
+  → Die Weboberflaeche hat kein egress: alles Ausgehende laeuft ueber Worker.
 
 services:
   caddy       Reverse Proxy + automatisches TLS

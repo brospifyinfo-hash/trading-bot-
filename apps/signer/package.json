@@ -1,0 +1,12 @@
+{
+  "name": "@sae/signer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc --noEmit", "start": "node --experimental-strip-types src/server.ts" },
+  "dependencies": {
+    "@sae/config": "workspace:*",
+    "@sae/core": "workspace:*",
+    "@sae/observability": "workspace:*"
+  }
+}

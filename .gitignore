@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+
+# Secrets — niemals einchecken
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+*.p12
+*keypair*.json
+id.json

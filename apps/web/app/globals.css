@@ -1,0 +1,88 @@
+/*
+ * Trading-Terminal.
+ *
+ * Dunkel, dicht, ohne Animationen. Informationsdichte vor Grosszuegigkeit:
+ * wer eine Position beobachtet, will Zahlen sehen, nicht scrollen.
+ */
+:root {
+  --bg: #0b0f12;
+  --panel: #12181d;
+  --panel-2: #172026;
+  --line: #232f37;
+  --text: #dfe6e9;
+  --muted: #7d8d96;
+  --accent: #4fbfb4;
+  --ok: #4fb477;
+  --warn: #d3a24e;
+  --bad: #d97d7d;
+  --mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.statusbar .label { color: var(--muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+.statusbar .value { font-weight: 600; }
+
+.pill {
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pill.paper { color: var(--accent); }
+.pill.live { color: var(--bad); }
+.pill.ok { color: var(--ok); }
+
+.emergency {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--bad);
+  color: var(--bad);
+  padding: 5px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.emergency:hover { background: var(--bad); color: var(--bg); }
+.emergency:focus-visible { outline: 2px solid var(--bad); outline-offset: 2px; }
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 1px;
+  background: var(--line);
+  min-height: calc(100vh - 39px);
+}
+@media (max-width: 1100px) { .workspace { grid-template-columns: 1fr; } }
+
+.panel { background: var(--panel); padding: 12px 14px; }
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.placeholder { color: var(--muted); font-size: 12px; }

@@ -1,0 +1,151 @@
+# Solana Alpha Engine — Betriebstopologie
+#
+# Kernpunkt ist die Netztrennung: der Signer haengt in einem Netz mit
+# `internal: true` und hat damit KEINE Route ins Internet. Selbst wenn der
+# Container kompromittiert wuerde, kann er den Schluessel nirgendwohin schicken.
+# Erreichbar ist er ausschliesslich vom execution-Worker, ueber mTLS.
+
+name: sae
+
+networks:
+  # Vom Reverse Proxy erreichbar.
+  public:
+  # Datenschicht: Postgres und Redis haengen AUSSCHLIESSLICH hier und haben damit
+  # keine Route ins Internet. Ein kompromittierter Datenbankcontainer kann nichts
+  # exfiltrieren.
+  data:
+    internal: true
+  # Ausgehende Provider-Aufrufe (RPC, Jupiter, Birdeye, Resend). Nur Dienste, die
+  # sie tatsaechlich brauchen, haengen hier.
+  egress:
+  # Signer-Zone: kein Internet, kein Datenbankzugang. Erreichbar einzig vom
+  # execution-Worker, ueber mTLS.
+  signing:
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+
+secrets:
+  postgres_password:
+    file: ../secrets/postgres_password
+  signer_key:
+    file: ../secrets/signer_key.json
+  signer_tls_cert:
+    file: ../secrets/signer_tls.crt
+  signer_tls_key:
+    file: ../secrets/signer_tls.key
+  signer_client_ca:
+    file: ../secrets/signer_client_ca.crt
+
+x-worker-base: &worker-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.worker
+  restart: unless-stopped
+  env_file: ../.env
+  networks: [data, egress]
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  # Laufende Transaktionsbestaetigungen duerfen zu Ende laufen.
+  stop_grace_period: 45s
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sae
+      POSTGRES_DB: sae
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sae -d sae"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # AOF: ein Queue-Verlust ist ein verlorener Trade, kein Cache-Miss.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes: [redisdata:/data]
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: { context: .., dockerfile: docker/Dockerfile.worker }
+    command: ["node", "scripts/migrate.js"]
+    env_file: ../.env
+    networks: [data]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  web:
+    build: { context: .., dockerfile: docker/Dockerfile.web }
+    restart: unless-stopped
+    env_file: ../.env
+    # Kein egress: die Weboberflaeche ruft keine externen Dienste auf. Alles
+    # Ausgehende laeuft ueber die Worker.
+    networks: [public, data]
+    ports: ["3000:3000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  signer:
+    build: { context: .., dockerfile: docker/Dockerfile.signer }
+    restart: unless-stopped
+    env_file: ../.env
+    # Nur das signing-Netz. Kein Internet, keine Datenbank, kein Redis.
+    networks: [signing]
+    secrets: [signer_key, signer_tls_cert, signer_tls_key, signer_client_ca]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  worker-discovery:
+    <<: *worker-base
+    environment: { WORKER_ROLE: discovery }
+  worker-enrichment:
+    <<: *worker-base
+    environment: { WORKER_ROLE: enrichment }
+    deploy: { replicas: 2 }
+  worker-scoring:
+    <<: *worker-base
+    environment: { WORKER_ROLE: scoring }
+  worker-decision:
+    <<: *worker-base
+    environment: { WORKER_ROLE: decision }
+  worker-execution:
+    <<: *worker-base
+    environment: { WORKER_ROLE: execution }
+    # Der einzige Worker mit Zugang zum Signer.
+    networks: [data, egress, signing]
+  worker-positions:
+    <<: *worker-base
+    environment: { WORKER_ROLE: positions }
+  worker-paper:
+    <<: *worker-base
+    environment: { WORKER_ROLE: paper }
+  worker-reconciler:
+    <<: *worker-base
+    environment: { WORKER_ROLE: reconciler }
+  worker-alerts:
+    <<: *worker-base
+    environment: { WORKER_ROLE: alerts }
+  worker-scheduler:
+    <<: *worker-base
+    environment: { WORKER_ROLE: scheduler }

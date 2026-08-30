@@ -1,0 +1,29 @@
+# Signer.
+#
+# Minimal gehalten: je weniger im Image liegt, desto weniger laesst sich damit
+# anfangen, falls jemand hineinkommt. Der Container laeuft read-only, ohne
+# Capabilities und ohne Netzroute nach draussen (siehe docker-compose.yml).
+FROM node:22-bookworm-slim AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
+WORKDIR /app
+
+FROM base AS build
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages/core/package.json packages/core/
+COPY packages/config/package.json packages/config/
+COPY packages/observability/package.json packages/observability/
+COPY apps/signer/package.json apps/signer/
+RUN pnpm install --frozen-lockfile --filter @sae/signer...
+COPY . .
+RUN pnpm exec esbuild apps/signer/src/server.ts \
+      --bundle --platform=node --target=node22 --format=esm \
+      --outfile=dist/signer.js --packages=external
+
+FROM base AS runtime
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node
+CMD ["node", "dist/signer.js"]

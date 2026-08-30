@@ -1,0 +1,19 @@
+import type { RoleContext, RoleHandler } from "../role";
+
+/**
+ * Rolle: paper.
+ *
+ * Phase-1-Platzhalter. Die Struktur steht (Registrierung, Lifecycle, Logging,
+ * Health), die Fachlogik folgt in der jeweiligen Phase. Bewusst leer statt
+ * halb implementiert: eine angefangene Handelslogik, die niemand geprueft hat,
+ * ist gefaehrlicher als eine offensichtlich fehlende.
+ */
+export const paperRole: RoleHandler = {
+  name: "paper",
+  async start(ctx: RoleContext): Promise<void> {
+    ctx.logger.info({ role: "paper" }, "Rolle gestartet (Phase-1-Platzhalter, keine Logik)");
+  },
+  async stop(): Promise<void> {
+    // Nichts zu tun, solange keine Verbraucher registriert sind.
+  },
+};
