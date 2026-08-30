@@ -130,3 +130,93 @@ gewöhnt einen daran, ihnen zu glauben.
 Die Zahlen in `defaults.ts` sind plausible Ausgangswerte, **keine validierten
 Parameter**. Sie sind nicht getestet, nicht optimiert und nicht als profitabel
 behauptet.
+
+
+---
+
+# Phase 2 — Provider-Layer
+
+## 5. Die Verifikation war zur Hälfte blockiert
+
+Der Egress-Proxy dieser Umgebung lehnt die Verbindung zu den Provider-Hosts mit
+`403` ab (Organisationsrichtlinie, kein Netzwerkfehler). Protokolliert sind
+`lite-api.jup.ag`, `api.dexscreener.com`, `docs.helius.dev`, `docs.birdeye.so`
+und `dev.jup.ag`. Erreichbar war ausschließlich `raw.githubusercontent.com`.
+
+**Konsequenz:** Es wurde kein Endpunkt geraten. Der Provider-Layer ist
+vollständig gebaut und getestet; implementiert ist genau **ein** Adapter —
+Jupiter, gegen die Hersteller-eigene OpenAPI-Spezifikation. Für Helius, Birdeye,
+DexScreener und RugCheck existiert bewusst kein Code, sondern je eine Datei in
+`docs/providers/`, die den blockierten Host und die offenen Fragen festhält.
+
+Ein Adapter auf Basis erinnerter Endpunkte wäre genau der Fehler, den
+`ARCHITECTURE.md` §13 ausschließt: er liefert im Betrieb still falsche oder keine
+Daten, und das Ergebnis ist von echten Daten nicht zu unterscheiden.
+
+## 6. Der Jupiter-Befund, der die Signer-Policy betrifft
+
+Die Spezifikation sagt zu `otherAmountThreshold` — der Mindestausgabemenge im
+Quote — ausdrücklich: *„Not used by `/swap` endpoint to build transaction."*
+
+Die im Quote genannte Untergrenze ist also **nicht** die, die on-chain
+durchgesetzt wird. Für die Signer-Policy heißt das: die Prüfung
+`minOut != null && minOut > 0` darf ihren Wert nicht aus dem Quote nehmen,
+sondern muss ihn aus der dekodierten Transaktion lesen.
+
+Dass `SignerPolicy` bereits auf einer normalisierten `DecodedTransaction`
+arbeitet statt auf dem Quote-Objekt, war ursprünglich eine Testbarkeitsfrage —
+es stellt sich als die inhaltlich richtige Trennung heraus. Der Dekodier-Adapter
+in Phase 12 muss den Wert aus der Instruktion ziehen, nicht durchreichen.
+
+Zweiter Punkt: Quote-Threshold und tatsächliche Untergrenze können auseinander
+laufen, besonders bei `dynamicSlippage`. Die Differenz ist beim Kalibrieren zu
+**messen**, nicht anzunehmen.
+
+## 7. Ein Fund aus der Implementierung
+
+### Der Budget-Wächter hätte sich selbst dauerhaft verklemmt
+
+`ProviderBudget.exhausted` prüfte den Monatswechsel nicht — das tat nur
+`chargeRequest()`. Ein aufgebrauchtes Budget hätte damit jede Anfrage blockiert,
+und nur eine Anfrage hätte den Monatswechsel bemerkt. Der Provider wäre ab dem
+ersten erschöpften Monat **dauerhaft still abgeschaltet** geblieben, ohne
+Fehlermeldung, ohne Log — nur mit `MISSING(BUDGET_EXCEEDED)` bis in alle
+Ewigkeit.
+
+Gefunden durch den Test, der den Monatswechsel prüft. Behoben, plus ein
+Regressionstest, der nur liest und nichts bucht.
+
+**Muster dahinter:** Ein Zustand, der sich nur beim Schreiben aktualisiert, aber
+das Schreiben selbst verhindert, ist eine Verklemmung. Lohnt sich, im
+Circuit-Breaker- und Rate-Limiter-Code gegenzuprüfen — dort läuft die
+Aktualisierung jeweils im Getter, nicht nur beim Verbrauch.
+
+## 8. Wie der Layer Datenehrlichkeit durchsetzt
+
+Drei Dinge passieren ausschließlich im `ProviderHttpClient`, und es gibt bewusst
+keinen zweiten Weg an ihnen vorbei:
+
+1. **Jede Antwort wird gegen ein Zod-Schema validiert.** Weicht sie ab, ist das
+   Ergebnis `MISSING(PARSE_FAILED)` und der Provider gilt als ausgefallen — nicht
+   ein halb geparstes Objekt mit `undefined`-Feldern, das weiter oben zu
+   Defaultwerten wird. Ein Anbieter, der sein Format ändert, fällt sofort auf.
+2. **Jeder Erfolg wird zur `Observation`** mit Quelle und Zeitstempel der
+   *Antwort*, nicht der Anfrage.
+3. **Rate Limit, Circuit Breaker, Budget und Health werden gemeinsam geführt.**
+
+Dazu eine Unterscheidung, die im Betrieb zählt: HTTP 404 wird als
+`NO_DATA_FOR_TOKEN` gewertet, nicht als Anbieterausfall. Ein unbekannter Token
+ist kein Fehler des Providers und darf seinen Circuit Breaker nicht in dieselbe
+Richtung treiben wie ein echter Ausfall — sonst schaltet eine Discovery-Welle
+mit vielen unbekannten Tokens den Anbieter ab.
+
+## 9. Was die Vertragstests belegen — und was nicht
+
+Die Fixtures sind aus der OpenAPI-Spezifikation **abgeleitet**, nicht aus echten
+Antworten aufgezeichnet: der API-Host war nicht erreichbar. Sie belegen, dass der
+Adapter die *spezifizierte* Form korrekt verarbeitet — **nicht**, dass der
+Anbieter sich daran hält.
+
+Diese Lücke schließt die Laufzeitvalidierung, nicht ein weiterer Test. Sobald der
+Host erreichbar ist, wird eine echte Antwort aufgezeichnet und als zusätzliches
+Fixture ergänzt.

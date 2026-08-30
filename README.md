@@ -2,13 +2,14 @@
 
 Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 
-**Status: Phase 1 (Fundament) implementiert. Kein Trading, keine Provider-Anbindung, keine validierte Strategie.**
+**Status: Phase 1 (Fundament) und Phase 2 (Provider-Layer) implementiert. Kein Trading, keine validierte Strategie.**
 
 ## Dokumente
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Systemarchitektur, Datenmodell, State Machines, Security-Modell, Datenquellen, Kosten, Deployment, Teststrategie
 - [`docs/PHASE-1-PLAN.md`](docs/PHASE-1-PLAN.md) — Implementierungsplan Phase 1
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — getroffene Annahmen und Abweichungen vom ursprünglichen Plan
+- [`docs/providers/`](docs/providers/) — Verifikationsstand je Datenquelle
 
 ## Grundregeln
 
@@ -27,6 +28,7 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 | `packages/db` | Drizzle-Schema (41 Tabellen), Migrationen, **PitReader** mit Pflicht-`asOf` |
 | `packages/simulation` | Preis-Impact, Exit-Kapazität, Kostenmodell, PnL — ein Modell für Paper, Backtest und Live |
 | `packages/observability` | pino mit Allowlist-Redaction, Trace-IDs, Metrik-Registry |
+| `packages/providers` | Provider-Schnittstellen, Token-Bucket, Circuit Breaker, Budget-Wächter, Health-Tracking, HTTP-Client mit Schema-Validierung, Jupiter-Quote-Adapter |
 | `apps/signer` | Policy-Engine mit Programm-Allowlist, Abflussgrenzen, Replay-Schutz |
 | `apps/worker` | Rollenbasierter Prozess, Queue-Definitionen, Graceful Shutdown |
 | `apps/web` | Trading-Terminal-Shell mit Modus-Anzeige und Emergency Stop |
@@ -36,7 +38,7 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 ```bash
 pnpm install
 pnpm check        # typecheck + lint + test
-pnpm test         # 138 Tests, inkl. No-Look-Ahead gegen echtes Postgres (PGlite)
+pnpm test         # 190 Tests, inkl. No-Look-Ahead gegen echtes Postgres (PGlite)
 ```
 
 Lokal mit Docker:
