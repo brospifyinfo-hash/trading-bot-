@@ -1314,3 +1314,163 @@ ausdrücklich nicht am späteren Hoch. Zusammenfassungen nehmen den **Median** u
 verlangen eine **Mehrheit** besserer Fälle: ein einzelner Verzehnfacher, den die
 Alternative hätte laufen lassen, bestimmt sonst jeden Mittelwert — und genau
 diesen einen Fall findet man im Rückblick immer.
+
+## 70. Fünf Provider-Zustände, weil drei die falsche Frage beantworten
+
+`HEALTHY / DEGRADED / DOWN` reicht der Handelslogik, aber nicht der Anzeige.
+„DOWN" beantwortet die einzige Frage nicht, die man beim Hinsehen hat: **liegt
+es an mir?**
+
+| Zustand | Bedeutung | Behoben durch |
+|---|---|---|
+| `NOT_CONFIGURED` | Keine Basis-URL, kein Schlüssel | Konfiguration |
+| `BLOCKED` | Das Netz lässt die Verbindung nicht zu | Netzwerkfreigabe |
+| `UNAVAILABLE` | Konfiguriert, antwortet nicht | Warten oder Anbieterwechsel |
+| `DEGRADED` | Antwortet eingeschränkt (Fehler, Limit, Budget) | Drosseln |
+| `CONNECTED` | Liefert verwertbare Daten | — |
+
+Der Unterschied zwischen `BLOCKED` und `UNAVAILABLE` ist im Moment der ganze
+Befund: **alle Quellen sind gesperrt, keine ist ausgefallen.** Wäre beides
+„DOWN", würde man den Fehler beim Anbieter suchen.
+
+`classifyFailure` ist bewusst konservativ: was nicht eindeutig als Netzsperre
+erkennbar ist, gilt als `UNAVAILABLE`. Ein fälschlich als `BLOCKED` gemeldeter
+Anbieter schickt die Fehlersuche in die falsche Richtung.
+
+Getrennt davon: `configured` und `adapterImplemented`. Ein Anbieter mit
+Basis-URL, für den es kein geprüftes Adapter-Modul gibt, ist nicht ansprechbar —
+und der Unterschied gehört sichtbar, sonst sucht jemand den Fehler bei den
+Zugangsdaten.
+
+## 71. Ein Fallback darf nie stillschweigend Qualität mischen
+
+Die Kette `PRIMARY → SECONDARY → FALLBACK` liefert den Wert des ersten
+Anbieters, der antwortet — mit **seiner** Stufe am Datenpunkt. Es wird nichts
+gemittelt und nichts ergänzt.
+
+Für zusammengesetzte Datensätze gibt es bewusst **keine** Funktion, die zwei
+`Sourced`-Werte zu einem verschmilzt. Wer Felder aus zwei Anbietern kombiniert,
+bekommt einen `MultiSourced` mit der **schlechtesten** Stufe und der
+**ältesten** Beobachtung aller Beteiligten. Ein Datensatz mit Preis vom
+Primär- und Liquidität vom Fallback-Anbieter ist kein Primärdatensatz.
+
+`token_snapshots` trägt das in vier Spalten mit: Anbieter, Stufe, Frische,
+Beteiligte. Ohne sie ließe sich später nicht sagen, ob eine Entscheidung auf
+Primärdaten beruhte — und dann ist jede Auswertung nach Datenqualität unmöglich.
+
+`NO_SOURCE` ist ein reguläres Ergebnis der Kette, keine Ausnahme. Genau in
+diesem Zustand befindet sich das System.
+
+## 72. Der Scheduler ist der Wiederanlaufmechanismus
+
+Kein zentraler Tick, der alles anstößt, und kein `setInterval` je Aufgabe.
+Neun Takte mit eigenen Intervallen, und drei Eigenschaften, die den Unterschied
+machen:
+
+1. **Ohne Marktdaten läuft fast nichts.** Jeder Takt erklärt, ob er Marktdaten
+   braucht. Genau einer läuft weiter: `PROVIDER_HEALTH`. Er ist der Mechanismus,
+   mit dem das System von selbst anläuft — es gibt keinen Startknopf.
+2. **Kein Nachholsturm.** War der Scheduler eine Stunde weg, feuert ein
+   30-Sekunden-Takt einmal und nicht 120-mal. `lastRunAt` wird auf den
+   tatsächlichen Zeitpunkt gesetzt, nicht auf den geplanten.
+3. **Rate Limits gehen vor.** Ein Takt, dessen geschätzte Anfragen nicht ins
+   verbleibende Budget passen, wird **verschoben statt gedrosselt** — und bei
+   knappem Budget bekommt die Positionsüberwachung ihre Anfragen, nicht die
+   Discovery. Getrennte Timer wüssten nichts voneinander.
+
+Wiederholte Fehlschläge verlangsamen einen Takt exponentiell; ein Erfolg setzt
+das zurück.
+
+## 73. Worker-Sicherheit: der Schlüssel kommt aus dem Inhalt
+
+Ein Job kann aus drei normalen Gründen zweimal laufen — doppelt eingeplant,
+Absturz vor dem Bestätigen, Wiederholung durch die Queue. Alle drei dürfen
+keine zweite Gelegenheit, keinen zweiten Snapshot und keinen zweiten Trade
+erzeugen.
+
+Der Idempotenzschlüssel wird deshalb aus dem **fachlichen Inhalt** gebildet,
+nicht aus der Job-ID: zwei verschiedene Jobs mit demselben Inhalt sind derselbe
+Vorgang, und derselbe Job mit anderem Inhalt ist ein anderer. Die Felder werden
+sortiert gehasht — sonst hinge die Idempotenz daran, wie jemand ein
+Objektliteral geschrieben hat.
+
+Weitere Festlegungen:
+
+- **Bei einem Fehler wird der Anspruch freigegeben.** Sonst blockiert ein
+  abgestürzter Worker den Vorgang dauerhaft, und das ist schlimmer als eine
+  Wiederholung: der Vorgang fände nie statt.
+- **Eine Netzsperre wird nicht wiederholt.** Sie ändert sich nicht durch Warten.
+  Der nächste Versuch gehört dem Scheduler mit seinem langen Takt, nicht der
+  Retry-Schleife — sonst ist der „Retry" ein Dauerlauf gegen eine Wand, der
+  Rate-Limit-Budget für den Moment verbraucht, in dem der Anbieter wiederkommt.
+- **Der Checkpoint ist eine Liste, kein Zähler.** Bei einem Zähler hinge die
+  Wiederaufnahme daran, dass die Reihenfolge beim zweiten Lauf dieselbe ist —
+  bei einer Discovery-Liste ist sie das nie.
+- **`maxUnitsPerRun` deckelt jeden Lauf.** Ohne Deckel kann ein Job beliebig
+  viele Anfragen erzeugen.
+
+## 74. Zwei Löcher im Look-Ahead-Schutz, beide gefunden
+
+Der Auftrag war, alle Guards auf die Fehlerklasse des `async`-Befundes zu
+prüfen. Dabei kamen zwei Dinge heraus, die beide nichts mit Promises zu tun
+hatten und beide schlimmer waren.
+
+**Erstens: `LivePitReader` hatte Default-Argumente für `asOf`.**
+
+`PitReader` hat bewusst keine Methode, die „den aktuellen Stand" liefert — ein
+Aufruf ohne Zeitpunkt soll ein Compile-Fehler sein. Ein Default-Argument macht
+daraus wieder eine solche Methode; man sieht es dem Aufruf `snapshotAt(id)` nur
+nicht an. Die Vorkehrung war damit im Livebetrieb wirkungslos, also genau dort,
+wo sie zählt.
+
+Behoben: `asOf` ist überall Pflicht. Wer den aktuellen Stand will, schreibt
+`reader.snapshotAt(id, reader.now())` — eine Zeile mehr, an der Aufrufstelle
+sichtbar. Ein `@ts-expect-error`-Test hält die Pflichtangabe fest.
+
+**Zweitens: ein Kommentar, der eine Direktive war.**
+
+Beim Schreiben genau dieses Tests umbrach der Fließtext so, dass eine Zeile mit
+`// @ts-expect-error` begann — mitten in einer deutschen Erklärung. TypeScript
+liest das als Direktive. Hätte sie zufällig auf einer Zeile mit einem echten
+Fehler gestanden, wäre der stillschweigend unterdrückt worden.
+
+Gefunden hat es der Compiler selbst („unused directive"), und nur weil an dieser
+Stelle kein Fehler stand. Die Lehre ist unangenehm allgemein: **Prosa in
+Kommentaren kann Compiler-Direktiven erzeugen.**
+
+## 75. Ohne Daten keine Aussage — als Typ
+
+Jede Dashboard-Kachel ist ein `Panel<T>`, kein `T | null`. Ein `null` wird in
+der Anzeige irgendwann zu einer 0, und eine 0 sieht aus wie eine Messung.
+
+```
+DATA          es gibt etwas zu zeigen
+WAITING       es fehlt die Datenquelle
+INSUFFICIENT  es gibt Daten, aber zu wenige für eine Aussage
+```
+
+Der dritte Fall ist der wichtigste: „12 Trades, Trefferquote 75 %" ist keine
+Aussage, sondern Rauschen mit Nachkommastellen.
+
+Die Kacheln prüfen in der Reihenfolge ihrer Abhängigkeit — Quelle, Snapshots,
+Gelegenheiten, Positionen —, damit die Anzeige die **erste** fehlende
+Voraussetzung nennt und nicht die letzte. „Zu wenige Trades" ist eine
+irreführende Meldung, wenn schon die Datenquelle fehlt.
+
+Die Datenschicht rechnet bewusst keine Trefferquoten: die kommen aus
+`@sae/analytics` und sind dort an Mindeststichproben gebunden. Eine zweite
+Rechenstelle wäre die erste Gelegenheit, diese Bindung zu verlieren.
+
+## 76. Keine Endpunktpfade in der Konfiguration
+
+`providerEnvSchema` kennt Basis-URLs und Zugangsschlüssel — und keine Pfade.
+Einen Pfad zu konfigurieren hieße, ihn zu kennen, und bekannt ist genau einer:
+Jupiters, aus seiner eigenen OpenAPI-Spezifikation.
+
+Für alle anderen wäre jeder Pfad hier eine Erfindung — und eine Erfindung, die
+konfigurierbar aussieht, ist gefährlicher als eine fehlende Datei: sie erzeugt
+Fehlschläge, die wie Anbieterprobleme aussehen, und schickt die Fehlersuche in
+die falsche Richtung.
+
+Deshalb gibt es auch keinen Simulator als Provider-Ersatz. Er würde die gesamte
+Kette grün färben und nichts beweisen.

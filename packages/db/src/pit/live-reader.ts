@@ -6,10 +6,19 @@ import type { PitReader, PitSecurity, PitSnapshot } from "./reader";
 /**
  * Live-Zugriff.
  *
- * Bindet `asOf` an die Uhr, damit Live-Code keinen Zeitpunkt erfindet. Der
- * darunterliegende Filter bleibt derselbe — auch im Livebetrieb gilt
- * `observed_at <= now`, denn Daten aus der Zukunft sind auch dort ein Fehler
+ * Derselbe Filter wie im Backtest — auch im Livebetrieb gilt
+ * `observed_at <= asOf`, denn Daten aus der Zukunft sind auch dort ein Fehler
  * (etwa ein Provider mit falsch gesetzter Uhr).
+ *
+ * `asOf` ist PFLICHT, auch hier. Eine fruehere Fassung hatte einen Defaultwert
+ * aus der Uhr, und das war ein Loch in genau der Vorkehrung, um die es geht:
+ * `PitReader` hat bewusst keine Methode, die „den aktuellen Stand" liefert,
+ * damit ein Aufruf ohne Zeitpunkt ein Compile-Fehler ist. Ein Default-Argument
+ * macht daraus wieder eine solche Methode — man sieht es dem Aufruf
+ * `snapshotAt(tokenId)` nur nicht an.
+ *
+ * Wer den aktuellen Stand will, schreibt `reader.snapshotAt(id, reader.now())`.
+ * Das ist eine Zeile mehr und an der Aufrufstelle sichtbar.
  */
 export class LivePitReader implements PitReader {
   readonly mode = "live" as const;
@@ -21,23 +30,24 @@ export class LivePitReader implements PitReader {
     this.#clock = clock;
   }
 
-  snapshotAt(tokenId: string, asOf: Date = this.#clock.now()): Promise<PitSnapshot | null> {
+  /** Aktuelle Zeit als ausdruecklicher `asOf`. Sichtbar an der Aufrufstelle. */
+  now(): Date {
+    return this.#clock.now();
+  }
+
+  async snapshotAt(tokenId: string, asOf: Date): Promise<PitSnapshot | null> {
     return this.#inner.snapshotAt(tokenId, asOf);
   }
 
-  snapshotsBetween(
-    tokenId: string,
-    from: Date,
-    asOf: Date = this.#clock.now(),
-  ): Promise<PitSnapshot[]> {
+  async snapshotsBetween(tokenId: string, from: Date, asOf: Date): Promise<PitSnapshot[]> {
     return this.#inner.snapshotsBetween(tokenId, from, asOf);
   }
 
-  securityAt(tokenId: string, asOf: Date = this.#clock.now()): Promise<PitSecurity | null> {
+  async securityAt(tokenId: string, asOf: Date): Promise<PitSecurity | null> {
     return this.#inner.securityAt(tokenId, asOf);
   }
 
-  smartMoneyQualifiedAt(asOf: Date = this.#clock.now()): Promise<string[]> {
+  async smartMoneyQualifiedAt(asOf: Date): Promise<string[]> {
     return this.#inner.smartMoneyQualifiedAt(asOf);
   }
 }

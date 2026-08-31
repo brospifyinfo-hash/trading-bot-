@@ -13,6 +13,7 @@ import { paperRole } from "./roles/paper";
 import { reconcilerRole } from "./roles/reconciler";
 import { alertsRole } from "./roles/alerts";
 import { schedulerRole } from "./roles/scheduler";
+import { providerHealthRole } from "./roles/provider-health";
 
 /**
  * Rollenbasierter Einstiegspunkt.
@@ -33,6 +34,7 @@ const ROLES: Record<WorkerRole, RoleHandler> = {
   reconciler: reconcilerRole,
   alerts: alertsRole,
   scheduler: schedulerRole,
+  "provider-health": providerHealthRole,
 };
 
 async function main(): Promise<void> {

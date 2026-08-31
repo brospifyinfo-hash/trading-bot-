@@ -8,3 +8,4 @@ export * from "./opportunities";
 export * from "./market-regimes";
 export * from "./latency";
 export * from "./research";
+export * from "./pipeline";

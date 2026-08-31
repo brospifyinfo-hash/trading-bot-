@@ -36,6 +36,13 @@
       "when": 1788167473823,
       "tag": "0005_research",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788177888668,
+      "tag": "0006_pipeline",
+      "breakpoints": true
     }
   ]
 }

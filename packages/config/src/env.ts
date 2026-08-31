@@ -25,6 +25,8 @@ export const WORKER_ROLES = [
   "reconciler",
   "alerts",
   "scheduler",
+  // Laeuft auch ohne Marktdaten: der Takt, der eine wiederkehrende Quelle bemerkt.
+  "provider-health",
 ] as const;
 
 export type WorkerRole = (typeof WORKER_ROLES)[number];

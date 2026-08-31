@@ -160,10 +160,23 @@ describe("Smart-Money-Look-Ahead", () => {
 });
 
 describe("Live-Reader", () => {
-  it("bindet asOf an die Uhr", async () => {
+  it("verlangt auch im Livebetrieb einen ausdruecklichen Zeitpunkt", async () => {
+    // Eine fruehere Fassung hatte `asOf` als Default aus der Uhr. Das war ein
+    // Loch in genau der Vorkehrung, um die es geht: ohne Zeitpunkt aufrufbar zu
+    // sein macht aus dem Reader wieder eine „aktueller Stand"-Methode.
     const clock = new FixedClock(DECISION_TIME);
     const reader = new LivePitReader(db, clock);
-    const snap = await reader.snapshotAt(tokenId);
+
+    // Die Zusicherung ist der Typecheck, nicht der Lauf: die Funktion wird nie
+    // aufgerufen. Faellt die Pflichtangabe weg, meldet tsc die Direktive unten
+    // als unbenutzt und der Build bricht.
+    const neverCalled = async (): Promise<unknown> => {
+      // @ts-expect-error asOf ist Pflicht — ein Aufruf ohne Zeitpunkt ist ein Compile-Fehler.
+      return reader.snapshotAt(tokenId);
+    };
+    expect(typeof neverCalled).toBe("function");
+
+    const snap = await reader.snapshotAt(tokenId, reader.now());
     expect(snap?.observedAt).toEqual(T(12));
   });
 
@@ -171,7 +184,7 @@ describe("Live-Reader", () => {
     // Ein Provider mit falsch gestellter Uhr darf keine Entscheidung beeinflussen.
     const clock = new FixedClock(DECISION_TIME);
     const reader = new LivePitReader(db, clock);
-    const series = await reader.snapshotsBetween(tokenId, T(9));
+    const series = await reader.snapshotsBetween(tokenId, T(9), reader.now());
     expect(series.every((s) => s.observedAt <= DECISION_TIME)).toBe(true);
   });
 
@@ -180,6 +193,8 @@ describe("Live-Reader", () => {
     // niemand spaeter einen zweiten, "schnelleren" Live-Pfad ohne Filter einzieht.
     const live = new LivePitReader(db, new FixedClock(DECISION_TIME));
     const backtest = new PostgresPitReader(db, "backtest");
-    expect(await live.snapshotAt(tokenId)).toEqual(await backtest.snapshotAt(tokenId, DECISION_TIME));
+    expect(await live.snapshotAt(tokenId, DECISION_TIME)).toEqual(
+      await backtest.snapshotAt(tokenId, DECISION_TIME),
+    );
   });
 });

@@ -1,0 +1,14 @@
+{
+  "name": "@sae/pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@sae/config": "workspace:*",
+    "@sae/core": "workspace:*",
+    "@sae/observability": "workspace:*",
+    "@sae/providers": "workspace:*"
+  }
+}

@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@sae/config": "workspace:*",
     "@sae/core": "workspace:*",
@@ -11,6 +13,8 @@
     "@sae/observability": "workspace:*",
     "@sae/simulation": "workspace:*",
     "bullmq": "^5.34.6",
-    "ioredis": "^5.4.2"
+    "ioredis": "^5.4.2",
+    "@sae/pipeline": "workspace:*",
+    "@sae/providers": "workspace:*"
   }
 }

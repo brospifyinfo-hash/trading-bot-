@@ -1,3 +1,5 @@
+export * from "./capability";
+export * from "./status-report";
 export * from "./types";
 export * from "./rate-limiter";
 export * from "./circuit-breaker";

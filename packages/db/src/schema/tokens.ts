@@ -10,6 +10,7 @@ import {
   smallint,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -111,11 +112,39 @@ export const tokenSnapshots = pgTable(
     /** Welche Felder fehlten und warum — Grundlage der Datenqualitaetsforschung. */
     missingInputs: jsonb("missing_inputs").notNull().default({}),
     scoreEngineVersion: text("score_engine_version"),
+
+    /**
+     * Herkunft dieses Snapshots.
+     *
+     * Ohne diese vier Spalten laesst sich spaeter nicht sagen, ob eine
+     * Entscheidung auf Primaerdaten oder auf einem Fallback beruhte — und dann
+     * ist jede Auswertung nach Datenqualitaet unmoeglich. `source_tier` ist die
+     * SCHLECHTESTE beteiligte Stufe: ein Datensatz mit Preis vom Primaer- und
+     * Liquiditaet vom Fallback-Anbieter ist kein Primaerdatensatz.
+     */
+    sourceProviderId: text("source_provider_id"),
+    sourceTier: text("source_tier", { enum: ["PRIMARY", "SECONDARY", "FALLBACK"] }),
+    /** Alter der Beobachtung beim Abruf, in Sekunden. */
+    sourceFreshnessSeconds: doublePrecision("source_freshness_seconds"),
+    /** Alle beteiligten Anbieter mit ihrer Stufe. */
+    sourceContributors: jsonb("source_contributors").notNull().default([]),
+
+    /**
+     * Stabiler Schluessel des Datenpunkts.
+     *
+     * Macht die Aufnahme idempotent: derselbe Anbieter, derselbe Token,
+     * dieselbe Beobachtungssekunde ergeben denselben Schluessel — und die
+     * Datenbank weist die zweite Zeile ab, statt sich auf die Sorgfalt des
+     * Workers zu verlassen.
+     */
+    ingestKey: text("ingest_key"),
   },
   (t) => [
     // Der wichtigste Index des Systems: Point-in-time-Zugriff.
     index("token_snapshots_pit_idx").on(t.tokenId, t.observedAt),
     index("token_snapshots_observed_idx").on(t.observedAt),
+    uniqueIndex("token_snapshots_ingest_key").on(t.ingestKey),
+    index("token_snapshots_source_idx").on(t.sourceProviderId, t.observedAt),
   ],
 );
 
