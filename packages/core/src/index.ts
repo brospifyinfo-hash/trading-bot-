@@ -9,3 +9,6 @@ export * from "./trade-state-machine";
 export * from "./decision";
 export * from "./token";
 export * from "./trade";
+export * from "./streams";
+export * from "./opportunity-state-machine";
+export * from "./opportunity";

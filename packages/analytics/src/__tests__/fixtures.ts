@@ -1,4 +1,6 @@
 import { eur } from "@sae/core";
+import type { SizingMode } from "@sae/core";
+import type { PaperStream, PaperTradeRecord } from "../category-statistics";
 import type { ClosedTrade } from "../trade-statistics";
 
 let counter = 0;
@@ -30,4 +32,18 @@ export function tradesWithWinRate(count: number, winRate: number): ClosedTrade[]
     ...Array.from({ length: winners }, () => trade(20)),
     ...Array.from({ length: count - winners }, () => trade(-10)),
   ];
+}
+
+/** Ein simulierter Trade mit Strom und Sizing-Verfahren. */
+export function paperRecord(
+  netPnlEur: number,
+  stream: PaperStream,
+  sizingMode: SizingMode,
+  overrides: Partial<ClosedTrade> = {},
+): PaperTradeRecord {
+  return {
+    stream,
+    sizingMode,
+    trade: { ...trade(netPnlEur, overrides), mode: "paper" },
+  };
 }

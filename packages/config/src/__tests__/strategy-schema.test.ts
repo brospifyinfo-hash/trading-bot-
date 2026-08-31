@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_BOT_MODE,
+  DEFAULT_SYSTEM_STATE,
   DEFAULT_STRATEGY_PARAMETERS,
   parseStrategyParameters,
   strategyParametersSchema,
@@ -10,10 +10,10 @@ import { HARD_LIMITS } from "../risk-limits";
 const base = () => structuredClone(DEFAULT_STRATEGY_PARAMETERS);
 
 describe("Standardkonfiguration", () => {
-  it("startet im Paper-Modus mit deaktiviertem Live-Trading", () => {
+  it("startet mit deaktiviertem Live-Trading", () => {
     // Der wichtigste Default des ganzen Systems.
-    expect(DEFAULT_BOT_MODE.execution).toBe("paper");
-    expect(DEFAULT_BOT_MODE.liveTradingEnabled).toBe(false);
+    expect(DEFAULT_SYSTEM_STATE.liveTradingEnabled).toBe(false);
+    expect(DEFAULT_SYSTEM_STATE.emergencyStop).toBe(false);
   });
 
   it("ist gegen das eigene Schema gueltig", () => {

@@ -701,3 +701,139 @@ vielleicht wurde zweimal gekauft.
 Materielle Abweichung hält **alles** an, auch Verkäufe. Wenn interner und
 tatsächlicher Bestand auseinanderlaufen, ist jede weitere Order ein Schuss ins
 Dunkle.
+
+## 40. Ströme statt Modus — Paper ist keine Betriebsart
+
+Phase 1 führte `execution: "paper" | "live"` als sich ausschließende Modi. Das
+war falsch, und zwar nicht nur unbequem: es macht die **Datenerhebung**
+abschaltbar. Wer aus Vorsicht auf Paper stellt oder Live abschaltet, verliert
+genau in den interessanten Phasen die Beobachtungen.
+
+Ersetzt durch drei Ströme, die parallel laufen:
+
+| Strom | Abschaltbar | Bewegt Kapital |
+|---|---|---|
+| `AUTO_PAPER` | nein | nein |
+| `MANUAL_PAPER` | nein | nein |
+| `LIVE` | ja, Default aus | ja |
+
+`ALWAYS_ON_STREAMS` ist eine Konstante, keine Einstellung — eine Einstellung,
+die man setzen kann, wird irgendwann gesetzt. Auch der **Notstopp hält die
+Paper-Ströme nicht an**: er soll Kapital schützen, nicht die Beobachtung. Sonst
+fehlt ausgerechnet für die Phase, die den Stopp ausgelöst hat, die Datenbasis.
+
+## 41. Gelegenheit und Position sind verschiedene Dinge — mit verschiedenen Tabellen
+
+Eine Gelegenheit ist eine **Beobachtung**, kein Kapital. Sie entsteht für jeden
+bewerteten Token, nicht nur für die mit `ENTER` — sonst können Champion und
+Challenger nicht dieselben Gelegenheiten sehen (§93), und es gäbe keine
+Kontrollgruppe für die Ablehnungen.
+
+`opportunity_outcomes` hat deshalb **keine Kapitalspalte**: keine Positionsgröße,
+kein realisiertes Ergebnis, nur hypothetische Anteile und MFE/MAE je Horizont.
+Das ist der Kern der Kategorientrennung. Eine verpasste oder abgelehnte
+Gelegenheit kann nicht in eine Performance-Aussage geraten, weil es schlicht
+keine Spalte gibt, die sich mit einem Ergebnis verrechnen ließe — nicht, weil
+irgendwo ein Filter sie ausschließt. Filter sind Vereinbarungen; irgendeine
+künftige Abfrage hält sich nicht daran.
+
+## 42. MISSED ist eine Klassifikation, kein Zustand
+
+Der Zustandsautomat der Gelegenheit hat acht Zustände (`OFFERED`, `SEEN`,
+`USER_CONFIRMED`, `POSITION_OPENED`, `REJECTED`, `INVALIDATED`, `EXPIRED`,
+`CANCELLED`) — `MISSED` ist keiner davon.
+
+Grund: ob sich eine Reaktion gelohnt hätte, weiß man zum Zeitpunkt des Ablaufs
+noch nicht. `MISSED` ist eine nachträgliche Klassifikation von `EXPIRED` anhand
+des beobachteten Hochs. Ohne Verlaufsdaten bleibt es `EXPIRED` — und wird nicht
+optimistisch zu einer verpassten Gelegenheit erklärt.
+
+Bewusst getrennt von `TradeState`: eine Gelegenheit, die nie zu einer Position
+wurde, hat keinen Handelszustand. Ein gemeinsamer Automat hätte Zustände wie
+„abgelehnt" mit „geschlossen" in einer Tabelle vermischt.
+
+## 43. Die vier Invarianten sind Code, nicht Disziplin
+
+`MISSED ≠ LOSS`, `USER_REJECTED ≠ LOSS`, `PAPER ≠ LIVE` und „keine Kennzahl über
+verschiedene Sizing-Verfahren" stehen als je eigener Test in
+`packages/analytics/src/__tests__/invariants.test.ts`. Vier technische Sperren:
+
+1. **Kein Kapitalbezug** an Beobachtungen (`ObservationRow` hat keine
+   `Money`-Spalte) — verpasst und abgelehnt können strukturell nicht zu Verlusten
+   werden.
+2. **`PaperStream = Exclude<TradingStream, "LIVE">`** plus `mode: "paper"` am
+   Trade: ein Live-Trade ist in dieser Auswertung nicht darstellbar. Dazu eine
+   Laufzeitprüfung für ungetypte Datenbankzeilen, wo Typen nicht mehr helfen.
+   Zwei der Tests sind `@ts-expect-error`-Zusicherungen: fällt eine Typschranke
+   weg, schlägt der Typecheck mit „unused directive" fehl.
+3. **`computeCategoryStatistics` wirft** bei gemischten Schlüsseln statt still zu
+   mitteln. Eine Kennzahl über zwei Sizing-Verfahren ist nicht ungenau, sie ist
+   bedeutungslos — und still gemittelt sieht sie aus wie eine Aussage.
+4. **Die Form von `CategoryReport` ist im Test festgenagelt.** Ein später
+   ergänztes Summenfeld lässt den Test fehlschlagen und erzwingt eine
+   Entscheidung statt einer Gewohnheit.
+
+Ein bewusst nicht gemachtes Zugeständnis: es gibt in `analytics` **keine**
+Funktion, die über Kategorien oder Sizing-Verfahren hinweg summiert. Das ist
+Absicht, keine Lücke.
+
+## 44. `producedPosition` und `stillOpen` sind getrennt
+
+Beim Zusammenfassen der Beobachtungen fallen Gelegenheiten ohne
+Beobachtungskategorie an. Zwei verschiedene Fälle: eine eröffnete Position ist
+ein Ergebnis, eine noch offene Gelegenheit ist noch gar nichts. Eine gemeinsame
+Zahl wäre in beide Richtungen falsch — sie ließe offene Fälle wie Erfolge
+aussehen.
+
+Zusammen mit den Beobachtungskategorien ergeben beide wieder alle Gelegenheiten:
+die Aufstellung ist abstimmbar, nichts verschwindet.
+
+## 45. Die MISSED-Schwelle ist eine Berichtskonvention, keine Messung
+
+`DEFAULT_MISSED_MFE_THRESHOLD = 0.25` ist **nicht** aus Daten abgeleitet.
+Begründung nur für die Größenordnung: ein Round Trip kostet bei 100 EUR Einsatz
+nach dem Kostenmodell etwa 1,5 bis 3 Prozent, alles knapp darüber wäre kein
+verpasster Gewinn, sondern Rauschen. 25 Prozent liegt deutlich darüber.
+
+Sobald die Verteilung der `hypotheticalMfe` aus echten Beobachtungen vorliegt,
+gehört der Wert überprüft und ersetzt. Bis dahin steht er als Konvention da und
+nicht als Erkenntnis.
+
+## 46. Schreibschutz auf den Beweisspalten
+
+`feature_snapshots` und `manual_responses` bekommen in Migration
+`0002_opportunities.sql` ein `REVOKE UPDATE, DELETE` für die Anwendungsrolle.
+
+Beides sind Beweise: der eingefrorene Feature-Vektor, gegen den entschieden
+wurde, und die tatsächliche Reaktionszeit des Nutzers. Wären sie änderbar,
+könnte eine spätere Auswertung nachträglich zu ihrem eigenen Ergebnis passen —
+ohne dass es jemand merkt. Der `DO $$`-Block prüft erst, ob die Rolle existiert,
+damit Tests gegen PGlite ohne Rollen weiterhin durchlaufen.
+
+## 47. `USER_CONFIRMED` statt `CONFIRMED`
+
+Beim Schreiben des Tests „teilt keinen einzigen Zustand mit dem Handelsautomaten"
+fiel auf: `CONFIRMED` kam in **beiden** Zustandsräumen vor und bedeutete
+Verschiedenes.
+
+| Automat | `CONFIRMED` bedeutete |
+|---|---|
+| `TradeState` | die Transaktion ist on-chain bestätigt |
+| `OpportunityState` | der Nutzer hat den Alert bestätigt |
+
+Zwei Vokabulare mit einem gemeinsamen Wort sind in Logs und Abfragen nicht
+auseinanderzuhalten, und ein Filter über beide fällt nicht auf — er liefert
+plausibel aussehende Zeilen. Deshalb heißt der Zustand der Gelegenheit jetzt
+`USER_CONFIRMED`, ebenso die Reaktionsart in `manual_responses.kind`.
+
+Der Test steht als Regel: **die beiden Zustandsräume sind disjunkt.** Alle
+übrigen Paare waren schon vorher unterscheidbar (`POSITION_OPENED` gegen `OPEN`,
+`REJECTED` gegen `SIGN_REJECTED`, `EXPIRED` gegen `ABORTED_EXPIRED`) — die
+Kollision war die einzige.
+
+Die Kategorie heißt weiterhin `CONFIRMED_MANUAL_PAPER_PERFORMANCE`: das ist der
+vom Nutzer vorgegebene Name, und dort gibt es keine Verwechslungsgefahr.
+
+Kein Migrationsaufwand: `state` und `kind` liegen als `text` in der Datenbank,
+die Aufzählung existiert nur in TypeScript. Später wäre derselbe Schritt eine
+Datenmigration gewesen.

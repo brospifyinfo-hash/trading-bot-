@@ -1,23 +1,21 @@
 import type { StrategyParameters } from "./strategy-schema";
 
 /**
- * Betriebsmodus.
+ * Betriebszustand.
  *
- * `paper` und `live: false` sind hier fest verdrahtet. Live-Trading wird
- * ausschliesslich zur Laufzeit, bewusst und mit 2FA aktiviert — nie durch eine
- * Konfigurationsdatei und nie als Default.
+ * ERSETZT den frueheren `BotMode` mit seiner Achse `execution: "paper" | "live"`.
+ * Diese Achse war falsch modelliert: sie machte Paper und Live zu Alternativen.
+ * Spec §60 und §138 verlangen, dass Paper Trading IMMER laeuft — unabhaengig von
+ * Auto, Manual, Live und davon, ob der Nutzer online ist.
+ *
+ * Konfigurierbar ist deshalb nur noch, was echtes Geld betrifft. Die beiden
+ * Paper-Stroeme tauchen hier bewusst nicht als Schalter auf: eine Einstellung,
+ * die man setzen kann, wird irgendwann gesetzt — und dann fehlen ausgerechnet
+ * fuer die vorsichtigen Phasen die Forschungsdaten.
+ *
+ * Re-exportiert aus @sae/core, damit es genau eine Definition gibt.
  */
-export interface BotMode {
-  readonly execution: "paper" | "live";
-  readonly decision: "manual" | "auto";
-  readonly liveTradingEnabled: boolean;
-}
-
-export const DEFAULT_BOT_MODE: BotMode = {
-  execution: "paper",
-  decision: "manual",
-  liveTradingEnabled: false,
-};
+export { DEFAULT_SYSTEM_STATE, type SystemState, type TradingStream, type SizingMode } from "@sae/core";
 
 /**
  * Konservative Startparameter.

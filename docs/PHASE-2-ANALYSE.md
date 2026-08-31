@@ -300,7 +300,7 @@ EXECUTED, INVALIDATED`. Drei Paare sind nicht trennscharf:
 war profitabel — das ist die Größe, die §66 auswerten will):
 
 ```
-OFFERED ──► SEEN ──► CONFIRMED ──► POSITION_OPENED
+OFFERED ──► SEEN ──► USER_CONFIRMED ──► POSITION_OPENED
    │          │          │
    │          │          └──► INVALIDATED   (Revalidierung fehlgeschlagen)
    │          └──► REJECTED                 (Nutzer lehnt bewusst ab)
@@ -441,7 +441,8 @@ feature_snapshots ──────┐  append-only, REVOKE UPDATE/DELETE
           ┌─────────────┴─────────────┐
           ▼                           ▼
    manual_responses            paper_positions
-   (SEEN/CONFIRMED/REJECTED)   (nur AUTO-ENTER + MANUAL-CONFIRMED)
+   SEEN | USER_CONFIRMED       nur AUTO-ENTER und
+   | REJECTED                   MANUAL USER_CONFIRMED
    mit Zeitstempelkette §106    sizing_mode: FIXED_100 | RISK_BASED
                                         │
                                         ▼
