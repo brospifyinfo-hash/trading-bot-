@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { opportunities } from "./opportunities";
 
@@ -37,7 +37,9 @@ export const latencySamples = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("latency_samples_opportunity_idx").on(t.opportunityId),
+    // Eine Kette je Gelegenheit. Zwei waeren zwei Antworten auf dieselbe Frage,
+    // und die Auswertung wuesste nicht, welche gilt.
+    uniqueIndex("latency_samples_opportunity").on(t.opportunityId),
     index("latency_samples_stream_idx").on(t.stream, t.decidedAt),
   ],
 );

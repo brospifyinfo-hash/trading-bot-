@@ -27,6 +27,8 @@ export const WORKER_ROLES = [
   "scheduler",
   // Laeuft auch ohne Marktdaten: der Takt, der eine wiederkehrende Quelle bemerkt.
   "provider-health",
+  // Zieht Auftraege aus der dauerhaften Queue und fuehrt sie aus.
+  "consumer",
 ] as const;
 
 export type WorkerRole = (typeof WORKER_ROLES)[number];

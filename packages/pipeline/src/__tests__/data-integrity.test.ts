@@ -45,7 +45,7 @@ function report(status: ProviderStatusReport["status"]): ProviderStatusReport {
   };
 }
 
-describe("Invariante: FUTURE DATA MUST NEVER ENTER HISTORICAL DECISIONS", () => {
+describe("NO_FUTURE_DATA_IN_HISTORICAL_DECISION — FUTURE DATA MUST NEVER ENTER HISTORICAL DECISIONS", () => {
   it("weist eine Beobachtung mit Zeitstempel aus der Zukunft ab", async () => {
     // Ein Anbieter mit falsch gestellter Uhr wuerde sonst Daten in die Historie
     // schreiben, die es zum Entscheidungszeitpunkt noch nicht gab — und der
@@ -104,7 +104,7 @@ describe("Invariante: FUTURE DATA MUST NEVER ENTER HISTORICAL DECISIONS", () => 
   });
 });
 
-describe("Invariante: LIVE DATA FAILURE MUST NEVER PRODUCE A VALID TRADE SIGNAL", () => {
+describe("LIVE_DATA_FAILURE_CANNOT_CREATE_VALID_SIGNAL — LIVE DATA FAILURE MUST NEVER PRODUCE A VALID TRADE SIGNAL", () => {
   const blocked = summarizeFleet([report("BLOCKED")]);
   const connected = summarizeFleet([report("CONNECTED")]);
   const fresh = {
@@ -158,7 +158,7 @@ describe("Invariante: LIVE DATA FAILURE MUST NEVER PRODUCE A VALID TRADE SIGNAL"
   });
 });
 
-describe("Invariante: HISTORICAL PERFORMANCE ≠ GUARANTEED FUTURE PERFORMANCE", () => {
+describe("HISTORICAL_PERFORMANCE_IS_NOT_GUARANTEED — HISTORICAL PERFORMANCE ≠ GUARANTEED FUTURE PERFORMANCE", () => {
   it("laesst sich nicht als Code pruefen — und wird deshalb als Kette erzwungen", () => {
     // Diese Invariante ist eine Aussage ueber die Welt, nicht ueber den Code.
     // Was pruefbar ist: dass keine Stufe der Pipeline eine Freigabe erteilt.

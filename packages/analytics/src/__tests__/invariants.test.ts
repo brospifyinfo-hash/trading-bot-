@@ -41,7 +41,7 @@ const baseRecords: readonly PaperTradeRecord[] = [
   paperRecord(35, "MANUAL_PAPER", "FIXED_100"),
 ];
 
-describe("Invariante: MISSED OPPORTUNITY ≠ LOSS", () => {
+describe("MISSED_IS_NOT_LOSS — MISSED OPPORTUNITY ≠ LOSS", () => {
   it("ordnet eine abgelaufene Gelegenheit mit hohem Hoch als MISSED ein, nicht als Trade", () => {
     const { summaries, producedPosition, stillOpen } = summarizeObservations([
       observation("EXPIRED", 1.8),
@@ -105,7 +105,7 @@ describe("Invariante: MISSED OPPORTUNITY ≠ LOSS", () => {
   });
 });
 
-describe("Invariante: USER REJECTED ≠ LOSS", () => {
+describe("USER_REJECTED_IS_NOT_LOSS — USER REJECTED ≠ LOSS", () => {
   it("fuehrt eine bewusste Ablehnung als eigene Kategorie, nicht als Trade", () => {
     const { summaries, producedPosition } = summarizeObservations([
       observation("REJECTED", 0.1, -0.92),
@@ -140,7 +140,7 @@ describe("Invariante: USER REJECTED ≠ LOSS", () => {
   });
 });
 
-describe("Invariante: PAPER TRADE ≠ LIVE TRADE", () => {
+describe("PAPER_IS_NOT_LIVE — PAPER TRADE ≠ LIVE TRADE", () => {
   it("hat fuer LIVE keine Performance-Kategorie", () => {
     expect(performanceCategoryOf("LIVE")).toBeNull();
     expect(performanceCategoryOf("AUTO_PAPER")).toBe("AUTO_PAPER_PERFORMANCE");

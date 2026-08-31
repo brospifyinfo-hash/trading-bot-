@@ -1,7 +1,7 @@
-
-import { providerId } from "@sae/core";
+import { providerId, systemClock } from "@sae/core";
 import { loadEnv, providerEnvSchema, readProviderConfig } from "@sae/config";
 import { summarizeFleet, type ProviderStatusReport } from "@sae/providers";
+import { createDatabase, ProviderHealthStore } from "@sae/db";
 
 import type { RoleContext, RoleHandler } from "../role";
 
@@ -12,14 +12,16 @@ import type { RoleContext, RoleHandler } from "../role";
  * Mechanismus, mit dem das System von selbst wieder anlaeuft. Er beantwortet
  * genau eine Frage: **gibt es eine erreichbare Quelle?**
  *
- * Solange keine da ist, entsteht hier ein Bericht mit `NOT_CONFIGURED` oder
- * `BLOCKED` je Anbieter. Das ist kein Platzhalter, sondern das richtige
- * Ergebnis: ein Anbieter ohne Basis-URL ist nicht ausgefallen, es gibt ihn
- * hier schlicht nicht.
+ * Zwei Dinge, die dieser Worker ausdruecklich NICHT tut:
  *
- * Was dieser Worker NICHT tut: einen Anbieter abfragen, fuer den es keinen
- * gegen seine Spezifikation geprueften Adapter gibt. Ein erfundener Pfad
- * wuerde einen Fehlschlag erzeugen, der wie ein Anbieterproblem aussieht.
+ * - Einen Anbieter abfragen, fuer den es kein gegen seine Spezifikation
+ *   geprueftes Adapter-Modul gibt. Ein erfundener Pfad wuerde einen Fehlschlag
+ *   erzeugen, der wie ein Anbieterproblem aussieht.
+ * - Einen Erfolg behaupten, den es nicht gab. Ohne Abfrage bleiben letzter
+ *   Erfolg, Latenz und Frische `null` — und ausdruecklich nicht 0.
+ *
+ * Das Ergebnis wird PERSISTIERT. Worker und Dashboard reden nicht miteinander;
+ * ein Status im Speicher des Workers ist fuer die Anzeige nicht da.
  */
 export function buildStatusReports(env: NodeJS.ProcessEnv): readonly ProviderStatusReport[] {
   const providerEnv = loadEnv(providerEnvSchema, env);
@@ -57,24 +59,68 @@ export function buildStatusReports(env: NodeJS.ProcessEnv): readonly ProviderSta
   });
 }
 
+/** Ein Messdurchlauf: Zustand ermitteln und festschreiben. */
+export async function sampleProviderHealth(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly store: ProviderHealthStore;
+  readonly at?: Date;
+}): Promise<{ readonly written: number; readonly marketDataConnected: boolean; readonly summary: string }> {
+  const reports = buildStatusReports(input.env);
+  const fleet = summarizeFleet(reports);
+  const written = await input.store.record(reports, input.at ?? systemClock.now());
+  return { written, marketDataConnected: fleet.anyMarketDataConnected, summary: fleet.summary };
+}
+
+/**
+ * Wie oft gemessen wird.
+ *
+ * Eine Minute ist ein Kompromiss: haeufig genug, dass eine wiederkehrende
+ * Quelle nicht lange unbemerkt bleibt, selten genug, dass der Verlauf nicht
+ * ins Unermessliche waechst. Der Wert ist eine Festlegung, keine Messung — mit
+ * echten Anbietern gehoert er ueberprueft.
+ */
+const SAMPLE_INTERVAL_MS = 60_000;
+
+let sampleTimer: ReturnType<typeof setInterval> | null = null;
+
 export const providerHealthRole: RoleHandler = {
   name: "provider-health",
   async start(ctx: RoleContext): Promise<void> {
-    const reports = buildStatusReports(process.env);
-    const fleet = summarizeFleet(reports);
+    const url = process.env["DATABASE_URL"];
+    if (url === undefined || url.length === 0) {
+      // Eine Messung, die nur im Log steht, beantwortet die Frage des
+      // Dashboards nicht. Ohne Datenbank hat dieser Takt keinen Zweck.
+      throw new Error("provider-health benoetigt DATABASE_URL");
+    }
+    const store = new ProviderHealthStore(createDatabase(url));
 
-    ctx.logger.info(
-      {
-        role: "provider-health",
-        marketDataConnected: fleet.anyMarketDataConnected,
-        blocked: fleet.blockedCount,
-        notConfigured: fleet.notConfiguredCount,
-        summary: fleet.summary,
-      },
-      "Provider-Status ermittelt",
-    );
+    const runOnce = async (): Promise<void> => {
+      const result = await sampleProviderHealth({ env: process.env, store });
+      ctx.logger.info(
+        {
+          role: "provider-health",
+          written: result.written,
+          marketDataConnected: result.marketDataConnected,
+          summary: result.summary,
+        },
+        "Provider-Status gemessen",
+      );
+    };
+
+    // Sofort einmal messen, damit der Scheduler nicht bis zum ersten Takt
+    // wartet, um zu erfahren, ob es Daten gibt.
+    await runOnce();
+    sampleTimer = setInterval(() => {
+      void runOnce().catch((error: unknown) => {
+        ctx.logger.error(
+          { error: error instanceof Error ? error.message : String(error) },
+          "Provider-Messung fehlgeschlagen",
+        );
+      });
+    }, SAMPLE_INTERVAL_MS);
   },
   async stop(): Promise<void> {
-    // Zustandslos: der Bericht wird bei jedem Takt neu gebildet.
+    if (sampleTimer !== null) clearInterval(sampleTimer);
+    sampleTimer = null;
   },
 };

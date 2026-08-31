@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  check,
   doublePrecision,
   index,
   integer,
@@ -67,6 +68,11 @@ export const featureSnapshots = pgTable(
   (t) => [
     index("feature_snapshots_pit_idx").on(t.tokenId, t.observedAt),
     index("feature_snapshots_hash_idx").on(t.inputHash),
+    // Ein Entscheidungszustand je Token, Beobachtungszeitpunkt und
+    // Engine-Version. Zweimal gespeichert waere zweimal dieselbe Wahrheit —
+    // und irgendwann laufen die beiden Kopien auseinander.
+    uniqueIndex("feature_snapshots_unique").on(t.tokenId, t.observedAt, t.scoreEngineVersion),
+    check("feature_snapshots_completeness", sql`data_completeness between 0 and 1`),
   ],
 );
 
@@ -120,6 +126,10 @@ export const opportunities = pgTable(
     // Findet abgelaufene Gelegenheiten fuer den Scheduler (§I-11): der Uebergang
     // nach EXPIRED muss von der Zeit kommen, nicht vom naechsten Login.
     index("opportunities_respond_by_idx").on(t.respondBy).where(sql`state in ('OFFERED','SEEN')`),
+    // Ein Antwortfenster, das vor der Entscheidung endet, ist keine
+    // Gelegenheit, sondern ein Datenfehler.
+    check("opportunities_respond_after_decision", sql`respond_by is null or respond_by > decided_at`),
+    check("opportunities_closed_after_decision", sql`closed_at is null or closed_at >= decided_at`),
   ],
 );
 
@@ -230,10 +240,28 @@ export const paperPositions = pgTable(
     exitReason: text("exit_reason"),
     openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+
+    /**
+     * Optimistische Sperre.
+     *
+     * Zwei Worker, die dieselbe Position gleichzeitig anfassen, duerfen sich
+     * nicht gegenseitig ueberschreiben — sonst geht ein Teilverkauf verloren
+     * und der Restbestand stimmt nicht mehr mit der Chain ueberein. Jede
+     * Aenderung erhoeht diesen Zaehler und verlangt den erwarteten Wert im
+     * WHERE.
+     */
+    version: integer("version").notNull().default(0),
   },
   (t) => [
     index("paper_positions_stream_idx").on(t.stream, t.sizingMode, t.openedAt),
     index("paper_positions_open_idx").on(t.closedAt),
+    // Zustandskonsistenz in der Datenbank, nicht im Anwendungscode: ein
+    // Restbestand ausserhalb von [0, Einstieg] ist ein Buchungsfehler, und
+    // eine geschlossene Position ohne Grund ist nicht auswertbar.
+    check("paper_positions_remaining_range", sql`remaining_amount_raw >= 0 and remaining_amount_raw <= entry_amount_raw`),
+    check("paper_positions_notional_positive", sql`entry_notional_minor > 0`),
+    check("paper_positions_closed_order", sql`closed_at is null or closed_at >= opened_at`),
+    check("paper_positions_closed_has_reason", sql`closed_at is null or exit_reason is not null`),
   ],
 );
 

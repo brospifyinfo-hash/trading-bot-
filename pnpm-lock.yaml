@@ -161,6 +161,15 @@ importers:
       '@sae/core':
         specifier: workspace:*
         version: link:../core
+      '@sae/pipeline':
+        specifier: workspace:*
+        version: link:../pipeline
+      '@sae/providers':
+        specifier: workspace:*
+        version: link:../providers
+      '@sae/research':
+        specifier: workspace:*
+        version: link:../research
       drizzle-orm:
         specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.2.17)(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)

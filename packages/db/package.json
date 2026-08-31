@@ -3,12 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@sae/core": "workspace:*",
     "drizzle-orm": "^0.38.3",
-    "postgres": "^3.4.5"
+    "postgres": "^3.4.5",
+    "@sae/pipeline": "workspace:*",
+    "@sae/providers": "workspace:*",
+    "@sae/research": "workspace:*"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.17",

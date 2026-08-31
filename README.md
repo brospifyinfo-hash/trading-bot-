@@ -2,13 +2,24 @@
 
 Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 
-**Status: Discovery, Provider-Layer, Scoring, Risk-Engine, Entscheidungslogik, Paper-Ausführung, Positionsverwaltung, Statistik, Backtest und Manual-Mode-Sicherheit implementiert. Kein Live-Trading, keine validierte Strategie.**
+**Status: `P3 = BLOCKED BY LIVE DATA`.**
+
+Die Pipeline ist gebaut und verdrahtet: dauerhafte Queue, Scheduler, Consumer mit
+Retry und Dead Letter, persistente Schreibpfade, Datenbank-Invarianten,
+Provider-Health im Minutentakt. Was fehlt, ist eine erreichbare Marktdatenquelle.
+Ohne sie entstehen keine Snapshots, keine Scores, keine Gelegenheiten und keine
+Paper-Trades — und das ist Absicht, nicht ein offener Punkt.
+
+Kein Live-Trading. Keine validierte Strategie. Keine Kennzahl aus echten Daten.
+Eine vollständig vorbereitete Pipeline ist **kein Beleg für Profitabilität**.
 
 ## Dokumente
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Systemarchitektur, Datenmodell, State Machines, Security-Modell, Datenquellen, Kosten, Deployment, Teststrategie
 - [`docs/PHASE-1-PLAN.md`](docs/PHASE-1-PLAN.md) — Implementierungsplan Phase 1
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — getroffene Annahmen und Abweichungen vom ursprünglichen Plan
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Betriebsarchitektur: was auf Vercel läuft und was ausdrücklich nicht
+- [`docs/BLOCKED.md`](docs/BLOCKED.md) — was auf echte Daten wartet und warum
 - [`docs/providers/`](docs/providers/) — Verifikationsstand je Datenquelle
 
 ## Grundregeln
@@ -39,7 +50,9 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 | `packages/alerts` | Einmal-Tokens, Alert-Cooldown, Live-Revalidierung mit Diff |
 | `packages/execution` | Pre-Trade-Validierung für Kauf und Verkauf, Signatur-Auflösung, Bestandsabgleich |
 | `apps/signer` | Policy-Engine mit Programm-Allowlist, Abflussgrenzen, Replay-Schutz |
-| `apps/worker` | Rollenbasierter Prozess, Queue-Definitionen, Graceful Shutdown |
+| `packages/pipeline` | Idempotenz, Checkpoints, Backoff, Scheduler-Takte, Aufnahme mit Herkunft, Anbieterkette aus der Konfiguration |
+| `packages/research` | Forschungs-Batches mit eingefrorenen Zeitgrenzen, Kandidaten-Lebenszyklus, Promotionsgates, No-Edge-Modus |
+| `apps/worker` | Rollenbasierter Prozess, dauerhafte Queue, Scheduler, Consumer mit Dead Letter, Graceful Shutdown |
 | `apps/web` | Trading-Terminal-Shell mit Modus-Anzeige und Emergency Stop |
 
 ## Entwicklung
@@ -47,7 +60,15 @@ Datengetriebenes autonomes Trading-System für Solana-Memecoins.
 ```bash
 pnpm install
 pnpm check        # typecheck + lint + test
-pnpm test         # 462 Tests, inkl. No-Look-Ahead gegen echtes Postgres (PGlite)
+pnpm test         # 910 Tests, inkl. No-Look-Ahead, Persistenz und Queue gegen
+                  # echtes Postgres (PGlite, kein Mock)
+```
+
+Datenbank-Migrationen:
+
+```bash
+pnpm db:generate                       # Schema → neue Migration
+pnpm --filter @sae/db exec drizzle-kit migrate   # anwenden (vorwärts-only)
 ```
 
 Lokal mit Docker:
@@ -63,3 +84,18 @@ cp .env.example .env      # Werte eintragen
 2. **`PitReader`** — jede Lesemethode verlangt `asOf`. Es gibt keine Methode, die „den aktuellen Stand" liefert; Look-Ahead ist damit ein Compile-Fehler statt einer Disziplinfrage.
 3. **Ein Kostenmodell** — Paper Trading, Backtest und Live-Pre-Check rechnen mit denselben Funktionen. Golden-File-Tests machen jede Änderung sichtbar.
 4. **Versionierung ab dem ersten Datensatz** — `score_engine_version`, `strategy_version_id`, `cost_model_version` an jeder Entscheidung. Nachträglich wäre die Historie wertlos.
+
+
+## Betriebsarchitektur in einem Absatz
+
+Vier Dinge, die getrennt laufen müssen und deshalb getrennt deployt werden:
+
+| Teil | Wo | Warum dort |
+|---|---|---|
+| Web, Dashboard, API, Bestätigungs-Flow | Vercel | anfragegetrieben, kurze Laufzeit, gut horizontal skalierbar |
+| Scheduler, Consumer, Provider-Health | dauerhaft laufender Host (Container/VM) | Prozesse mit Takt und Zustand; eine Serverless-Funktion endet nach jeder Anfrage |
+| PostgreSQL | verwalteter Dienst | Quelle der Wahrheit, inklusive Queue |
+| Datenquellen | extern | eigener Rate-Limit- und Ausfallraum |
+
+**Der Worker gehört ausdrücklich nicht auf Vercel.** Details und die Begründung
+stehen in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
