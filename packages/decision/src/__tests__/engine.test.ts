@@ -178,7 +178,7 @@ describe("Erwartungswert und der Bootstrap-Fall", () => {
 
   it("lehnt einen negativen Erwartungswert ab", () => {
     const negative = {
-      estimate: { kind: "ESTIMATED" as const, evPerUnit: -0.03, confidence: 0.9, sampleSize: 200 },
+      estimate: { kind: "ESTIMATED" as const, evPerUnit: -0.03, evIntervalConfidence: 0.9, sampleSize: 200 },
       pointEv: -0.03,
       conservativeEv: -0.03,
       winRate: 0.4,
@@ -191,7 +191,7 @@ describe("Erwartungswert und der Bootstrap-Fall", () => {
 
   it("verlangt im Live-Betrieb ausreichende Konfidenz", () => {
     const shaky = {
-      estimate: { kind: "ESTIMATED" as const, evPerUnit: 0.05, confidence: 0.2, sampleSize: 110 },
+      estimate: { kind: "ESTIMATED" as const, evPerUnit: 0.05, evIntervalConfidence: 0.2, sampleSize: 110 },
       pointEv: 0.09,
       conservativeEv: 0.05,
       winRate: 0.6,

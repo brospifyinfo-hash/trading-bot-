@@ -99,7 +99,9 @@ describe("estimateEv", () => {
       minSampleSize: 10,
     });
     if (small.estimate.kind === "ESTIMATED" && large.estimate.kind === "ESTIMATED") {
-      expect(large.estimate.confidence).toBeGreaterThan(small.estimate.confidence);
+      expect(large.estimate.evIntervalConfidence).toBeGreaterThan(
+        small.estimate.evIntervalConfidence,
+      );
     }
   });
 });

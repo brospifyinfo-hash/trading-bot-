@@ -75,8 +75,15 @@ export type EvEstimate =
       readonly kind: "ESTIMATED";
       /** Erwartungswert pro eingesetzter Einheit, nach Kosten. */
       readonly evPerUnit: number;
-      /** 0..1, waechst mit der Stichprobengroesse. */
-      readonly confidence: number;
+      /**
+       * Wie schmal das Wilson-Intervall auf die Trefferquote ist, 0..1.
+       *
+       * Ausdruecklich NICHT „wie sicher ist der Fall": das ist
+       * `caseConfidence` in `@sae/scoring` und zaehlt aehnliche historische
+       * Faelle. Zwei Groessen, die beide „Confidence" hiessen, waeren im Alert
+       * nicht auseinanderzuhalten (K-4).
+       */
+      readonly evIntervalConfidence: number;
       readonly sampleSize: number;
     }
   | {

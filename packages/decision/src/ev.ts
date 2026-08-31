@@ -93,13 +93,13 @@ export function estimateEv(input: EvInputs): EvDetail {
 
   // Konfidenz aus der Breite des Intervalls: eine enge Schaetzung ist
   // vertrauenswuerdiger als eine breite, unabhaengig davon, wie guenstig sie ist.
-  const confidence = Math.max(0, Math.min(1, 1 - (winRate - winRateLowerBound) * 2));
+  const evIntervalConfidence = Math.max(0, Math.min(1, 1 - (winRate - winRateLowerBound) * 2));
 
   return {
     estimate: {
       kind: "ESTIMATED",
       evPerUnit: conservativeEv,
-      confidence,
+      evIntervalConfidence,
       sampleSize: n,
     },
     pointEv,

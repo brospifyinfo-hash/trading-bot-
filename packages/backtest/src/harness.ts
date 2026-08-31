@@ -271,7 +271,7 @@ export async function runBacktest(
         portfolioValue,
         stopDistance: config.parameters.exit.stopLossBps / 10_000,
         maxNotionalByLiquidity: money(portfolioValue.minor, currency),
-        evConfidence: ev.estimate.kind === "ESTIMATED" ? ev.estimate.confidence : 0,
+        evConfidence: ev.estimate.kind === "ESTIMATED" ? ev.estimate.evIntervalConfidence : 0,
         minimumNotional: money(500n, currency),
         parameters: config.parameters,
       });

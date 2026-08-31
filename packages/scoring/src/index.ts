@@ -1,3 +1,5 @@
+export * from "./data-quality";
+export * from "./case-confidence";
 export * from "./features";
 export * from "./sub-score";
 export * from "./v1/sub-scores";

@@ -837,3 +837,118 @@ vom Nutzer vorgegebene Name, und dort gibt es keine Verwechslungsgefahr.
 Kein Migrationsaufwand: `state` und `kind` liegen als `text` in der Datenbank,
 die Aufzählung existiert nur in TypeScript. Später wäre derselbe Schritt eine
 Datenmigration gewesen.
+
+## 48. Der Erwartungswert kennt jetzt beide Ausführungen
+
+`estimateEv` bekam die Kosten als fertigen Anteil gereicht. Drei Fehler, die
+darin bequem Platz hatten:
+
+1. **Nur der Einstieg wurde gerechnet.** Ein Trade hat zwei Ausführungen.
+2. **Das Ausstiegsvolumen ist ein anderes.** Bei +200 % ist die Verkaufsorder
+   dreimal so groß wie der Einstieg, und DEX-Fee, Impact und Drift wirken auf
+   dieses Volumen. „Kosten mal zwei" unterschätzt genau die Trades, die den
+   Erwartungswert tragen.
+3. **Doppelt abgezogen.** Realisierte Renditen sind bereits netto. Zieht man
+   Modellkosten nochmals ab, sinkt der EV mit jeder Verbesserung des
+   Kostenmodells — ein Fehler, der wie Vorsicht aussieht.
+
+`composeRealisticEv` bewertet deshalb beide Äste getrennt:
+
+```
+EV(p) = p · (Gewinn − Ausstiegskosten bei Gewinnvolumen)
+      − (1−p) · (Verlust + Ausstiegskosten bei Verlustvolumen)
+      − Einstiegskosten
+```
+
+`returnBasis` ist Pflichtfeld ohne Default — es gibt keine vertretbare Annahme
+über die Herkunft einer Stichprobe. Bei `NET_OF_COSTS` wird nicht noch einmal
+abgezogen, und ein Caveat sagt, dass der EV dann die historischen und nicht die
+aktuellen Kosten enthält. Für die aktuelle Ausführungslage ist das Kostengate
+zuständig, nicht der EV.
+
+Der Breakeven liegt **über** dem reinen Round Trip, weil der Ausstieg am
+gestiegenen Volumen kostet: `R = (k + Einstieg) / (1 − k)`.
+
+## 49. RR ist kein Erwartungswert — und sagt das selbst
+
+`computeRiskReward` trägt in jeder Ausgabe den Satz, dass ein
+Szenarienverhältnis ohne Trefferquote nichts über Profitabilität sagt. RR 5:1
+bei 10 % Trefferquote ist ein Verlustgeschäft, und diese Zahl steht sonst
+unkommentiert in Alerts.
+
+Drei Unterschiede zur üblichen Rechnung:
+
+- **Der Stop ist teurer als der Stop.** Stopabstand plus Slippage bis zum Fill
+  plus beide Ausführungen. `stopSlippageBps` ist Pflichtfeld: bei einem Memecoin
+  im Abverkauf ist das der größte Posten, und ein stiller Nullwert ließe jeden
+  Stop besser aussehen, als er sich verhält.
+- **Jede Leiterstufe einzeln.** Eigenes Volumen, eigene Kosten.
+- **Rest ohne Plan zählt nicht.** Mit Trailing Stop wird der Rest an dessen
+  Untergrenze bewertet (erreichtes Hoch minus Trailing-Abstand — eine Untergrenze,
+  kein Zielkurs). Ohne Trailing Stop bleibt er aus der Chance heraus.
+
+## 50. Zwei Dinge hießen „Confidence"
+
+`EvEstimate.confidence` (Breite des Wilson-Intervalls) heißt jetzt
+`evIntervalConfidence`. Daneben steht `caseConfidence` aus §21: die Anzahl
+ähnlicher historischer Fälle.
+
+Verwandt, aber verschieden: viele Fälle mit breiter Streuung heißen „das Muster
+trennt nicht", wenige Fälle mit enger Streuung heißen „wir wissen es noch
+nicht". Unter einem Namen wäre im Alert später nicht mehr erkennbar gewesen,
+welche der beiden dort steht.
+
+`combineConfidence` nimmt das **Minimum**, nicht den Mittelwert: die schwächere
+Größe begrenzt, was über den Fall gesagt werden kann. Ein Mittelwert erlaubte,
+eine breite Ergebnisstreuung mit einer großen Fallzahl zuzudecken.
+
+`caseConfidence` führt den `bucketKey` mit. Die Fallzahl hängt vollständig
+davon ab, wie eng „ähnlich" definiert ist — eine weitere Definition liefert mehr
+Fälle und damit höhere Konfidenz, ohne dass sich am Wissen etwas geändert hätte.
+Mitgeführt ist das wenigstens sichtbar.
+
+## 51. Datenqualität ist nicht ausgleichbar
+
+`dataCompleteness` bleibt, wird aber zu **einem von fünf** Eingängen:
+Vollständigkeit, Frische, Latenz, Konsistenz, Provider-Gesundheit. Die vier
+neuen sind genau die Fälle, in denen Vollständigkeit lügt — alle Felder da, aber
+vier Minuten alt; alle Felder da, aber zwei Provider widersprechen sich.
+
+Zwei Regeln, die beim Testen entstanden sind:
+
+- **Eine ungeprüfte Dimension wird nicht zur bestandenen.** „Wir haben nicht auf
+  Widersprüche geprüft" darf nicht zu „keine Widersprüche" werden. Sie geht
+  nicht in den Mittelwert ein und steht in `unassessed`; das Gate verlangt
+  zusätzlich eine Mindestzahl beurteilter Dimensionen.
+- **Der Mittelwert allein reicht als Gate nicht.** 20 % der Felder plus fünf
+  Widersprüche kommen mit drei perfekten Dimensionen immer noch auf 64 Punkte.
+  Deshalb prüft das Gate zusätzlich jede einzelne Dimension gegen eine
+  Untergrenze. Die Schwelle wurde **nicht** an den Fall angepasst — das wäre
+  Parameteranpassung an einen Wunsch; stattdessen ist der Aggregator korrigiert.
+
+Der Score fließt **nicht** in den Handelsscore ein. Verrechnet man beides, ist
+hinterher nicht erkennbar, welche der zwei Größen die Entscheidung getragen hat.
+
+## 52. Einstiegsqualität misst nur, was vor dem Hoch passiert ist
+
+MFE, MAE, Exit Efficiency und Entry Quality kommen aus demselben Kursverlauf,
+beurteilen aber verschiedene Entscheidungen. Der Punkt, an dem die übliche
+Rechnung schiefgeht: für die **Einstiegsqualität** zählt nur der Rückgang **vor**
+dem Hoch. Ein Einbruch danach ist ein Ausstiegsproblem.
+
+Zwei Verläufe mit identischem MFE und identischem MAE — erst −50 % dann +100 %,
+gegen erst +100 % dann −50 % — sind völlig verschiedene Trades. Nur die
+Reihenfolge trennt sie, und ein Gesamt-MAE wirft beide zusammen: man bestraft
+den Einstieg für einen verpassten Ausstieg und optimiert anschließend die
+falsche Seite.
+
+Weitere Festlegungen:
+
+- **MFE bleibt negativ**, wenn der Kurs nie über den Einstieg kam. Auf 0
+  gedeckelt würde es behaupten, es habe einen Ausstieg zum Einstandskurs gegeben.
+- **Exit Efficiency ist `null`**, wenn es nie einen Gewinn zu holen gab — nicht
+  0 („alles verpasst") und nicht 1 („perfekt").
+- **Unsortierte Verläufe werfen.** Stilles Sortieren würde einen Fehler in der
+  Zeitreihenabfrage verdecken, und die Reihenfolge ist hier die ganze Aussage.
+- **Zusammenfassungen nehmen Mediane.** Ein einzelner Verzehnfacher zieht jeden
+  Mittelwert so weit hoch, dass die Kennzahl nur noch diesen Trade beschreibt.

@@ -173,7 +173,7 @@ export function decide(ctx: DecisionContext): Decision {
       ),
     );
   } else {
-    const { evPerUnit, confidence } = ctx.ev.estimate;
+    const { evPerUnit, evIntervalConfidence } = ctx.ev.estimate;
     // Entschieden wird auf der konservativen Untergrenze, nicht auf der
     // Punktschaetzung: bei duenner Stichprobe ist die Punktschaetzung
     // schmeichelhaft und die Untergrenze ehrlich.
@@ -186,7 +186,7 @@ export function decide(ctx: DecisionContext): Decision {
         rejectionReasons: ["EV_NEGATIVE"],
       };
     }
-    if (isLive && confidence < ctx.parameters.entryGates.minEvConfidence) {
+    if (isLive && evIntervalConfidence < ctx.parameters.entryGates.minEvConfidence) {
       return {
         ...base,
         kind: "REJECT",
@@ -198,7 +198,7 @@ export function decide(ctx: DecisionContext): Decision {
     reasons.push(
       reason(
         "POSITIVE_EV",
-        `Konservativer Erwartungswert ${(evPerUnit * 100).toFixed(2)} % bei Konfidenz ${confidence.toFixed(2)}`,
+        `Konservativer Erwartungswert ${(evPerUnit * 100).toFixed(2)} % bei Intervallkonfidenz ${evIntervalConfidence.toFixed(2)}`,
       ),
     );
   }
