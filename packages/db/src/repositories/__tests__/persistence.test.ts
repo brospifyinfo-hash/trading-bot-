@@ -67,6 +67,17 @@ function opportunityInput(overrides: { decidedAt?: Date; stream?: "AUTO_PAPER" |
   const decidedAt = overrides.decidedAt ?? at(seq * 60_000);
   return {
     tokenId,
+    // Diese Tests pruefen den Produktionspfad, also LIVE-Herkunft. Der
+    // Fixture-Pfad hat eigene Tests, die die Trennung nachweisen.
+    provenance: {
+      sourceType: "LIVE" as const,
+      sourceProvider: "persistence-test",
+      sourceTier: "PRIMARY" as const,
+      sourceTimestamp: decidedAt,
+      dataTimestamp: decidedAt,
+      decisionTimestamp: decidedAt,
+      dataQuality: 0.8,
+    },
     stream: overrides.stream ?? ("AUTO_PAPER" as const),
     decisionKind: "ENTER" as const,
     finalScore: 82,
@@ -118,6 +129,8 @@ describe("DUPLICATE_EVENT_CANNOT_CREATE_DUPLICATE_TRADE", () => {
       strategyVersionId,
       openedAt: after(input, 10_000),
       fromState: "OFFERED" as const,
+      sourceType: "LIVE" as const,
+      entryCostsMinor: 0n,
     };
 
     const a = await positions.open(open);
@@ -150,6 +163,8 @@ describe("DUPLICATE_EVENT_CANNOT_CREATE_DUPLICATE_TRADE", () => {
       strategyVersionId,
       openedAt: after(input, 10_000),
       fromState: "OFFERED",
+      sourceType: "LIVE",
+      entryCostsMinor: 0n,
     });
 
     expect(result.kind).toBe("NOT_CONFIRMED");
@@ -264,6 +279,8 @@ describe("Optimistische Sperre auf Positionen", () => {
       strategyVersionId,
       openedAt: after(input, 10_000),
       fromState: "OFFERED",
+      sourceType: "LIVE",
+      entryCostsMinor: 0n,
     });
     if (opened.kind !== "OPENED") throw new Error("Fixture");
 
@@ -303,6 +320,8 @@ describe("Datenbank-Constraints", () => {
       strategyVersionId,
       openedAt: after(input, 10_000),
       fromState: "OFFERED",
+      sourceType: "LIVE",
+      entryCostsMinor: 0n,
     });
     if (opened.kind !== "OPENED") throw new Error("Fixture");
 

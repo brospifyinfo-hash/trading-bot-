@@ -1,6 +1,9 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
+  assertProvenanceConsistent,
+  isTestFixture,
   opportunityStateMachine,
+  type DataProvenance,
   type OpportunityState,
   type SizingMode,
   type TradingStream,
@@ -44,6 +47,14 @@ export interface FeatureSnapshotInput {
 
 export interface CreateOpportunityInput {
   readonly tokenId: string;
+  /**
+   * Woher die Daten stammen. Pflichtangabe.
+   *
+   * Bewusst kein Standardwert: eine Gelegenheit ohne benennbare Herkunft
+   * duerfte gar nicht entstehen. Wer sie anlegt, muss sagen koennen, worauf
+   * sie beruht.
+   */
+  readonly provenance: DataProvenance;
   readonly stream: TradingStream;
   readonly decisionKind: "ENTER" | "WATCH" | "REJECT";
   readonly finalScore: number | null;
@@ -78,6 +89,10 @@ export class OpportunityRepository {
    * Wahrheit, und irgendwann laufen die beiden Kopien auseinander.
    */
   async create(input: CreateOpportunityInput): Promise<CreateOpportunityResult> {
+    // Vor dem ersten Schreibzugriff: eine widerspruechliche Herkunft soll gar
+    // keine Zeile erzeugen, nicht eine halb geschriebene Transaktion.
+    assertProvenanceConsistent(input.provenance);
+
     return this.db.transaction(async (tx) => {
       const [snapshot] = await tx
         .insert(featureSnapshots)
@@ -90,6 +105,11 @@ export class OpportunityRepository {
           scoreEngineVersion: input.snapshot.scoreEngineVersion,
           featureSetVersion: input.snapshot.featureSetVersion,
           inputHash: input.snapshot.inputHash,
+          sourceType: input.provenance.sourceType,
+          sourceProvider: input.provenance.sourceProvider,
+          sourceTier: input.provenance.sourceTier,
+          sourceTimestamp: input.provenance.sourceTimestamp,
+          isTestFixture: isTestFixture(input.provenance.sourceType),
         })
         .onConflictDoNothing()
         .returning({ id: featureSnapshots.id });
@@ -131,6 +151,8 @@ export class OpportunityRepository {
           strategyVersionId: input.strategyVersionId,
           decidedAt: input.decidedAt,
           respondBy: input.respondBy,
+          sourceType: input.provenance.sourceType,
+          isTestFixture: isTestFixture(input.provenance.sourceType),
         })
         .onConflictDoNothing({
           target: [opportunities.tokenId, opportunities.stream, opportunities.decidedAt],

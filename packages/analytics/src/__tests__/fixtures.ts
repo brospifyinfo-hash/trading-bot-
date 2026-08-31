@@ -1,5 +1,5 @@
 import { eur } from "@sae/core";
-import type { SizingMode } from "@sae/core";
+import type { SizingMode, SourceType } from "@sae/core";
 import type { PaperStream, PaperTradeRecord } from "../category-statistics";
 import type { ClosedTrade } from "../trade-statistics";
 
@@ -40,10 +40,22 @@ export function paperRecord(
   stream: PaperStream,
   sizingMode: SizingMode,
   overrides: Partial<ClosedTrade> = {},
+  sourceType: SourceType = "LIVE",
 ): PaperTradeRecord {
   return {
     stream,
     sizingMode,
+    sourceType,
     trade: { ...trade(netPnlEur, overrides), mode: "paper" },
   };
+}
+
+/** Derselbe Trade, aber als Test-Fixture markiert. */
+export function fixtureRecord(
+  netPnlEur: number,
+  stream: PaperStream,
+  sizingMode: SizingMode,
+  overrides: Partial<ClosedTrade> = {},
+): PaperTradeRecord {
+  return paperRecord(netPnlEur, stream, sizingMode, overrides, "TEST_FIXTURE");
 }

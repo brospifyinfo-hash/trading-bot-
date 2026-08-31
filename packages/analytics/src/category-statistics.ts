@@ -1,4 +1,11 @@
-import type { Currency, OpportunityState, SizingMode, TradingStream } from "@sae/core";
+import {
+  countsAsProductionPerformance,
+  type Currency,
+  type OpportunityState,
+  type SizingMode,
+  type SourceType,
+  type TradingStream,
+} from "@sae/core";
 
 import {
   observationCategoryOf,
@@ -52,6 +59,15 @@ export interface PaperTradeRecord {
   readonly stream: PaperStream;
   readonly sizingMode: SizingMode;
   readonly trade: PaperClosedTrade;
+  /**
+   * Herkunft. Pflichtangabe, damit ein Test-Fixture nicht in eine Kennzahl
+   * geraten kann.
+   *
+   * Bewusst kein optionales Feld mit Standardwert `LIVE`: dann waere ein
+   * vergessener Wert stillschweigend eine Produktionszahl. So erzwingt der
+   * Compiler die Angabe an jeder Aufrufstelle.
+   */
+  readonly sourceType: SourceType;
 }
 
 /**
@@ -164,6 +180,16 @@ export function computeCategoryStatistics(
     if (record.trade.mode !== "paper") {
       throw new TypeError(`Trade ${record.trade.tradeId} ist kein Paper-Trade`);
     }
+    // Die Sperre gegen Vermischung von Test- und Produktionsdaten.
+    //
+    // Wirft, statt still zu filtern. Ein Filter wuerde die Zahl kleiner machen
+    // und niemandem sagen, warum — und wer eine Kennzahl aus Fixture-Trades
+    // anfordert, hat einen Denkfehler, keinen Datenfehler.
+    if (!countsAsProductionPerformance(record.sourceType)) {
+      throw new TypeError(
+        `Trade ${record.trade.tradeId} hat Herkunft ${record.sourceType} und gehoert nicht in eine Produktionskennzahl`,
+      );
+    }
   }
 
   const statistics = computeTradeStatistics(
@@ -176,6 +202,25 @@ export function computeCategoryStatistics(
     winRateInterval: wilsonInterval(statistics.winningTrades, statistics.totalTrades),
     verdict: statistics.totalTrades >= MIN_SAMPLE_FOR_VERDICT ? "MEASURED" : "TOO_LITTLE_DATA",
   };
+}
+
+/**
+ * Trennt Produktions- von Testdatensaetzen.
+ *
+ * Die eine Stelle, an der eine gemischte Menge aufgeteilt wird. Wer auswerten
+ * will, ruft sie zuerst und weiss danach, welche Haelfte er in der Hand hat —
+ * statt sich darauf zu verlassen, dass die Menge schon sauber war.
+ */
+export function splitByProvenance(records: readonly PaperTradeRecord[]): {
+  readonly production: readonly PaperTradeRecord[];
+  readonly nonProduction: readonly PaperTradeRecord[];
+} {
+  const production: PaperTradeRecord[] = [];
+  const nonProduction: PaperTradeRecord[] = [];
+  for (const record of records) {
+    (countsAsProductionPerformance(record.sourceType) ? production : nonProduction).push(record);
+  }
+  return { production, nonProduction };
 }
 
 /**

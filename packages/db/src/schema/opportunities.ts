@@ -1,8 +1,10 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -15,6 +17,18 @@ import {
 } from "drizzle-orm/pg-core";
 import { tokens } from "./tokens";
 import { strategyVersions } from "./strategy";
+
+/**
+ * Herkunft eines Datensatzes — die Spalten, die Testdaten von echten trennen.
+ *
+ * `source_type` und `is_test_fixture` sind bewusst REDUNDANT, und zwar mit
+ * einer CHECK-Constraint aneinandergebunden. Der Grund ist praktisch: jede
+ * Auswertung filtert auf ein einzelnes boolean, ohne einen Enum-Vergleich
+ * korrekt hinschreiben zu muessen — und der CHECK sorgt dafuer, dass die beiden
+ * nie auseinanderlaufen koennen.
+ */
+export const SOURCE_TYPES = ["LIVE", "TEST_FIXTURE", "BACKTEST"] as const;
+export const SOURCE_TIERS = ["PRIMARY", "SECONDARY", "FALLBACK"] as const;
 
 export const TRADING_STREAMS = ["AUTO_PAPER", "MANUAL_PAPER", "LIVE"] as const;
 export const SIZING_MODES = ["FIXED_100", "RISK_BASED"] as const;
@@ -63,6 +77,16 @@ export const featureSnapshots = pgTable(
     featureSetVersion: text("feature_set_version").notNull(),
     /** Hash ueber den Feature-Vektor. Macht eine Entscheidung exakt reproduzierbar. */
     inputHash: text("input_hash").notNull(),
+
+    /** Herkunft. Siehe SOURCE_TYPES oben. */
+    sourceType: text("source_type", { enum: SOURCE_TYPES }).notNull().default("LIVE"),
+    /** Anbieterkennung oder Fixture-Etikett. Nie leer. */
+    sourceProvider: text("source_provider").notNull().default("unknown"),
+    sourceTier: text("source_tier", { enum: SOURCE_TIERS }),
+    /** Wann die Quelle geantwortet hat. Differenz zu observed_at = Frische. */
+    sourceTimestamp: timestamp("source_timestamp", { withTimezone: true }),
+    isTestFixture: boolean("is_test_fixture").notNull().default(false),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -73,6 +97,19 @@ export const featureSnapshots = pgTable(
     // und irgendwann laufen die beiden Kopien auseinander.
     uniqueIndex("feature_snapshots_unique").on(t.tokenId, t.observedAt, t.scoreEngineVersion),
     check("feature_snapshots_completeness", sql`data_completeness between 0 and 1`),
+    // Die beiden Herkunftsspalten koennen nicht auseinanderlaufen.
+    check(
+      "feature_snapshots_fixture_flag",
+      sql`is_test_fixture = (source_type = 'TEST_FIXTURE')`,
+    ),
+    // Ein Fixture muss als solches lesbar sein, auch wenn jemand nur diese
+    // Spalte sieht.
+    check(
+      "feature_snapshots_fixture_labelled",
+      sql`not is_test_fixture or source_provider like 'TEST_FIXTURE:%'`,
+    ),
+    // Traegt den zusammengesetzten Fremdschluessel der Gelegenheit.
+    uniqueIndex("feature_snapshots_id_fixture").on(t.id, t.isTestFixture),
   ],
 );
 
@@ -117,6 +154,18 @@ export const opportunities = pgTable(
     /** Nur im Manual-Strom: bis wann eine Reaktion zaehlt (§59). */
     respondBy: timestamp("respond_by", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+
+    /**
+     * Herkunft, hier NOCHMALS gefuehrt statt nur am Snapshot.
+     *
+     * Redundanz mit Absicht: jede Auswertung ueber Gelegenheiten filtert damit
+     * ohne Join. Ein vergessener Join waere genau der Weg, auf dem Testdaten in
+     * eine Produktionszahl geraten — und ein Join, den man vergessen kann, ist
+     * kein Schutz. Der zusammengesetzte Fremdschluessel unten macht ein
+     * Auseinanderlaufen unmoeglich.
+     */
+    sourceType: text("source_type", { enum: SOURCE_TYPES }).notNull().default("LIVE"),
+    isTestFixture: boolean("is_test_fixture").notNull().default(false),
   },
   (t) => [
     // Verhindert doppelte Gelegenheiten aus zwei gleichzeitigen Worker-Laeufen.
@@ -130,6 +179,24 @@ export const opportunities = pgTable(
     // Gelegenheit, sondern ein Datenfehler.
     check("opportunities_respond_after_decision", sql`respond_by is null or respond_by > decided_at`),
     check("opportunities_closed_after_decision", sql`closed_at is null or closed_at >= decided_at`),
+    check("opportunities_fixture_flag", sql`is_test_fixture = (source_type = 'TEST_FIXTURE')`),
+    /**
+     * Zusammengesetzter Fremdschluessel auf (Snapshot, Fixture-Flag).
+     *
+     * Das ist der eigentliche Schutz gegen Vermischung — und er ist
+     * deklarativ, nicht geprueft. Eine echte Gelegenheit KANN nicht auf einen
+     * Fixture-Snapshot zeigen, weil das Paar (snapshot_id, false) dann in der
+     * Zieltabelle nicht existiert. Kein Anwendungscode, keine Reihenfolge, kein
+     * vergessener Filter kann daran vorbei.
+     */
+    foreignKey({
+      columns: [t.featureSnapshotId, t.isTestFixture],
+      foreignColumns: [featureSnapshots.id, featureSnapshots.isTestFixture],
+      name: "opportunities_snapshot_fixture_fk",
+    }),
+    // Traegt den zusammengesetzten Fremdschluessel der Paper-Position.
+    uniqueIndex("opportunities_id_fixture").on(t.id, t.isTestFixture),
+    index("opportunities_fixture_idx").on(t.isTestFixture, t.stream),
   ],
 );
 
@@ -251,9 +318,14 @@ export const paperPositions = pgTable(
      * WHERE.
      */
     version: integer("version").notNull().default(0),
+
+    /** Herkunft, gespiegelt von der Gelegenheit. Siehe dort. */
+    sourceType: text("source_type", { enum: SOURCE_TYPES }).notNull().default("LIVE"),
+    isTestFixture: boolean("is_test_fixture").notNull().default(false),
   },
   (t) => [
     index("paper_positions_stream_idx").on(t.stream, t.sizingMode, t.openedAt),
+    index("paper_positions_fixture_idx").on(t.isTestFixture, t.stream),
     index("paper_positions_open_idx").on(t.closedAt),
     // Zustandskonsistenz in der Datenbank, nicht im Anwendungscode: ein
     // Restbestand ausserhalb von [0, Einstieg] ist ein Buchungsfehler, und
@@ -262,6 +334,14 @@ export const paperPositions = pgTable(
     check("paper_positions_notional_positive", sql`entry_notional_minor > 0`),
     check("paper_positions_closed_order", sql`closed_at is null or closed_at >= opened_at`),
     check("paper_positions_closed_has_reason", sql`closed_at is null or exit_reason is not null`),
+    check("paper_positions_fixture_flag", sql`is_test_fixture = (source_type = 'TEST_FIXTURE')`),
+    // Dieselbe Kette eine Stufe weiter: eine Position erbt das Flag ihrer
+    // Gelegenheit, und die Datenbank laesst nichts anderes zu.
+    foreignKey({
+      columns: [t.opportunityId, t.isTestFixture],
+      foreignColumns: [opportunities.id, opportunities.isTestFixture],
+      name: "paper_positions_opportunity_fixture_fk",
+    }),
   ],
 );
 

@@ -232,6 +232,31 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           />
         </section>
 
+        {state.testData !== null && (
+          <section className="panel test-data">
+            <h2>TEST / DEVELOPMENT DATA</h2>
+            <p className="placeholder">{state.testData.note}</p>
+            <dl className="kv">
+              {Object.entries(state.testData.opportunities.byState).map(([name, count]) => (
+                <div key={name}>
+                  <dt>{name}</dt>
+                  <dd>{count}</dd>
+                </div>
+              ))}
+              {state.testData.paper.map((r) => (
+                <div key={`${r.stream}-${r.sizingMode}`}>
+                  <dt>
+                    {r.stream} · {r.sizingMode}
+                  </dt>
+                  <dd>
+                    {r.openPositions} offen / {r.closedPositions} zu
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
         <section className="panel">
           <h2>Strategie</h2>
           <p className="placeholder">

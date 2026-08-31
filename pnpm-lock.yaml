@@ -75,6 +75,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@sae/analytics':
+        specifier: workspace:*
+        version: link:../../packages/analytics
       '@sae/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -84,6 +87,9 @@ importers:
       '@sae/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sae/decision':
+        specifier: workspace:*
+        version: link:../../packages/decision
       '@sae/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -93,15 +99,28 @@ importers:
       '@sae/providers':
         specifier: workspace:*
         version: link:../../packages/providers
+      '@sae/risk':
+        specifier: workspace:*
+        version: link:../../packages/risk
+      '@sae/scoring':
+        specifier: workspace:*
+        version: link:../../packages/scoring
       '@sae/simulation':
         specifier: workspace:*
         version: link:../../packages/simulation
+      '@sae/trading':
+        specifier: workspace:*
+        version: link:../../packages/trading
       bullmq:
         specifier: ^5.34.6
         version: 5.81.4
       ioredis:
         specifier: ^5.4.2
         version: 5.11.1
+    devDependencies:
+      drizzle-orm:
+        specifier: ^0.38.3
+        version: 0.38.4(@electric-sql/pglite@0.2.17)(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
 
   packages/alerts:
     dependencies:

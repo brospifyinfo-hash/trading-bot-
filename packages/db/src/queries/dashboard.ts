@@ -155,7 +155,17 @@ export interface PaperSummary {
  * zweite Rechenstelle in der Datenschicht waere die erste Gelegenheit, diese
  * Bindung zu verlieren.
  */
-export async function loadPaperSummary(db: Database): Promise<readonly PaperSummary[]> {
+export async function loadPaperSummary(
+  db: Database,
+  /**
+   * Welche Herkunft gezaehlt wird.
+   *
+   * Pflichtparameter, kein Standardwert. Ein Standard waere die Stelle, an der
+   * jemand spaeter unbemerkt Testdaten in eine Produktionskachel bekommt — die
+   * Aufrufstelle muss sich entscheiden.
+   */
+  scope: DataScope,
+): Promise<readonly PaperSummary[]> {
   const rows = await db
     .select({
       stream: paperPositions.stream,
@@ -164,6 +174,7 @@ export async function loadPaperSummary(db: Database): Promise<readonly PaperSumm
       open: sql<number>`count(*) filter (where ${paperPositions.closedAt} is null)::int`,
     })
     .from(paperPositions)
+    .where(eq(paperPositions.isTestFixture, scope === "TEST"))
     .groupBy(paperPositions.stream, paperPositions.sizingMode);
 
   return rows.map((r) => ({
@@ -174,15 +185,28 @@ export async function loadPaperSummary(db: Database): Promise<readonly PaperSumm
   }));
 }
 
+/**
+ * Produktion oder Test — die Trennung, die jede Abfrage treffen muss.
+ *
+ * PRODUCTION zaehlt ausschliesslich Datensaetze mit echter Herkunft. TEST zeigt
+ * die Fixture-Daten in einem eigenen Bereich, damit sie sichtbar sind, ohne je
+ * als Handelsleistung zu erscheinen.
+ */
+export type DataScope = "PRODUCTION" | "TEST";
+
 export interface OpportunityCounts {
   readonly byState: Readonly<Record<string, number>>;
   readonly total: number;
 }
 
-export async function loadOpportunityCounts(db: Database): Promise<OpportunityCounts> {
+export async function loadOpportunityCounts(
+  db: Database,
+  scope: DataScope,
+): Promise<OpportunityCounts> {
   const rows = await db
     .select({ state: opportunities.state, count: sql<number>`count(*)::int` })
     .from(opportunities)
+    .where(eq(opportunities.isTestFixture, scope === "TEST"))
     .groupBy(opportunities.state);
 
   const byState: Record<string, number> = {};
@@ -239,8 +263,22 @@ export interface DashboardState {
   readonly paper: Panel<readonly PaperSummary[]>;
   readonly opportunities: Panel<OpportunityCounts>;
   readonly research: Panel<ResearchSummary>;
+  /**
+   * Was aus Test-Fixtures stammt — separat, nie mit den obigen verrechnet.
+   *
+   * `null`, wenn es nichts gibt: dann erscheint der Bereich gar nicht erst,
+   * statt eine leere Kachel mit Nullen zu zeigen.
+   */
+  readonly testData: TestDataSummary | null;
   readonly headline: string;
   readonly generatedAt: Date;
+}
+
+/** Entwicklungsdaten. Ausdruecklich keine Handelsleistung. */
+export interface TestDataSummary {
+  readonly opportunities: OpportunityCounts;
+  readonly paper: readonly PaperSummary[];
+  readonly note: string;
 }
 
 /**
@@ -263,9 +301,15 @@ export async function loadDashboardState(input: {
   const marketDataConnected = marketProviders.some((p) => p.status === "CONNECTED");
 
   const ingestion = await loadIngestionSummary(input.db);
-  const opportunityCounts = await loadOpportunityCounts(input.db);
-  const paperRows = await loadPaperSummary(input.db);
+  // Die Produktionskacheln zaehlen ausschliesslich echte Herkunft.
+  const opportunityCounts = await loadOpportunityCounts(input.db, "PRODUCTION");
+  const paperRows = await loadPaperSummary(input.db, "PRODUCTION");
   const research = await loadResearchSummary(input.db);
+
+  // Getrennt daneben: was aus Test-Fixtures entstanden ist. Sichtbar, damit ein
+  // Entwicklungslauf nachvollziehbar bleibt — aber niemals in derselben Zahl.
+  const testOpportunities = await loadOpportunityCounts(input.db, "TEST");
+  const testPaperRows = await loadPaperSummary(input.db, "TEST");
 
   const closedTotal = paperRows.reduce((sum, r) => sum + r.closedPositions, 0);
 
@@ -312,7 +356,19 @@ export async function loadDashboardState(input: {
       ? waiting("Noch kein Strategie-Kandidat — dafuer braucht es abgeschlossene Trades.")
       : data(research);
 
+  const testTotal =
+    testOpportunities.total + testPaperRows.reduce((n, r) => n + r.openPositions + r.closedPositions, 0);
+  const testData: TestDataSummary | null =
+    testTotal === 0
+      ? null
+      : {
+          opportunities: testOpportunities,
+          paper: testPaperRows,
+          note: "TEST / DEVELOPMENT DATA — aus Test-Fixtures. Keine Handelsleistung, keine Datenquelle, keine Grundlage fuer eine Freigabe.",
+        };
+
   return {
+    testData,
     providers,
     marketDataConnected,
     ingestion: ingestionPanel,

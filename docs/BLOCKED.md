@@ -1,7 +1,8 @@
 # Was blockiert ist — und woran genau
 
-Stand: 2026-08-31, nach der Persistenzschicht: dauerhafte Queue, echte
-Schreibpfade, Datenbank-Invarianten, Consumer mit Dead Letter.
+Stand: 2026-08-31, nach der Verdrahtung des Pipeline-Pfads: Anbieterkette im
+Produktivcode, Decision → Gelegenheit → Auto Paper + Manual, Herkunftsspalten
+mit Fixture-Isolation auf Datenbankebene.
 
 Diese Datei ist bewusst kurz und konkret. Sie beantwortet eine Frage: **was
 fehlt, damit dieses System läuft?**
@@ -48,6 +49,9 @@ OpenAPI-Spezifikation.
 | **Schreibpfade** für Gelegenheiten, Snapshots, Paper-Positionen, Latenz, Forschung | `@sae/db/repositories` |
 | **Datenbank-Invarianten** (Unique-Indizes, CHECK-Constraints, optimistische Sperre) | Migration `0007_integrity`, `0008_job_queue` |
 | **Provider-Health im Minutentakt**, persistiert | `apps/worker/src/roles/provider-health.ts` |
+| **Anbieterkette im Produktivpfad** (`resolveFromChain`) | `apps/worker/src/pipeline/market-input.ts` |
+| **Decision → Gelegenheit → Auto Paper + Manual** | `apps/worker/src/pipeline/opportunity-pipeline.ts` |
+| **Herkunft und Fixture-Isolation** (CHECK + zusammengesetzte FK) | Migration `0009_provenance` |
 
 ### BLOCKED BY LIVE DATA — Architektur steht, Ausführung wartet
 

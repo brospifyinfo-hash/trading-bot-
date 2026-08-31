@@ -7,14 +7,22 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@sae/analytics": "workspace:*",
     "@sae/config": "workspace:*",
     "@sae/core": "workspace:*",
     "@sae/db": "workspace:*",
+    "@sae/decision": "workspace:*",
     "@sae/observability": "workspace:*",
-    "@sae/simulation": "workspace:*",
-    "bullmq": "^5.34.6",
-    "ioredis": "^5.4.2",
     "@sae/pipeline": "workspace:*",
-    "@sae/providers": "workspace:*"
+    "@sae/providers": "workspace:*",
+    "@sae/risk": "workspace:*",
+    "@sae/scoring": "workspace:*",
+    "@sae/simulation": "workspace:*",
+    "@sae/trading": "workspace:*",
+    "bullmq": "^5.34.6",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "drizzle-orm": "^0.38.3"
   }
 }

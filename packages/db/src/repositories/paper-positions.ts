@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import type { Money, SizingMode, TradingStream } from "@sae/core";
+import { isTestFixture, type Money, type SizingMode, type SourceType, type TradingStream } from "@sae/core";
 
 import type { Database } from "../client";
 import { opportunities, paperPositionEvents, paperPositions } from "../schema/opportunities";
@@ -36,6 +36,23 @@ export interface OpenPositionInput {
   readonly openedAt: Date;
   /** Zustand, aus dem die Position entsteht. Auto: OFFERED, Manual: USER_CONFIRMED. */
   readonly fromState: "OFFERED" | "USER_CONFIRMED";
+  /**
+   * Herkunft, gespiegelt von der Gelegenheit.
+   *
+   * Die Datenbank prueft ueber einen zusammengesetzten Fremdschluessel, dass
+   * dieser Wert zur Gelegenheit passt — ein falscher Wert erzeugt hier keine
+   * Zeile, sondern einen Fehler.
+   */
+  readonly sourceType: SourceType;
+  /**
+   * Kosten des Einstiegs in kleinster Waehrungseinheit.
+   *
+   * Gehoert an die Position und nicht erst an den Ausstieg: ein Paper-Trade,
+   * der die Einstiegskosten erst beim Schliessen bucht, sieht bis dahin
+   * profitabler aus, als er ist — und genau in dieser Zeit schaut jemand auf
+   * das Dashboard.
+   */
+  readonly entryCostsMinor: bigint;
 }
 
 export class PaperPositionRepository {
@@ -87,6 +104,9 @@ export class PaperPositionRepository {
           remainingAmountRaw: input.entryAmountRaw,
           strategyVersionId: input.strategyVersionId,
           openedAt: input.openedAt,
+          costsPaidMinor: input.entryCostsMinor,
+          sourceType: input.sourceType,
+          isTestFixture: isTestFixture(input.sourceType),
         })
         .returning({ id: paperPositions.id });
 

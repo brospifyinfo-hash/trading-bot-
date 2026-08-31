@@ -13,3 +13,4 @@ export * from "./streams";
 export * from "./opportunity-state-machine";
 export * from "./opportunity";
 export * from "./latency-chain";
+export * from "./provenance";

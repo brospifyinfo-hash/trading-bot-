@@ -1,4 +1,4 @@
-import { systemClock } from "@sae/core";
+import { systemClock, tokenId as asTokenId } from "@sae/core";
 import {
   JobQueueRepository,
   OpportunityRepository,
@@ -11,6 +11,7 @@ import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
 import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
+import { resolveMarketInput } from "./pipeline/market-input";
 import { sampleProviderHealth } from "./roles/provider-health";
 
 /**
@@ -83,6 +84,10 @@ class ExpireOpportunitiesHandler implements JobHandler {
  * Die Kette wird bei JEDEM Auftrag neu aus der Konfiguration gebaut. Das ist
  * absichtlich: kommt ein Anbieter dazu, greift er beim naechsten Auftrag, ohne
  * dass der Worker neu startet.
+ *
+ * Der Abruf laeuft ueber `resolveMarketInput` und damit ueber
+ * `fetchMarketFromChain` → `resolveFromChain`. Antwortet niemand, ist das
+ * Ergebnis `NO_SOURCE` — kein Snapshot, keine Gelegenheit, keine Position.
  */
 class MarketDataHandler implements JobHandler {
   constructor(
@@ -91,30 +96,60 @@ class MarketDataHandler implements JobHandler {
   ) {}
 
   async handle(job: ClaimedJob): Promise<unknown> {
-    const chain = buildMarketDataChain({
-      env: loadEnv(providerEnvSchema, this.deps.env),
-      adapters: this.deps.adapters ?? new Map(),
-      // Ohne Messung gilt ein Anbieter als nicht erreichbar. Ein optimistischer
-      // Startwert wuerde die Kette Anbieter fragen lassen, die nachweislich
-      // nicht antworten.
-      statusOf: () => "UNAVAILABLE",
-    });
+    const mint = typeof job.payload["mint"] === "string" ? job.payload["mint"] : null;
+    const tokenIdRaw = typeof job.payload["tokenId"] === "string" ? job.payload["tokenId"] : null;
 
-    if (chain.members.length === 0) {
+    // Ohne Token im Auftrag gibt es nichts abzufragen. Die Discovery, die
+    // Tokens einreiht, braucht selbst eine Quelle — deshalb ist das heute der
+    // Regelfall und kein Fehler.
+    if (mint === null || tokenIdRaw === null) {
+      const chain = buildMarketDataChain({
+        env: loadEnv(providerEnvSchema, this.deps.env),
+        adapters: this.deps.adapters ?? new Map(),
+        statusOf: () => "UNAVAILABLE",
+      });
       this.deps.logger.debug(
         { kind: job.kind, note: chain.note },
-        `${this.what} wartet auf eine Marktdatenquelle`,
+        `${this.what} ohne Token im Auftrag`,
       );
       return waitingForData(chain.note);
     }
 
-    // Ab hier gibt es eine Quelle. Der eigentliche Abruf gehoert in den
-    // Adapter, der zusammen mit der ersten erreichbaren Quelle entsteht —
-    // hier etwas zu erfinden hiesse, gegen eine unbekannte Spezifikation zu
-    // programmieren.
-    return waitingForData(
-      `${this.what}: Kette hat ${String(chain.members.length)} Mitglied(er), aber kein geprueftes Abrufmodul.`,
+    const result = await resolveMarketInput(
+      {
+        kind: "LIVE",
+        tokenId: asTokenId(tokenIdRaw),
+        mint,
+        adapters: this.deps.adapters ?? new Map(),
+        // Ohne Messung gilt ein Anbieter als nicht erreichbar. Ein
+        // optimistischer Startwert wuerde die Kette Anbieter fragen lassen,
+        // die nachweislich nicht antworten.
+        statusOf: () => "UNAVAILABLE",
+        env: this.deps.env,
+        // Fuer eine Einstiegsentscheidung reicht DEGRADED nicht.
+        allowDegraded: false,
+      },
+      systemClock,
     );
+
+    if (result.kind === "NO_SOURCE") {
+      this.deps.logger.debug(
+        { kind: job.kind, reason: result.reason, attempted: result.attempted },
+        `${this.what} wartet auf eine Marktdatenquelle`,
+      );
+      return waitingForData(result.reason);
+    }
+
+    // Die Kette hat geantwortet. Der Weg von hier zu Features, Score und
+    // Entscheidung laeuft ueber runOpportunityPipeline — er braucht den
+    // PitReader fuer die Historie und ist deshalb an den Aufbau der
+    // Snapshot-Reihe gebunden.
+    return {
+      status: "MARKET_DATA",
+      provider: result.provenance.sourceProvider,
+      tier: result.provenance.sourceTier,
+      dataTimestamp: result.provenance.dataTimestamp.toISOString(),
+    };
   }
 }
 
