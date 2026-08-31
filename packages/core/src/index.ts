@@ -12,3 +12,4 @@ export * from "./trade";
 export * from "./streams";
 export * from "./opportunity-state-machine";
 export * from "./opportunity";
+export * from "./latency-chain";

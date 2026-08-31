@@ -3,9 +3,11 @@ import {
   ALL_EXIT_RULES,
   type ExitAction,
   type ExitRule,
+  type ExitRuleContext,
   type ExitSignal,
   type PositionMarketState,
 } from "./exit-rules";
+import type { ExitExecutionState } from "./execution-failure-exit";
 
 /**
  * Positionsverwaltung.
@@ -25,6 +27,8 @@ export interface TakeProfitLevelState {
 
 export interface PositionState {
   readonly positionId: string;
+  /** Zustand der Ausfuehrungsversuche. `null` = keine Fehlschlaege bekannt. */
+  readonly execution?: ExitExecutionState | null;
   /** Verbleibender Anteil der Ursprungsposition in Basispunkten. 10000 = voll. */
   readonly remainingBps: Bps;
   readonly stopLossBps: Bps;
@@ -66,10 +70,11 @@ export function evaluatePosition(
       ? rules
       : rules.filter((r) => options.enabledRuleIds!.includes(r.id));
 
-  const ctx = {
+  const ctx: ExitRuleContext = {
     market,
     currentTrailingBps: position.trailingStopBps ?? asBps(0),
     maxHoldingSeconds: position.maxHoldingSeconds,
+    execution: position.execution ?? null,
   };
 
   const signals: ExitSignal[] = [];

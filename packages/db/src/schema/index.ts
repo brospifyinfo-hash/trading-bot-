@@ -5,3 +5,5 @@ export * from "./strategy";
 export * from "./trading";
 export * from "./ops";
 export * from "./opportunities";
+export * from "./market-regimes";
+export * from "./latency";

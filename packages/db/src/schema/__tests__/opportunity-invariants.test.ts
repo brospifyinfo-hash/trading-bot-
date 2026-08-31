@@ -125,3 +125,42 @@ describe("Doppelte Gelegenheiten", () => {
     }
   });
 });
+
+describe("Regime-Verlauf", () => {
+  it("laesst nur ein Label je Beobachtungszeitpunkt zu", async () => {
+    const rows = await rowsOf<{ indexdef: string }>(sql`
+      select indexdef from pg_indexes
+      where schemaname = 'public' and tablename = 'market_regimes'
+        and indexname = 'market_regimes_observed_at'
+    `);
+    // Zwei Worker duerfen nicht zwei widersprechende Labels fuer denselben
+    // Moment schreiben — sonst haengt die Historie davon ab, wer zuletzt kam.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.indexdef).toMatch(/UNIQUE/i);
+  });
+
+  it("haelt fest, welche Indikatoren gefehlt haben", async () => {
+    const columns = await columnsOf("market_regimes");
+    // Ohne diese Spalte liesse sich spaeter nicht mehr sagen, ob ein
+    // Regimewechsel auf breiter Grundlage stand oder an einem Indikator hing.
+    expect(columns).toContain("missing_indicators");
+    expect(columns).toContain("votes");
+    expect(columns).toContain("observed_at");
+  });
+});
+
+describe("Latenzmessungen", () => {
+  it("stehen einzeln, ohne aggregierte Spalte", async () => {
+    const columns = await columnsOf("latency_samples");
+    // Sobald irgendwo ein Mittelwert steht, wird irgendwann damit simuliert —
+    // und ein Median glaettet die Faelle weg, in denen es wehtat (I-9).
+    expect(columns.filter((c) => /avg|mean|median|p50|p90/i.test(c))).toEqual([]);
+    expect(columns).toContain("responded_at");
+    expect(columns).toContain("alerted_at");
+  });
+
+  it("fuehren den Strom mit, damit Auto und Manual getrennt bleiben", async () => {
+    const columns = await columnsOf("latency_samples");
+    expect(columns).toContain("stream");
+  });
+});

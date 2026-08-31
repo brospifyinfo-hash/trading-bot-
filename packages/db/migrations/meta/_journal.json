@@ -15,6 +15,20 @@
       "when": 1788156118411,
       "tag": "0002_opportunities",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788157955100,
+      "tag": "0003_market_regimes",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788158346008,
+      "tag": "0004_latency_samples",
+      "breakpoints": true
     }
   ]
 }

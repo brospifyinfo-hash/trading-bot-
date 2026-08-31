@@ -1,5 +1,7 @@
 import type { Bps } from "@sae/core";
 
+import { EXECUTION_FAILURE, type ExitExecutionState } from "./execution-failure-exit";
+
 /**
  * Adaptive Exit-Regeln.
  *
@@ -59,6 +61,14 @@ export interface ExitRuleContext {
   readonly market: PositionMarketState;
   readonly currentTrailingBps: Bps;
   readonly maxHoldingSeconds: number | null;
+  /**
+   * Zustand der Ausfuehrungsversuche fuer diese Position.
+   *
+   * `null` heisst „kein Fehlschlag bekannt" — und nicht „egal": die
+   * Execution-Failure-Regel unterscheidet marktseitige von betrieblichen
+   * Fehlern, und diese Unterscheidung braucht die Historie.
+   */
+  readonly execution: ExitExecutionState | null;
 }
 
 export interface ExitRule {
@@ -208,6 +218,7 @@ export const MAX_HOLDING_TIME: ExitRule = {
  * Der erste Sofortausstieg gewinnt.
  */
 export const ALL_EXIT_RULES: readonly ExitRule[] = [
+  EXECUTION_FAILURE,
   LIQUIDITY_COLLAPSE,
   DEV_SOLD,
   SECURITY_DOWNGRADE,

@@ -952,3 +952,147 @@ Weitere Festlegungen:
   Zeitreihenabfrage verdecken, und die Reihenfolge ist hier die ganze Aussage.
 - **Zusammenfassungen nehmen Mediane.** Ein einzelner Verzehnfacher zieht jeden
   Mittelwert so weit hoch, dass die Kennzahl nur noch diesen Trade beschreibt.
+
+## 53. Ausstiegsgründe sind ODER-verknüpft
+
+Der Exit Score (§33) beantwortet eine andere Frage als der Einstiegsscore. Ein
+Token mit 82 Punkten beim Einstieg ist zwei Stunden später nicht „immer noch
+eine 82": beim Halten ist das Kapital schon drin, ein Ausstieg kostet erneut,
+und ein Teil des Verlaufs ist inzwischen bekannt.
+
+Beim Testen fiel auf, dass der Mittelwert hier der falsche Aggregator ist — und
+zwar auf eine Art, die den ganzen Score entwertet: **zwei voll ausgeschlagene
+Dimensionen von fünf ergeben 40 Punkte**, unter jeder Handlungsschwelle. Der
+Score würde also erst ausschlagen, wenn alles schlecht ist, und dann hat längst
+eine der harten Regeln gefeuert. Genau die Grauzone, für die es ihn gibt, sähe
+er nie.
+
+Stattdessen die Gegenwahrscheinlichkeit `1 − Π(1 − dᵢ)`: ein einzelner
+entscheidender Befund trägt allein, zweimal 50 ergibt 75, und nichts davon
+braucht eine Gewichtung, die sich später passend machen ließe.
+
+Zwei weitere Festlegungen:
+
+- **Der Score darf allein keinen vollständigen Ausstieg auslösen.** Höchste
+  Stufe ist ein Teilverkauf; für einen ganzen Ausstieg braucht es ein Ereignis,
+  das eine der harten Regeln sieht.
+- **Nicht berechenbar führt zu keinem Rat, nicht zu „halten".** Halten wäre
+  ebenfalls eine Entscheidung und hier durch nichts gedeckt.
+
+## 54. Ein Regime-Label darf nie rückwirkend entstehen
+
+I-3 ist das gefährlichste Integritätsrisiko der Regime-Engine: wer im Nachhinein
+sagt „das war eine Risk-Off-Phase" und die Trades dieser Phase auswertet, hat
+den Ausgang benutzt, um die Bedingung zu definieren. Das Ergebnis ist
+zwangsläufig gut und vollständig wertlos.
+
+Durchgesetzt an drei Stellen, weil eine nicht reicht:
+
+| Ebene | Mechanismus |
+|---|---|
+| Laufzeit | `RegimeTimeline` wirft bei einem Eintrag vor dem letzten |
+| Schema | `UNIQUE (observed_at)` — kein zweites Label für denselben Moment |
+| Datenbank | `REVOKE UPDATE, DELETE ON market_regimes` |
+
+Dazu: `regimeAt()` liefert vor dem ersten Eintrag `UNKNOWN` und nicht das erste
+bekannte Regime — rückwärts extrapoliert wäre genau derselbe Look-Ahead.
+
+**Hysterese** ist kein Komfort: ohne sie flattert das Label, und jede spätere
+Auswertung nach Regime mischt Phasen, die nur Rauschen trennt. Drei
+Bestätigungen und eine Mindestverweildauer.
+
+`UNKNOWN` ist ein vollwertiges Regime und der häufigste Zustand, solange kein
+Provider läuft. Die Eingaben sind bewusst aus **eigenen** Daten gebildet
+(Breite, Medianrendite, Listing-Rate, eigene Stop-Quote) — ein externer
+Marktindex wäre ein erfundener Endpoint.
+
+## 55. Vier Einstiegsmodelle, damit Einstiege überhaupt auswertbar werden
+
+Bisher gab es genau ein implizites Modell: „Score hoch genug, Gates bestanden,
+kauf". Fällt damit die Trefferquote, weiß niemand, ob das Frühkaufen schlechter
+geworden ist oder das Nachkaufen bestätigter Bewegungen — es gibt keine zwei
+Zahlen zum Vergleichen.
+
+Drei Regeln machen die vier Modelle (EARLY, CONFIRMATION, MOMENTUM, RETEST)
+messbar:
+
+- **Einzeln abschaltbar**, wie die Exit-Regeln.
+- **Mehrfachtreffer bleiben mehrfach.** Auf das erste passende Modell reduziert,
+  hinge die Zuordnung an der Array-Reihenfolge — und die Statistik misst am Ende
+  die Sortierung.
+- **`NOT_COMPUTABLE` ist nicht `NO_MATCH`.** Ein Modell ohne Datengrundlage
+  darf nicht als „hat nicht ausgelöst" zählen. Sonst sieht ein Modell, dessen
+  Daten oft fehlen, aus wie ein zurückhaltendes, und seine Trefferquote wird an
+  den wenigen Fällen gemessen, in denen zufällig alles vorlag.
+
+Inhaltlich: EARLY verlangt zusätzlich eine verteilte Käuferbasis — „früh" ohne
+sie ist nur ein anderes Wort für „vor allen anderen im Ausstieg eines Einzelnen".
+RETEST ist nach oben begrenzt, sonst wäre es ein Name für fallendes Messer
+fangen.
+
+## 56. Ein RPC-Ausfall ist kein Beleg für Illiquidität
+
+Die neunte Verlustregel (K-8, §26) steht bei den Verlustregeln und nicht in der
+Fehlerbehandlung: eine Position, aus der man nicht herauskommt, ist ein
+Risikoereignis.
+
+Ihr Kern ist eine Unterscheidung, deren Fehlen teuer wird. Zählt man einen
+RPC-Ausfall wie überschrittene Slippage, dann löst **ein einziger
+Providerausfall gestückelte Notausstiege über das gesamte Portfolio aus** —
+gleichzeitig, und ausgerechnet in dem Moment, in dem niemand zuverlässig handeln
+kann. Aus einem Betriebsproblem wird ein realisierter Verlust.
+
+| Klasse | Ursachen | Reaktion |
+|---|---|---|
+| Marktseitig | Slippage überschritten, keine Route, Blockhash abgelaufen | eskalieren, gestückelt aussteigen |
+| Betrieblich | RPC weg, kein SOL für Gebühren, Signer lehnt ab | Alarm, neue Einstiege anhalten, **nicht verkaufen** |
+
+Wer nicht aussteigen kann, darf nicht einsteigen — deshalb hält ein
+Betriebsalarm neue Einstiege an. Bestehende Positionen bleiben, weil der Markt
+nicht die Ursache ist und ein Verkauf unter Zwang teuer ist. Und ausdrücklich
+nicht: die Signer-Policy lockern, um herauszukommen.
+
+## 57. Menschliche und systembedingte Latenz sind verschiedene Probleme
+
+Eine einzelne Gesamtlatenz sagt nicht, ob das System langsam war oder der
+Mensch. Systemlatenz lässt sich wegprogrammieren, menschliche Reaktionszeit
+nicht — eine Gesamtzahl leitet also genau die Optimierung an, die nichts bringt.
+
+Neun Stufen von `OBSERVED` bis `CONFIRMED`, jeder Abschnitt einzeln, plus zwei
+Regeln:
+
+- **Monoton oder Fehler.** Ein Schritt vor seinem Vorgänger wirft, statt auf
+  null gedeckelt zu werden. Auseinanderlaufende Uhren erzeugen sonst negative
+  Teilzeiten, die sich in einem Mittelwert gegenseitig aufheben.
+- **Übersprungene Stufen werden markiert.** Ein Auto-Trade hat keinen Alert;
+  ohne Markierung sähe `DECIDED→QUOTED` später aus wie ein `DECIDED→ALERTED`,
+  das zufällig sehr lang war.
+
+`summarizeLatency` liefert Perzentile und **keinen Mittelwert**: bei
+Ausführungszeiten ist der Schwanz die Kostenquelle. Wer den Mittelwert
+optimiert, verbessert die Fälle, die ohnehin schnell waren.
+
+`actualResponseMs` nimmt eine **einzelne** Kette und keine Zusammenfassung —
+I-9 als Typ. `latency_samples` hat entsprechend eine Zeile je Vorgang und keine
+aggregierte Spalte: sobald irgendwo ein `avg_response_ms` steht, wird
+irgendwann damit simuliert.
+
+## 58. Getrennte Exposure-Bücher, und Unbekanntes gilt als korreliert
+
+Zwei Probleme unter einem Namen:
+
+**Ströme dürfen sich nicht blockieren (I-10).** Zusammengezählt blockiert ein
+voll investiertes Paper-Portfolio den Live-Handel, obwohl dort kein Euro liegt;
+gar nicht gezählt ist die Konzentration innerhalb eines Stroms unsichtbar. Also
+getrennte Bücher — und `StreamExposureBook` hat bewusst **keine** Gesamtsumme,
+weil eine solche Zahl sofort in einem Gate landen würde.
+
+**Zehn Positionen können eine sein (§51).** Zehn Tokens desselben Deployers
+fallen gemeinsam; zehn Positionen zu je 3 % sind dann keine 30 % gestreutes
+Risiko, sondern eine Position von 30 %.
+
+Die wichtigste Festlegung betrifft das Unbekannte: eine Position ohne bekannte
+Korrelationsgruppe wird **nicht** als unkorreliert behandelt, sondern kommt in
+einen gemeinsamen Topf. Andernfalls wäre fehlende Information die bequemste Art,
+jedes Konzentrationslimit zu umgehen — und zwar genau so lange, wie die
+Clustering-Daten fehlen. Also: solange am längsten.
