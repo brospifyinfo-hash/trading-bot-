@@ -226,6 +226,33 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
 
+  packages/research:
+    dependencies:
+      '@sae/analytics':
+        specifier: workspace:*
+        version: link:../analytics
+      '@sae/backtest':
+        specifier: workspace:*
+        version: link:../backtest
+      '@sae/config':
+        specifier: workspace:*
+        version: link:../config
+      '@sae/core':
+        specifier: workspace:*
+        version: link:../core
+      '@sae/decision':
+        specifier: workspace:*
+        version: link:../decision
+      '@sae/scoring':
+        specifier: workspace:*
+        version: link:../scoring
+      '@sae/simulation':
+        specifier: workspace:*
+        version: link:../simulation
+      '@sae/trading':
+        specifier: workspace:*
+        version: link:../trading
+
   packages/risk:
     dependencies:
       '@sae/config':

@@ -1,0 +1,18 @@
+{
+  "name": "@sae/research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@sae/analytics": "workspace:*",
+    "@sae/backtest": "workspace:*",
+    "@sae/config": "workspace:*",
+    "@sae/core": "workspace:*",
+    "@sae/decision": "workspace:*",
+    "@sae/scoring": "workspace:*",
+    "@sae/simulation": "workspace:*",
+    "@sae/trading": "workspace:*"
+  }
+}

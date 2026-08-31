@@ -29,6 +29,13 @@
       "when": 1788158346008,
       "tag": "0004_latency_samples",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788167473823,
+      "tag": "0005_research",
+      "breakpoints": true
     }
   ]
 }
