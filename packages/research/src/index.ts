@@ -4,3 +4,8 @@ export * from "./multiple-testing";
 export * from "./feature-analysis";
 export * from "./fragility";
 export * from "./monte-carlo";
+export * from "./shadow";
+export * from "./promotion";
+export * from "./health";
+export * from "./reports";
+export * from "./counterfactuals";

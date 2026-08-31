@@ -1096,3 +1096,221 @@ Korrelationsgruppe wird **nicht** als unkorreliert behandelt, sondern kommt in
 einen gemeinsamen Topf. Andernfalls wäre fehlende Information die bequemste Art,
 jedes Konzentrationslimit zu umgehen — und zwar genau so lange, wie die
 Clustering-Daten fehlen. Also: solange am längsten.
+
+## 59. Die Prüfkette lässt sich nicht abkürzen
+
+`CandidateState` hat keinen Übergang von `HYPOTHESIS` nach `PROMOTED` — und
+auch keinen Umweg dorthin. Backtest → Walk Forward → Out-of-Sample → Shadow ist
+im Zustandsautomaten erzwungen, nicht empfohlen. Wer abkürzen will, muss den
+Automaten ändern, und das fällt in einer Codeänderung auf.
+
+`advanceCandidate` hat bewusst **keinen `force`-Parameter**. Eine Ausnahme, die
+man im Notfall setzen kann, wird im Notfall gesetzt — und ein Notfall ist genau
+der Moment, in dem eine ungeprüfte Strategie am gefährlichsten ist.
+
+`PROMOTED` heißt „ein Mensch kann sie jetzt scharfschalten", nicht „aktiv". Das
+Scharfschalten bleibt ein Vorgang an `strategy_versions` mit `activatedBy`.
+
+`REJECTED` ist ein häufiges und gutes Ergebnis, kein Fehlschlag des Systems.
+
+## 60. Zeitgrenzen werden vor der Hypothese eingefroren
+
+I-6 beschreibt keinen Betrug, sondern einen Ablauf: man schaut sich die Daten
+an, findet ein Muster, prüft es — und wählt den Prüfzeitraum so, dass er zu dem
+passt, was man gesehen hat. Danach ist das Ergebnis zwangsläufig gut, und
+niemand kann die Reihenfolge rekonstruieren.
+
+`freezeBatch` schreibt die vier Grenzen mit einem Hash fest;
+`assertFrozenBefore` weist jede Hypothese ab, die älter ist als das Einfrieren.
+Die Reihenfolge ist damit prüfbar statt eine Frage des guten Gewissens.
+
+Dazu eine **Sperrfrist** zwischen Training und Prüfung, mindestens so lang wie
+die maximale Haltedauer: sonst läuft eine kurz vor `trainTo` eröffnete Position
+in den Prüfzeitraum hinein, und ihr Ausgang gehört beiden Bereichen.
+
+Überlappende Batches sind nicht verboten, aber gemessen (I-12).
+`countIndependentConfirmations` zählt Wiederholungen über dieselben Daten nicht
+mit: „drei Bestätigungen" und „drei Bestätigungen, davon zwei aus denselben
+Daten" sind verschiedene Aussagen.
+
+## 61. Ohne Korrektur für vielfaches Testen ist Faktoranalyse eine Fehlerquelle
+
+45 Features gegen drei Schwellen sind 135 Hypothesen. Auf dem üblichen
+5-%-Niveau sind rund **sieben „signifikante" Ergebnisse allein durch Zufall** zu
+erwarten — und die sehen genauso aus wie echte. Wer die sieben schönsten davon
+einbaut, hat Rauschen fest verdrahtet.
+
+`comparisons` ist deshalb Pflichtfeld der Feature-Analyse. Bei einem Test ergibt
+sich das vertraute z = 1,96, bei 135 rund 3,5; die Intervalle werden breiter,
+und ein Befund muss stärker sein, um sich gegen die Zahl der Versuche
+durchzusetzen. Ein Test führt denselben Datensatz einmal als Einzelbefund
+(getrennt) und einmal als einen von 135 (nicht getrennt) vor.
+
+Bonferroni ist strenger als nötig. Das ist hier die richtige Richtung: ein
+übersehener echter Faktor kostet eine verpasste Chance, ein falsch bestätigter
+kostet Geld.
+
+Weitere Festlegungen der Feature-Analyse:
+
+- **Mindeststichprobe je Zelle**, nicht insgesamt. Eine Wechselwirkung braucht
+  vier belegte Zellen; eine große Gesamtzahl mit einer fast leeren Zelle ergibt
+  eine Wechselwirkung, die an drei Trades hängt.
+- **Grenznutzen auf derselben Menge.** Zwei getrennte Läufe unterscheiden sich
+  schon durch ihre Zusammensetzung — dann misst man die Auswahl statt das Gate.
+  Trades ohne Featurewert bleiben drin; sie still zu entfernen wäre die
+  bequemste Art, ein Gate gut aussehen zu lassen.
+- **Zerfall in gleich große Zeitblöcke**, nicht in gleich große Stichproben:
+  Zerfall ist eine Aussage über die Zeit, und gleich große Stichproben verzerren
+  sie genau dann, wenn die Handelsfrequenz sich geändert hat.
+
+## 62. Plateau, Gipfel, Hang
+
+Der zentrale Begriff der Fragilitätsanalyse. I-7 nennt den Fall: neun
+Take-Profit-Varianten gegen fünf Stop-Varianten sind 45 Kombinationen, und die
+beste davon sieht immer gut aus. Das ist keine Erkenntnis, sondern eine
+Eigenschaft des Suchens.
+
+| Form | Beobachtung | Bedeutung |
+|---|---|---|
+| **Plateau** | Ergebnis bleibt bei ±5/10/20 % stabil | der Wert war eine Entscheidung, aber keine kritische |
+| **Gipfel** | fällt in **jede** Richtung stark ab | Overfitting-Signatur — Spitzen entstehen in verrauschten Oberflächen von selbst |
+| **Hang** | wird in eine Richtung besser | die Grenze wurde gesetzt, nicht gefunden; die Suche ist nicht fertig |
+
+Ein Gipfel ist **nicht** „ein besonders guter Parameter", sondern ein Grund zur
+Ablehnung.
+
+Dazu der Ausreißerbeitrag (§126): kippt das Ergebnis ohne den besten Trade ins
+Minus, wurde ein Glücksfall gemessen und kein Vorteil. Fragilität ist ein
+**Gate**, kein Punktwert — gute Kennzahlen werden nicht gegen einen Befund
+aufgerechnet.
+
+## 63. Monte Carlo zieht aus den eigenen Trades und simuliert Pfade
+
+Zwei Entscheidungen bestimmen, ob die Antwort etwas wert ist.
+
+**Gezogen wird aus der eigenen Verteilung, nicht aus einer Normalverteilung.**
+Memecoin-Renditen sind viele kleine Verluste und seltene sehr große Gewinner.
+Eine angepasste Normalverteilung hätte dieselbe Streuung und völlig andere
+Enden — sie unterschätzt genau das, wonach gefragt wird.
+
+**Simuliert werden Pfade, keine Summen.** Maximaler Rückgang und Ruinrisiko
+hängen an der Reihenfolge; dieselben Trades anders sortiert ergeben denselben
+Endstand und einen völlig anderen Drawdown. Und die Frage „hätte ich das
+ausgehalten" hängt am Drawdown.
+
+Der **Block-Bootstrap** ist deshalb Default: Trades sind zeitlich korreliert,
+weil Marktphasen zusammenhängen. Wer unabhängig zieht, zerlegt jede Verlustserie
+und bekommt zu freundliche Drawdowns. Ein Test misst genau diesen Unterschied.
+
+Eine zu kleine Stichprobe fällt durch das Gate, statt „unbekannt" zu liefern:
+ohne Grundlage gibt es keinen Anlass, echtes Geld zu riskieren.
+
+## 64. Champion und Challenger sehen dasselbe Objekt
+
+Lässt man zwei Strategien unabhängig laufen, handeln sie verschiedene Tokens zu
+verschiedenen Zeiten. Der Vergleich ihrer Trefferquoten misst dann zum großen
+Teil, welche Gelegenheiten jede zufällig gesehen hat — und ein Challenger, der
+einfach öfter einsteigt, sammelt mehr Gewinner ein, ohne besser zu sein.
+
+Deshalb bekommt `runShadowComparison` **einen** Feature-Vektor pro Gelegenheit
+und reicht dasselbe Objekt an beide. Ein Test prüft die Objektidentität.
+
+Verglichen wird **paarweise**: die Fälle, in denen beide gleich entscheiden,
+sagen über den Unterschied nichts. Gerechnet wird auf den Abweichungen — und ein
+Herausforderer, dessen Intervalle überlappen, ist nicht besser, sondern nur
+anders.
+
+## 65. Zehn Gates, und keine Freigabe aus dem Code
+
+**Alle zehn müssen bestehen, eines reicht zur Ablehnung.** Es gibt keine
+Gewichtung und keinen Gesamtscore, gegen den sich ein durchgefallenes Gate
+aufrechnen ließe — ein Durchschnitt über Gates verwandelt jede harte Bedingung
+in eine Empfehlung.
+
+Zwei Eigenschaften machen das Modul zur Sperre statt zur Checkliste:
+
+- **`evaluatePromotionGates` kann keine Freigabe erteilen.** Kein Codepfad setzt
+  `HUMAN_APPROVAL` auf `PASS`. Das Ergebnisfeld heißt `readyForHumanReview` und
+  nicht `approved`; der Unterschied ist der ganze Zweck.
+- **Nicht bewertbar zählt wie durchgefallen.** „Wir konnten es nicht prüfen" ist
+  kein Argument dafür, echtes Geld einzusetzen — getrennt ausgewiesen, aber mit
+  derselben Folge.
+
+Das Gate `COST_MODEL_CALIBRATED` steht derzeit auf `FAIL`, weil kein Provider
+erreichbar ist. Das ist beabsichtigt und keine Lücke: eine Strategie, deren
+Kosten geschätzt sind, darf kein echtes Geld bewegen.
+
+## 66. Ein erwarteter Rückgang ist keine Verschlechterung
+
+Die Monte-Carlo-Simulation hat vor der Freigabe gesagt, dass 30 % Drawdown in
+jedem zwanzigsten Verlauf vorkommen. Tritt er ein, ist das die **Bestätigung**
+des Modells, nicht sein Widerspruch. Wer hier abschaltet, schaltet systematisch
+am Tiefpunkt ab — und eine abgeschaltete Strategie hat keinen Erwartungswert
+mehr.
+
+Verschlechterung heißt deshalb: das Ergebnis liegt **außerhalb** der Vorhersage.
+Konkret — die Obergrenze des laufenden Trefferquoten-Intervalls liegt unter der
+Validierungsuntergrenze (die günstigste Lesart der Gegenwart unter der
+ungünstigsten der Vergangenheit), oder der Rückgang übersteigt den schlechtesten
+simulierten Verlauf.
+
+Aus `DEGRADED` führt kein Weg direkt zurück nach `HEALTHY`: eine Strategie, die
+außerhalb ihrer Vorhersage lag, ist nicht dadurch wieder gesund, dass die
+nächsten Trades besser liefen. Sie muss über `WATCH`.
+
+## 67. Anhalten darf die Automatik, Aktivieren nicht
+
+Die Asymmetrie ist die wichtigste Regel des Health-Moduls:
+
+- **Anhalten** schützt Kapital und ist deshalb automatisierbar.
+- **Aktivieren** ist es nicht — auch nicht das Zurückschalten auf eine früher
+  geprüfte Version. Geprüft wurde sie gegen eine andere Marktlage.
+
+Deshalb gibt es `suspend` als Vorgang und `planRollback` als **Vorschlag** mit
+`requiresHumanApproval: true` als Literaltyp.
+
+Der Rollback überspringt Versionen, aus denen schon einmal zurückgerollt wurde:
+sonst pendelt das System zwischen zwei Versionen hin und her und erzeugt bei
+jedem Wechsel Kosten, ohne je eine Entscheidung zu treffen.
+
+## 68. Der Bericht stellt den Zufall daneben
+
+Ein System, das nur Berichte über gefundene Zusammenhänge kennt, erzeugt so
+lange welche, bis es welche gibt. Deshalb trägt jeder Forschungsbericht die
+Gegenzahl: **wie viele Befunde allein durch Zufall zu erwarten waren.**
+
+Fünf bestätigte Zusammenhänge bei 135 Versuchen und rund sieben erwarteten
+Scheinbefunden sind kein Ergebnis — sie sind weniger, als der Zufall liefert.
+`findingsVsChance` unter 1 führt deshalb zu `NO_EDGE`, egal wie die Liste
+aussieht.
+
+Befunde ohne belegte Trennung kommen gar nicht erst in die Liste: ein
+`NO_DIFFERENCE` ist kein schwacher Befund, sondern keiner. Und „nichts gefunden"
+wird von „nichts prüfbar" getrennt — zu wenig Daten heißt nicht, dass kein
+Vorteil da ist.
+
+Der **No-Edge-Modus** (§148) ist kein Alarm, sondern eine Feststellung. Er hält
+den Live-Handel an und lässt Auto Paper und Manual Paper weiterlaufen, damit die
+nächste Marktphase auf Daten trifft. Nicht handeln ist dort das Ergebnis, nicht
+das Scheitern.
+
+## 69. Counterfactuals bekommen eine Uhr, keine Bitte
+
+Wer den ganzen Kursverlauf kennt, findet immer einen besseren Ausstieg. „Bei
++180 % statt bei +40 % verkaufen" ist keine Regel, sondern eine Beobachtung im
+Rückblick. Wertet man Alternativen so aus, sieht jede besser aus als das, was
+tatsächlich passiert ist — und das System lernt, seine Ausstiege für schlecht zu
+halten, obwohl es sie nicht besser hätte treffen können.
+
+`guardedSource` umhüllt die Datenquelle mit einer Simulationsuhr und **wirft**
+bei jeder Anfrage jenseits der aktuellen Zeit. Look-Ahead ist damit ein Fehler
+zur Laufzeit und nicht ein besonders gutes Ergebnis. Die Schranke ist bewusst
+`async`: als synchroner Wurf ginge sie an jedem Aufrufer vorbei, der die Methode
+mit `.catch()` statt `await` benutzt — und das ist genau der Aufrufer, der sie
+am nötigsten hat.
+
+Eine Alternative, die nicht auslöst, wird am tatsächlichen Schluss bewertet und
+ausdrücklich nicht am späteren Hoch. Zusammenfassungen nehmen den **Median** und
+verlangen eine **Mehrheit** besserer Fälle: ein einzelner Verzehnfacher, den die
+Alternative hätte laufen lassen, bestimmt sonst jeden Mittelwert — und genau
+diesen einen Fall findet man im Rückblick immer.
