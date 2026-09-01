@@ -305,9 +305,17 @@ export class JobQueueRepository {
         claimedBy: null,
         leaseUntil: null,
         startedAt: null,
-        // Der Cast ist noetig: ohne ihn leitet Postgres den Typ des
-        // CASE-Ausdrucks aus dem ungetypten Parameter ab und bekommt text.
-        finishedAt: sql`case when ${jobQueue.attempts} >= ${jobQueue.maxAttempts} then ${now}::timestamptz else null::timestamptz end`,
+        // Zwei Dinge sind hier noetig, und beide aus einem echten Fehlschlag
+        // gelernt:
+        //
+        // 1. Der Cast: ohne ihn leitet Postgres den Typ des CASE-Ausdrucks aus
+        //    dem ungetypten Parameter ab und bekommt text.
+        // 2. `toISOString()`: ein Date direkt in ein sql-Fragment zu binden
+        //    laeuft unter PGlite durch, aber postgres-js — der Treiber im
+        //    Betrieb — bricht mit "Received an instance of Date" ab. Der Fehler
+        //    trat deshalb in keinem Test auf, sondern erst im laufenden
+        //    Consumer.
+        finishedAt: sql`case when ${jobQueue.attempts} >= ${jobQueue.maxAttempts} then ${now.toISOString()}::timestamptz else null::timestamptz end`,
         lastError: "Worker hat die Frist ueberschritten (lease expired)",
         lastFailureClass: "LEASE_EXPIRED",
       })

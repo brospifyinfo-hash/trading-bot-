@@ -56,6 +56,17 @@ export interface DiagnosticsReport {
 
 const HOUR_MS = 3_600_000;
 
+/**
+ * Warum die Zeitgrenzen hier als ISO-Zeichenkette mit `::timestamptz` in die
+ * Abfragen gehen und nicht als `Date`:
+ *
+ * Ein `Date`, das direkt in ein `sql`-Fragment gebunden wird, laeuft unter
+ * PGlite (den Tests) anstandslos durch, aber `postgres-js` — der Treiber im
+ * Betrieb — bricht mit "Received an instance of Date" ab. Dieser Endpunkt waere
+ * damit nach jedem Deployment ausgefallen, ohne dass ein Test es gezeigt haette.
+ * Die Zeichenkette mit explizitem Cast ist fuer beide Treiber eindeutig.
+ */
+
 export async function loadDiagnostics(input: {
   readonly db: Database;
   readonly now: Date;
@@ -106,7 +117,7 @@ export async function loadDiagnostics(input: {
       .where(
         sql`${providerRequests.providerId} = ${status.providerId}
             and ${providerRequests.capability} = ${status.capability}
-            and ${providerRequests.at} >= ${since}`,
+            and ${providerRequests.at} >= ${since.toISOString()}::timestamptz`,
       );
 
     const count = window?.count ?? 0;

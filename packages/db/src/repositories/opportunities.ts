@@ -288,8 +288,12 @@ export class OpportunityRepository {
       .update(opportunities)
       .set({ state: "EXPIRED", closedAt: now })
       .where(
+        // ISO-Zeichenkette mit Cast statt eines gebundenen `Date`: postgres-js
+        // bricht sonst mit "Received an instance of Date" ab, waehrend PGlite
+        // es durchlaesst. Ohne den Cast liefen Gelegenheiten im Betrieb nie ab
+        // — und ohne Ablauf gaebe es weder EXPIRED noch MISSED.
         sql`${opportunities.respondBy} is not null
-            and ${opportunities.respondBy} < ${now}
+            and ${opportunities.respondBy} < ${now.toISOString()}::timestamptz
             and ${opportunities.state} in ('OFFERED','SEEN')`,
       )
       .returning({ id: opportunities.id });

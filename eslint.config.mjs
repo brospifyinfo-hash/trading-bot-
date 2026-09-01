@@ -1,6 +1,16 @@
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
-import saeRules from "./eslint-rules/no-numeric-fallback.js";
+import noNumericFallback from "./eslint-rules/no-numeric-fallback.js";
+import noDateInSql from "./eslint-rules/no-date-in-sql.js";
+
+/**
+ * Ein einziges `sae`-Plugin.
+ *
+ * ESLint erlaubt es nicht, denselben Plugin-Namen in mehreren Config-Bloecken
+ * zu definieren. Die hauseigenen Regeln werden deshalb hier zusammengefuehrt
+ * und unten nur noch je Dateibereich unterschiedlich scharf gestellt.
+ */
+const saeRules = { rules: { ...noNumericFallback.rules, ...noDateInSql.rules } };
 
 export default [
   {
@@ -41,6 +51,20 @@ export default [
     plugins: { sae: saeRules },
     rules: {
       "sae/no-numeric-fallback": "error",
+    },
+  },
+  {
+    /**
+     * Datenbankcode: kein `Date` direkt in einem sql-Fragment.
+     *
+     * Gilt ausdruecklich AUCH fuer Tests. Die Regel schuetzt vor einem
+     * Unterschied zwischen Testtreiber (PGlite) und Betriebstreiber
+     * (postgres-js) — eine Ausnahme fuer Tests wuerde genau die Stelle
+     * freistellen, an der der Unterschied unsichtbar bleibt.
+     */
+    files: ["packages/db/src/**/*.ts", "apps/**/*.ts"],
+    rules: {
+      "sae/no-date-in-sql": "error",
     },
   },
   {

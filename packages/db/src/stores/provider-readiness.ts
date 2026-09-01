@@ -242,7 +242,9 @@ export class ProviderReadinessStore {
         tokensCovered: sql<number>`sum(${providerRequests.tokensCovered})::int`,
       })
       .from(providerRequests)
-      .where(sql`${providerRequests.at} >= ${since}`)
+      // ISO-Zeichenkette mit Cast: ein gebundenes `Date` bricht unter
+      // postgres-js ab, waehrend PGlite es akzeptiert.
+      .where(sql`${providerRequests.at} >= ${since.toISOString()}::timestamptz`)
       .groupBy(providerRequests.providerId, providerRequests.capability);
   }
 

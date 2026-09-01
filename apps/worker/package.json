@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "start": "tsx src/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke:infra": "tsx src/smoke/infrastructure.ts",
+    "smoke:dexscreener": "tsx src/smoke/dexscreener.ts",
+    "smoke:pipeline": "tsx src/smoke/pipeline.ts"
   },
   "dependencies": {
     "@sae/analytics": "workspace:*",
