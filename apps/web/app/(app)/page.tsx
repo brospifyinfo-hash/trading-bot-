@@ -1,5 +1,6 @@
-import { createDatabase, loadDashboardState, type Panel } from "@sae/db";
-import { loadEnv, webEnvSchema } from "@sae/config";
+import { loadDashboardState, type Panel } from "@sae/db";
+
+import { db } from "@/lib/db";
 
 import { BotStatusBar } from "@/components/BotStatusBar";
 
@@ -53,9 +54,8 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function DashboardPage(): Promise<React.ReactNode> {
-  const env = loadEnv(webEnvSchema, process.env);
-  const db = createDatabase(env.DATABASE_URL, { readonly: true });
-  const state = await loadDashboardState({ db, now: new Date() });
+  // Modulebene statt Request-Handler: siehe lib/db.ts.
+  const state = await loadDashboardState({ db: db(), now: new Date() });
 
   return (
     <>
@@ -204,6 +204,200 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
                   ))}
                 </tbody>
               </table>
+            )}
+          />
+        </section>
+
+        <section className="panel">
+          <h2>System</h2>
+          <dl className="kv">
+            <div>
+              <dt>Phase</dt>
+              <dd>{state.systemState.phase}</dd>
+            </div>
+            <div>
+              <dt>Worker</dt>
+              <dd>{state.systemState.workerAlive ? "aktiv" : "keine Messung"}</dd>
+            </div>
+            <div>
+              <dt>Letzte Messung</dt>
+              <dd>{state.systemState.lastProviderSampleAt?.toISOString() ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>Live-Handel</dt>
+              <dd>{state.systemState.liveTradingEnabled ? "frei" : "abgeschaltet"}</dd>
+            </div>
+          </dl>
+          {state.systemState.blockedBy.length > 0 && (
+            <ul className="failures">
+              {state.systemState.blockedBy.map((b) => (
+                <li key={b}>{b}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="panel">
+          <h2>Jobs und Queue</h2>
+          <dl className="kv">
+            <div>
+              <dt>wartend</dt>
+              <dd>{state.queue.queued}</dd>
+            </div>
+            <div>
+              <dt>laufend</dt>
+              <dd>{state.queue.running}</dd>
+            </div>
+            <div>
+              <dt>abgeschlossen</dt>
+              <dd>{state.queue.done}</dd>
+            </div>
+            <div>
+              <dt>Dead Letter</dt>
+              <dd>{state.queue.dead}</dd>
+            </div>
+            <div>
+              <dt>in Wiederholung</dt>
+              <dd>{state.queue.retryingJobs}</dd>
+            </div>
+            <div>
+              <dt>aeltester wartend</dt>
+              <dd>{state.queue.oldestQueuedAt?.toISOString() ?? "—"}</dd>
+            </div>
+          </dl>
+          {state.recentJobs.length === 0 ? (
+            <p className="placeholder">
+              <strong>WAITING</strong>
+              <br />
+              Noch kein Auftrag eingereiht.
+            </p>
+          ) : (
+            <table className="providers">
+              <thead>
+                <tr>
+                  <th>Auftrag</th>
+                  <th>Zustand</th>
+                  <th>Versuche</th>
+                  <th>Dauer</th>
+                  <th>Grund</th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.recentJobs.map((j) => (
+                  <tr key={`${j.kind}-${j.enqueuedAt.toISOString()}`} data-status={j.state}>
+                    <td>{j.kind}</td>
+                    <td className="status">{j.state}</td>
+                    <td>{j.attempts}</td>
+                    <td>{j.durationMs === null ? "—" : `${j.durationMs} ms`}</td>
+                    <td>{j.failureClass ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+
+        {state.deadLetters.length > 0 && (
+          <section className="panel">
+            <h2>Dead Letters</h2>
+            <ul className="failures">
+              {state.deadLetters.map((j) => (
+                <li key={`${j.kind}-${j.enqueuedAt.toISOString()}`}>
+                  <b>{j.kind}</b> nach {j.attempts} Versuchen: {j.lastError ?? "ohne Begruendung"}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {state.errors.length > 0 && (
+          <section className="panel">
+            <h2>Fehler</h2>
+            <ul className="failures">
+              {state.errors.map((e) => (
+                <li key={`${e.kind}-${e.at.toISOString()}`}>
+                  <b>{e.kind}</b> · {e.at.toISOString()} · {e.detail}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <section className="panel">
+          <h2>Verpasste Gelegenheiten</h2>
+          <PanelBody
+            panel={state.missed}
+            render={(v) => (
+              <>
+                <dl className="kv">
+                  <div>
+                    <dt>abgelaufen</dt>
+                    <dd>{v.expired}</dd>
+                  </div>
+                  <div>
+                    <dt>abgelehnt</dt>
+                    <dd>{v.rejected}</dd>
+                  </div>
+                  <div>
+                    <dt>revalidierung gescheitert</dt>
+                    <dd>{v.invalidated}</dd>
+                  </div>
+                  <div>
+                    <dt>zurueckgezogen</dt>
+                    <dd>{v.cancelled}</dd>
+                  </div>
+                </dl>
+                <p className="placeholder">
+                  Zaehlungen, keine Betraege. Eine verpasste oder abgelehnte Gelegenheit
+                  ist kein Verlust.
+                </p>
+              </>
+            )}
+          />
+        </section>
+
+        <section className="panel">
+          <h2>Latenz</h2>
+          <PanelBody
+            panel={state.latency}
+            render={(rows) => (
+              <dl className="kv">
+                {rows.map((r) => (
+                  <div key={r.stream}>
+                    <dt>
+                      {r.stream} ({r.samples})
+                    </dt>
+                    <dd>
+                      {r.medianObservedToDecidedMs === null
+                        ? "—"
+                        : `${r.medianObservedToDecidedMs.toFixed(0)} ms`}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          />
+        </section>
+
+        <section className="panel">
+          <h2>Champion / Challenger</h2>
+          <PanelBody
+            panel={state.championChallenger}
+            render={(v) => (
+              <dl className="kv">
+                <div>
+                  <dt>Champion</dt>
+                  <dd>{v.champion ?? "keiner"}</dd>
+                </div>
+                <div>
+                  <dt>Challenger</dt>
+                  <dd>{v.challengers}</dd>
+                </div>
+                <div>
+                  <dt>vorlegbar</dt>
+                  <dd>{v.promoted}</dd>
+                </div>
+              </dl>
             )}
           />
         </section>

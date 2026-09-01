@@ -1,8 +1,9 @@
 # Was blockiert ist — und woran genau
 
-Stand: 2026-08-31, nach der Verdrahtung des Pipeline-Pfads: Anbieterkette im
-Produktivcode, Decision → Gelegenheit → Auto Paper + Manual, Herkunftsspalten
-mit Fixture-Isolation auf Datenbankebene.
+Stand: 2026-09-01, nach der Infrastruktur-Runde: Snapshot-Aufnahme mit
+Nebenläufigkeitsschutz, Checkpointing im Betrieb, Research-Evidenzsperre,
+Resend-Adapter, INVEST-NOW-Prüfkette, Queue-Observability und der
+Vercel-Verbindungscache.
 
 Diese Datei ist bewusst kurz und konkret. Sie beantwortet eine Frage: **was
 fehlt, damit dieses System läuft?**
@@ -52,6 +53,13 @@ OpenAPI-Spezifikation.
 | **Anbieterkette im Produktivpfad** (`resolveFromChain`) | `apps/worker/src/pipeline/market-input.ts` |
 | **Decision → Gelegenheit → Auto Paper + Manual** | `apps/worker/src/pipeline/opportunity-pipeline.ts` |
 | **Herkunft und Fixture-Isolation** (CHECK + zusammengesetzte FK) | Migration `0009_provenance` |
+| **Snapshot-Aufnahme** mit `UNIQUE (ingest_key)` | `packages/db/src/repositories/snapshots.ts` |
+| **Checkpointing im Betrieb** (Wiederaufnahme je Token) | `apps/worker/src/pipeline/market-refresh.ts` |
+| **Research-Evidenzsperre** (Fixtures promoten nichts) | `packages/db/src/repositories/research.ts` |
+| **Resend-Adapter** mit E-Mail-Template | `packages/alerts/src/resend.ts` |
+| **INVEST-NOW-Prüfkette** (12 Blockiergründe) | `packages/alerts/src/confirmation.ts` |
+| **Queue-Observability** (Jobs, Dead Letters, Latenz, Fehler) | `packages/db/src/queries/dashboard.ts` |
+| **Vercel-Verbindungscache** (ein Pool je Prozess) | `packages/db/src/client.ts` |
 
 ### BLOCKED BY LIVE DATA — Architektur steht, Ausführung wartet
 
@@ -99,6 +107,19 @@ Notstopp, und Daten der Stufe `PRIMARY` oder `SECONDARY` innerhalb der
 Frischegrenze.
 
 ---
+
+## Worker-Status
+
+Die vollständige Matrix mit Input, Output, DB-Writes, Queue, Retry, Checkpoint,
+Idempotenz und benötigten Anbietern steht in
+[`WORKER-MATRIX.md`](WORKER-MATRIX.md).
+
+Kurzfassung: **fünf** Worker/Handler laufen mit echter Fachlogik
+(`provider-health`, `scheduler`, `consumer`, `market-refresh`,
+`expire-opportunities`). **Vier** sind fachlich fertig und warten auf Daten
+(`scoring`, `decision`, `paper`, `alerts`). **Drei** sind durch fehlende
+Anbieter blockiert (`enrichment`, `positions`, `reconciler`). **Einer** ist
+bewusst nicht gebaut (`execution` — Live-Handel ist abgeschaltet).
 
 ## Womit anfangen
 

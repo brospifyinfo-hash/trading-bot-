@@ -12,6 +12,7 @@ import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { resolveMarketInput } from "./pipeline/market-input";
+import { refreshMarketData } from "./pipeline/market-refresh";
 import { sampleProviderHealth } from "./roles/provider-health";
 
 /**
@@ -153,13 +154,48 @@ class MarketDataHandler implements JobHandler {
   }
 }
 
+/**
+ * Marktdaten auffrischen — mit Wiederaufnahme.
+ *
+ * Der einzige Handler mit Checkpoint. Er braucht ihn, weil er eine Liste
+ * abarbeitet: stirbt der Prozess in der Mitte, soll der naechste dort
+ * weitermachen und nicht von vorn beginnen.
+ */
+class MarketRefreshHandler implements JobHandler {
+  constructor(private readonly deps: HandlerDeps) {}
+
+  async handle(job: ClaimedJob): Promise<unknown> {
+    return refreshMarketData(job.dedupeKey, {
+      db: this.deps.db,
+      logger: this.deps.logger,
+      env: this.deps.env,
+      clock: systemClock,
+      adapters: this.deps.adapters ?? new Map(),
+      // Ohne Messung gilt ein Anbieter als nicht erreichbar.
+      statusOf: () => "UNAVAILABLE",
+      maxUnitsPerRun: MAX_TOKENS_PER_RUN,
+      maxTokens: MAX_TOKENS_TRACKED,
+    });
+  }
+}
+
+/**
+ * Wie viele Tokens ein Lauf anfasst.
+ *
+ * Festlegung, keine Messung: ohne bekannte Rate-Limit-Budgets ist jede Zahl
+ * eine Annahme. Sie ist bewusst klein — zu wenige Anfragen kosten Zeit, zu
+ * viele kosten den Zugang.
+ */
+const MAX_TOKENS_PER_RUN = 25;
+const MAX_TOKENS_TRACKED = 500;
+
 export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
   const market = (what: string): JobHandler => new MarketDataHandler(deps, what);
   return {
     SAMPLE_PROVIDER_HEALTH: new ProviderHealthHandler(deps),
     EXPIRE_OPPORTUNITIES: new ExpireOpportunitiesHandler(deps),
+    REFRESH_MARKET_DATA: new MarketRefreshHandler(deps),
     DISCOVER_TOKENS: market("Token-Entdeckung"),
-    REFRESH_MARKET_DATA: market("Marktdaten-Aktualisierung"),
     SCORE_TOKEN: market("Bewertung"),
     EVALUATE_OPPORTUNITY: market("Gelegenheitspruefung"),
     MONITOR_PAPER_POSITION: market("Positionsueberwachung"),

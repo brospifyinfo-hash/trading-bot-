@@ -80,6 +80,37 @@ Deshalb ist `job_queue` eine Tabelle:
   ist die Fehlerart, die man sonst erst Wochen später an einer Lücke in den
   Daten bemerkt.
 
+## 4b. Datenbank-Verbindungen — der Punkt, an dem Vercel wehtut
+
+Zwei Fehler, die beide erst unter Last auffallen:
+
+**Ein Pool je Anfrage.** `createDatabase()` im Request-Handler legt bei jeder
+Anfrage einen neuen Verbindungspool an. Eine Serverless-Instanz bedient viele
+Anfragen, und viele Instanzen laufen parallel — das Ergebnis sind hunderte
+kurzlebige Verbindungen gegen eine Datenbank, die einige Dutzend verträgt.
+
+*Behoben:* `getDatabase()` cacht auf Modulebene (`packages/db/src/client.ts`).
+Die Web-App holt ihre Verbindung ausschließlich über `apps/web/lib/db.ts`. Auf
+Vercel überlebt der Cache den Warm Start; beim Cold Start wird er neu aufgebaut.
+
+**Ein zu großer Pool.** `SERVERLESS_DB_OPTIONS` setzt `max: 1` und
+`idle_timeout: 10`. Das klingt wenig und ist genau richtig: die Skalierung
+übernimmt der Pooler vor der Datenbank, nicht der einzelne Prozess.
+
+### Was Production braucht
+
+| Einstellung | Web (Vercel) | Worker (Container) |
+|---|---|---|
+| `DATABASE_URL` | **Pooler-Endpunkt** (Neon pooled, Supabase `:6543`, PgBouncer transaction mode) | Direktverbindung |
+| Poolgröße je Prozess | 1 | 10 |
+| `idle_timeout` | 10 s | 20 s |
+| Prepared Statements | aus (`prepare: false`) | aus |
+| Migrationen ausführen | **nein** | ja, vor dem Start |
+
+`prepare: false` ist keine Vorsichtsmaßnahme, sondern Pflicht: ein Pooler im
+Transaction Mode gibt die Verbindung nach jeder Transaktion weiter, und ein
+vorbereitetes Statement liegt dann auf einer anderen.
+
 ## 5. Datenbank
 
 Migrationen sind **vorwärts-only**. Ein Rollback in einer Datenbank, die
@@ -107,9 +138,22 @@ Wer welche Variablen braucht:
 
 | Ziel | Variablen |
 |---|---|
-| Vercel (Web) | `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `APP_BASE_URL`, `RESEND_API_KEY` |
-| Worker | `DATABASE_URL`, `REDIS_URL`, `WORKER_ROLE`, `SOLANA_RPC_URL`, `HEALTH_PORT`, Anbieter-URLs |
+| Vercel (Web) | `DATABASE_URL` (**Pooler**), `REDIS_URL`, `SESSION_SECRET`, `APP_BASE_URL`, `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `ALERT_TO_EMAIL` |
+| Worker | `DATABASE_URL` (direkt), `REDIS_URL`, `WORKER_ROLE`, `SOLANA_RPC_URL`, `HEALTH_PORT`, `MARKET_DATA_PRIORITY`, Anbieter-URLs und -Schlüssel |
 | Signer | ausschließlich `SIGNER_*`, alle als Dateipfade auf Secrets |
+
+Der Resend-Schlüssel gehört auf **beide** Seiten nur dorthin, wo tatsächlich
+versendet wird — heute ist das der `alerts`-Worker, nicht die Web-App. Ist
+`ALERT_ALLOW_TEST_EMAILS` nicht gesetzt, verweigert der Adapter jede Mail aus
+einer Fixture-Gelegenheit.
+
+### `vercel.json`
+
+Liegt im Repository-Wurzelverzeichnis. Es baut ausschließlich `@sae/web`; die
+Worker sind darin bewusst nicht erwähnt, weil sie dort nicht laufen. **Es gibt
+keine `crons`-Sektion** — Vercel Cron löst höchstens minütlich aus, und die
+Positionsüberwachung eines Memecoins im Minutenraster ist keine Überwachung.
+Der Takt gehört auf den Worker-Host.
 
 ## 7. Health
 
@@ -136,6 +180,29 @@ DATA` — nicht Null, nicht einen letzten bekannten Wert.
 Der Scheduler liest die Lage alle 30 Sekunden neu aus der Datenbank. Ein
 Anbieter, der um drei Uhr nachts wiederkommt, wird also bemerkt, ohne dass
 jemand etwas neu startet.
+
+## 8b. Sicherheit
+
+Was in dieser Phase gilt und geprüft ist:
+
+- **Kein privater Schlüssel im Repository.** Er taucht in keinem Env-Schema auf
+  und existiert nur als Docker-Secret im Signer-Container.
+- **Keine API-Schlüssel im Code.** Resend liest aus `RESEND_API_KEY`, Anbieter
+  aus ihren jeweiligen Variablen. Der Secrets-Audit über alle getrackten
+  Dateien läuft in jeder Runde.
+- **Keine Secrets im Log.** `@sae/observability` redigiert per **Allowlist**:
+  was nicht ausdrücklich erlaubt ist, wird ersetzt. Eine Blocklist schützt nur
+  vor den Feldnamen, an die jemand gedacht hat.
+- **Keine Secrets im Dashboard.** Die Dashboard-Abfragen lesen keine
+  Anbieterschlüssel; die Verbindungszeichenfolge bleibt im Prozessspeicher und
+  erscheint in keiner Ausgabe.
+- **Keine rohen Anbieter-Antworten in der Datenbank.** Gespeichert werden die
+  geparsten Felder plus Herkunft, nicht der Rohkörper.
+
+Für einen späteren Live-Betrieb gilt zusätzlich: die Wallet-Signierung läuft
+über einen eigenen Prozess (`apps/signer`) mit mTLS, Programm-Allowlist und
+harten Abflussgrenzen. Ein Web-Request erreicht ihn nie direkt — die Trennung
+existiert bereits im Code und darf nicht aufgeweicht werden.
 
 ## 9. Was vor einem Live-Deployment noch fehlt
 

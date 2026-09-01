@@ -251,6 +251,30 @@ Der Compiler zwingt damit jede Feature-Funktion, den Fall `MISSING` zu behandeln
 
 ---
 
+### 5b. Herkunft (Provenance)
+
+Drei Tabellen führen `source_type`, `is_test_fixture` und — beim Snapshot —
+`source_provider`, `source_tier`, `source_timestamp`: `feature_snapshots`,
+`opportunities`, `paper_positions`.
+
+Die Trennung von Test- und Produktionsdaten hängt **nicht** an Filtern:
+
+```sql
+CHECK is_test_fixture = (source_type = 'TEST_FIXTURE')
+CHECK not is_test_fixture or source_provider like 'TEST_FIXTURE:%'
+FOREIGN KEY (feature_snapshot_id, is_test_fixture) → feature_snapshots(id, is_test_fixture)
+FOREIGN KEY (opportunity_id,      is_test_fixture) → opportunities(id, is_test_fixture)
+```
+
+Die zusammengesetzten Fremdschlüssel sind der eigentliche Schutz: eine echte
+Gelegenheit *kann* nicht auf einen Fixture-Snapshot zeigen, weil das Paar in der
+Zieltabelle nicht existiert. Das wirkt auch, wenn jemand die Repositories
+umgeht.
+
+Die Forschung setzt darauf auf: `ResearchRepository.productionEvidence()` zählt
+ausschließlich abgeschlossene Positionen mit echter Herkunft, und ein
+Vorwärtsschritt in der Prüfkette ohne solche Evidenz wird abgelehnt.
+
 ## 6. API-Struktur
 
 Trennung: **Read-APIs** (Dashboard, unkritisch) vs. **Command-APIs** (erzeugen Intents, streng geschützt).
@@ -615,41 +639,36 @@ Ergebnis: `SOCIAL_AUTHENTICITY_SCORE` und `SOCIAL_MOMENTUM_SCORE`, getrennt. Ohn
 
 ## 15. Deployment-Architektur
 
-### 15.1 Warum nicht Vercel
-Das System braucht dauerhafte WebSocket-Verbindungen, sekündliches Position-Monitoring und einen Prozess, der nie kalt startet. Serverless ist dafür das falsche Modell. **Empfehlung: ein VPS/Dedicated Server mit Docker Compose** (Hetzner/Latitude, EU-Region, nahe am RPC-Provider). Optional kann `apps/web` separat auf Vercel laufen — die Worker nicht.
+Vier Teile mit unterschiedlichen Lebensdauern. Sie zu vermischen ist der Fehler,
+den man erst im Betrieb bemerkt.
 
-### 15.2 Compose-Topologie
-```
-networks:
-  public    → web                            (Reverse Proxy, TLS)
-  data      → postgres, redis, worker, web   [internal: true — kein Internet]
-  egress    → worker                         (Provider-Aufrufe: RPC, DEX, Social)
-  signing   → worker(execution), signer      [internal: true — kein Internet]
+| Teil | Laufzeitmodell | Deployziel |
+|---|---|---|
+| **WEB / DASHBOARD / API / AUTH** | anfragegetrieben, Sekunden | **Vercel** |
+| **WORKER / QUEUE / SCHEDULER** | dauerhaft, Minuten bis Wochen | Container oder VM |
+| **DATENBANK** | dauerhaft, zustandsbehaftet | verwaltetes PostgreSQL + Pooler |
+| **DATENQUELLEN** | extern | Anbieter mit eigenem Rate-Limit-Raum |
 
-  → Postgres, Redis und Signer haben KEINE Route nach draussen.
-  → Nur der execution-Worker haengt im signing-Netz.
-  → Die Weboberflaeche hat kein egress: alles Ausgehende laeuft ueber Worker.
+**Der Worker gehört ausdrücklich nicht auf Vercel.** Vier Eigenschaften, die
+eine Serverless-Funktion nicht hat: ein Takt, der weiterläuft; ein Anspruch, der
+über das Anfrageende hinaus gehalten wird; ein Verbindungspool, der sich lohnt;
+und eine Laufzeit ohne harten Deckel.
 
-services:
-  caddy       Reverse Proxy + automatisches TLS
-  web         Next.js
-  worker-*    je Rolle ein Container (discovery, enrichment, scoring,
-              decision, execution, positions, paper, alerts, reconciler,
-              scheduler)
-  signer      isoliert, Key als Docker Secret
-  postgres    + TimescaleDB, WAL-Archiv, tägliches Backup off-site
-  redis       AOF persistence (Queue-Verlust = verlorene Trades)
-  grafana     Dashboards
-  loki/promtail  Logs
-```
+Web und Worker sprechen ausschließlich über die Datenbank miteinander. Es gibt
+keinen direkten Aufruf in beide Richtungen — das ist der Grund, warum sie
+getrennt deploybar sind.
 
-### 15.3 Betriebsregeln
-- **Migrationen:** Drizzle, forward-only, im Deploy-Schritt vor dem Worker-Start. Ein Worker mit veraltetem Schema startet nicht.
-- **Graceful Shutdown:** Worker beenden laufende Jobs, bevor sie sterben. Der Execution-Worker akzeptiert bei `SIGTERM` keine neuen Jobs, wartet aber auf Bestätigung laufender Transaktionen.
-- **Deploy-Regel:** Kein Deploy bei offenen Live-Positionen ohne bewusste Bestätigung. Der Deploy-Task prüft das.
-- **Backups:** Postgres täglich verschlüsselt off-site + PITR über WAL. Die Datenbank *ist* das Forschungsergebnis — sie ist wertvoller als der Code.
+Die vollständige Anleitung samt Verbindungseinstellungen, Umgebungsvariablen
+und Reihenfolge beim Deploy steht in [`DEPLOYMENT.md`](DEPLOYMENT.md); die
+Zuordnung der Worker zu ihren Abhängigkeiten in
+[`WORKER-MATRIX.md`](WORKER-MATRIX.md).
 
----
+### Verbindungen
+
+Der Punkt, an dem eine Serverless-Plattform wehtut: ein Pool je Anfrage. Die
+Web-App holt ihre Verbindung über einen Modul-Cache (`getDatabase`), hält
+`max: 1` und spricht mit einem Pooler im Transaction Mode. `prepare: false` ist
+dabei Pflicht, nicht Vorsicht.
 
 ## 16. Teststrategie
 

@@ -1,6 +1,6 @@
 # Provider- und Capability-Status
 
-**Stand:** 2026-08-30, geprüft in dieser Session durch direkte Verbindungsversuche.
+**Stand:** 2026-09-01. Die Messungen stammen vom 2026-08-30 und sind unverändert gültig — der Egress ist derselbe.
 **Regel:** Kein Endpunkt in diesem Dokument ist geraten. Wo ich die Doku nicht lesen
 konnte, steht `UNVERIFIZIERT` — nicht ein Pfad aus dem Gedächtnis.
 
@@ -34,9 +34,26 @@ Die Sperre trifft **Hosts, nicht Anbieter**. Ein Anbieterwechsel löst sie nicht
 
 ---
 
+## 0b. Resend — der einzige Anbieter mit fertigem Adapter
+
+Resend ist kein Marktdatenanbieter und steht deshalb nicht in der Tabelle oben.
+Der Adapter (`packages/alerts/src/resend.ts`) ist gebaut und getestet, aber
+ebenfalls **nie gegen die echte API gelaufen** — `api.resend.com` ist aus diesem
+Container nicht erreichbar.
+
+| | Status |
+|---|---|
+| Vertrag | dokumentiert (`POST /emails`, Bearer-Auth, `idempotency-key`) |
+| Adapter | implementiert, 14 Tests gegen eine injizierte `fetch`-Attrappe |
+| Zur Laufzeit erreichbar | **nicht geprüft** |
+| Ohne `RESEND_API_KEY` | `NOT_CONFIGURED`, sendet nichts |
+| Fixture-Gelegenheit | `REFUSED`, außer `ALERT_ALLOW_TEST_EMAILS=true` |
+
+---
+
 ## 1. Was ohne Provider funktioniert
 
-462 Tests, 15 Pakete — die gesamte Logik hinter der Provider-Grenze. Sie ist
+1028 Tests, 96 Dateien — die gesamte Logik hinter der Provider-Grenze. Sie ist
 provider-unabhängig, weil alle Eingänge als Schnittstelle definiert sind:
 
 | Schnittstelle | Paket | Wartet auf |
