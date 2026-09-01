@@ -15,6 +15,7 @@ import {
 } from "@sae/core";
 import type { StrategyParameters } from "@sae/config";
 import {
+  DecisionRepository,
   LatencyRepository,
   OpportunityRepository,
   PaperPositionRepository,
@@ -84,11 +85,13 @@ export type PipelineOutcome =
       readonly kind: "NO_ENTRY";
       readonly decision: Decision;
       readonly created: readonly CreatedOpportunity[];
+      readonly persisted: DecisionRecord | null;
     }
   | {
       readonly kind: "ENTERED";
       readonly decision: Decision;
       readonly created: readonly CreatedOpportunity[];
+      readonly persisted: DecisionRecord;
       readonly autoPosition: AutoPaperResult;
     };
 
@@ -97,6 +100,13 @@ export interface CreatedOpportunity {
   readonly opportunityId: string;
   readonly snapshotId: string;
   /** `true`, wenn dieselbe Gelegenheit schon existierte — zweiter Lauf. */
+  readonly duplicate: boolean;
+}
+
+/** Kennung der Entscheidung, die beide Stroeme teilen. */
+export interface DecisionRecord {
+  readonly decisionId: string;
+  readonly decisionKey: string;
   readonly duplicate: boolean;
 }
 
@@ -269,18 +279,64 @@ export async function runOpportunityPipeline(
     }
   }
 
+  /* ---------------------------------------- 7b. Entscheidung festhalten */
+  // Erst jetzt, weil die Entscheidung ihren Feature-Snapshot referenziert und
+  // der beim Anlegen der ersten Gelegenheit entsteht. Beide Stroeme bekommen
+  // danach dieselbe Kennung — ohne sie waeren es zwei unabhaengige
+  // Beobachtungen, und die Frage "haette der Mensch besser entschieden"
+  // waere nicht mehr stellbar.
+  const snapshotId = created.find((c) => c.snapshotId.length > 0)?.snapshotId ?? null;
+  const decisionKey = `dec-${hashFeatures(features, scoring.scoreEngineVersion)}`;
+  const decisions = new DecisionRepository(deps.db);
+  let persisted: DecisionRecord | null = null;
+
+  if (snapshotId === null) {
+    // Zweiter Lauf desselben Ereignisses: alle Gelegenheiten waren Duplikate,
+    // also kam keine neue Snapshot-ID zurueck. Die Entscheidung gibt es aber
+    // schon — sie ueber ihren Schluessel zu suchen ist der richtige Weg.
+    const existing = await decisions.findByKey(decisionKey);
+    if (existing !== null) {
+      persisted = { decisionId: existing.id, decisionKey, duplicate: true };
+    }
+  } else {
+    const result = await decisions.create({
+      decisionKey,
+      tokenId: String(features.tokenId),
+      decidedAt: decision.decidedAt,
+      strategyVersionId: String(deps.strategyVersionId),
+      scoreEngineVersion: scoring.scoreEngineVersion,
+      decisionKind: decision.kind,
+      finalScore: decision.finalScore,
+      dataCompleteness: scoring.dataCompleteness,
+      featureSnapshotId: snapshotId,
+      provenance,
+    });
+    persisted = {
+      decisionId: result.decisionId,
+      decisionKey,
+      duplicate: result.kind === "DUPLICATE",
+    };
+
+    for (const opportunity of created) {
+      await decisions.attachOpportunity({
+        decisionId: result.decisionId,
+        opportunityId: opportunity.opportunityId,
+      });
+    }
+  }
+
   await recordLatency(deps, created, features.asOf, decision.decidedAt);
 
   /* ---------------------------------------------- 8. Auto Paper */
   // Kein ENTER heisst: die Gelegenheiten bleiben stehen (Forschungsmaterial),
   // aber es entsteht keine Position.
   if (decision.kind !== "ENTER") {
-    return { kind: "NO_ENTRY", decision, created };
+    return { kind: "NO_ENTRY", decision, created, persisted };
   }
 
   const auto = created.find((c) => c.stream === "AUTO_PAPER");
-  if (auto === undefined) {
-    return { kind: "NO_ENTRY", decision, created };
+  if (auto === undefined || persisted === null) {
+    return { kind: "NO_ENTRY", decision, created, persisted };
   }
 
   const autoPosition = await openAutoPaperPosition({
@@ -296,7 +352,7 @@ export async function runOpportunityPipeline(
   // OFFERED und wartet. Der Uebergang nach USER_CONFIRMED kommt von einem
   // Menschen, der Uebergang nach EXPIRED von der Zeit.
 
-  return { kind: "ENTERED", decision, created, autoPosition };
+  return { kind: "ENTERED", decision, created, persisted, autoPosition };
 }
 
 /**

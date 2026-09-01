@@ -54,6 +54,20 @@ describe("TEST_FIXTURE → Decision → Opportunity → Auto Paper + Manual", ()
     expect(streams).toEqual(["AUTO_PAPER", "MANUAL_PAPER"]);
     expect(new Set(result.created.map((c) => c.snapshotId)).size).toBe(1);
 
+    // Und beide tragen dieselbe Entscheidungskennung. Ohne sie waeren es zwei
+    // unabhaengige Beobachtungen, und die Frage nach dem Vergleich waere nicht
+    // mehr stellbar.
+    const linked = await db
+      .select()
+      .from(schema.opportunities)
+      .where(eq(schema.opportunities.decisionId, result.persisted.decisionId));
+    expect(linked).toHaveLength(2);
+
+    const [decisionRow] = await db.select().from(schema.decisions);
+    expect(decisionRow?.branchCount).toBe(2);
+    expect(decisionRow?.decisionKind).toBe("ENTER");
+    expect(decisionRow?.isTestFixture).toBe(true);
+
     const rows = await db.select().from(schema.opportunities);
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.decisionKind === "ENTER")).toBe(true);
@@ -183,6 +197,11 @@ describe("Idempotenz: dasselbe Ereignis zweimal", () => {
 
     // Der zweite Lauf erkennt beide Gelegenheiten als Duplikat.
     expect(second.created.every((c) => c.duplicate)).toBe(true);
+    // Und er findet dieselbe Entscheidung wieder, statt eine zweite anzulegen.
+    expect(second.persisted.duplicate).toBe(true);
+    if (first.kind === "ENTERED") {
+      expect(second.persisted.decisionId).toBe(first.persisted.decisionId);
+    }
     // Und er eroeffnet keine zweite Position.
     expect(second.autoPosition.kind).toBe("ALREADY_OPEN");
 

@@ -133,6 +133,24 @@ genau ein Vertrag — Jupiter Swap v1 aus der Hersteller-OpenAPI — und der ste
 im Widerspruch zu dem Pfad, den Spezifikation V1 nennt. Kein Adapter, bevor das
 geklaert ist.
 
+## Erster Adapter: DexScreener
+
+Freigegeben, aber nicht gebaut — und zwar aus einem messbaren Grund.
+
+Der Smoke-Test wurde ausgefuehrt und lieferte `403 Host not in allowlist:
+api.dexscreener.com`. Der 403 kommt vom Egress-Proxy dieser Umgebung, nicht vom
+Anbieter; wir haben DexScreener nie erreicht. Ein Response-Schema war aus
+keiner belastbaren Quelle zu bekommen: Doku blockiert, keine offizielle
+GitHub-Organisation erreichbar, auf npm nur Fremdimplementierungen (die beste
+von 2022).
+
+Ohne Struktur der Antwort kein Parser. Details und der genaue Weg zur Freigabe
+stehen in [`providers/dexscreener.md`](providers/dexscreener.md).
+
+Gebaut wurde stattdessen alles Schema-unabhaengige: Entscheidungen als eigenes
+Ereignis, Feature-Observations mit Herkunft je Feld, Provider-Reifegrade und
+die Messung echter Requests.
+
 ## Womit anfangen
 
 Genau eine Sache: **eine erreichbare Marktdatenquelle.** Alles andere hängt

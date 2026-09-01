@@ -106,3 +106,47 @@ export function assertProvenanceConsistent(p: DataProvenance): void {
     throw new RangeError("decisionTimestamp liegt vor dataTimestamp");
   }
 }
+
+/**
+ * Darf ein Feature eine Handelsentscheidung tragen?
+ *
+ * Die Frage entsteht aus einem sehr konkreten Problem: manche Anbieter liefern
+ * einen Wert ohne zu sagen, WANN er galt. Ein solcher Wert ist nicht wertlos —
+ * fuer die Forschung ist er brauchbar — aber er laesst sich nicht in die
+ * Zeitachse einordnen. Und ohne Zeitpunkt laesst sich nicht pruefen, ob er zum
+ * Entscheidungszeitpunkt schon bekannt war.
+ *
+ * Deshalb zwei Stufen, und die schwaechere ist der Standard:
+ *
+ *   DECISION_SAFE   Der Anbieter hat einen Beobachtungszeitpunkt geliefert.
+ *                   Das Feature darf in eine Entscheidung.
+ *   RESEARCH_ONLY   Kein Beobachtungszeitpunkt, oder der Datensatz ist zu alt
+ *                   fuer seine Feldklasse. Das Feature wird gespeichert und
+ *                   ausgewertet, aber es traegt keinen Einstieg.
+ *
+ * Der Grund fuer die Trennung ist nicht Vorsicht, sondern eine Fehlerart: ein
+ * scheinbar aktueller Wert ohne Zeitstempel sieht spaeter in der Historie
+ * genauso aus wie ein verankerter. Wer das nicht beim Schreiben unterscheidet,
+ * kann es hinterher nicht mehr rekonstruieren.
+ */
+export const DECISION_SAFETIES = ["DECISION_SAFE", "RESEARCH_ONLY"] as const;
+export type DecisionSafety = (typeof DECISION_SAFETIES)[number];
+
+/**
+ * Leitet die Stufe aus der Herkunft ab.
+ *
+ * Bewusst eine Funktion und kein Feld, das der Aufrufer setzt: die Regel soll
+ * an einer Stelle stehen, nicht an jeder Schreibstelle neu entschieden werden.
+ */
+export function decisionSafetyOf(input: {
+  /** `null`, wenn der Anbieter keinen Beobachtungszeitpunkt liefert. */
+  readonly observedAt: Date | null;
+  readonly sourceType: SourceType;
+}): DecisionSafety {
+  // Ohne Zeitpunkt keine Entscheidung. Einen zu erfinden waere genau der
+  // Fehler, den diese Unterscheidung verhindern soll.
+  if (input.observedAt === null) return "RESEARCH_ONLY";
+  // Ein Fixture traegt nie eine Entscheidung ueber echtes Geld.
+  if (isTestFixture(input.sourceType)) return "RESEARCH_ONLY";
+  return "DECISION_SAFE";
+}

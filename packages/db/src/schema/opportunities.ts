@@ -166,10 +166,23 @@ export const opportunities = pgTable(
      */
     sourceType: text("source_type", { enum: SOURCE_TYPES }).notNull().default("LIVE"),
     isTestFixture: boolean("is_test_fixture").notNull().default(false),
+
+    /**
+     * Die Entscheidung, aus der diese Gelegenheit stammt.
+     *
+     * Zwei Gelegenheiten — Auto und Manual — teilen sich denselben Wert. Genau
+     * darauf laeuft das System hinaus: haette der Mensch besser entschieden als
+     * die Automatik? Ohne gemeinsame Kennung waeren das zwei unabhaengige
+     * Beobachtungen, und die Frage nicht mehr stellbar.
+     *
+     * Nullable, weil Zeilen aus der Zeit vor dieser Tabelle keine tragen.
+     */
+    decisionId: uuid("decision_id"),
   },
   (t) => [
     // Verhindert doppelte Gelegenheiten aus zwei gleichzeitigen Worker-Laeufen.
     uniqueIndex("opportunities_unique").on(t.tokenId, t.stream, t.decidedAt),
+    index("opportunities_decision_idx").on(t.decisionId),
     index("opportunities_state_idx").on(t.state),
     index("opportunities_stream_time_idx").on(t.stream, t.decidedAt),
     // Findet abgelaufene Gelegenheiten fuer den Scheduler (§I-11): der Uebergang
