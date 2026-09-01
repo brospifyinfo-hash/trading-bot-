@@ -1,0 +1,34 @@
+# Was nie in ein Image gehoert.
+#
+# Der erste Block ist Sicherheit, nicht Groesse: eine .env-Datei, die
+# versehentlich im Image landet, ist ein Geheimnis, das mit jedem `docker pull`
+# mitgeliefert wird.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Baureste und Zustand
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+*.tsbuildinfo
+
+# Entwicklung
+.git
+.github
+.vscode
+.idea
+coverage
+**/__tests__
+*.test.ts
+*.log
+
+# Nicht laufzeitrelevant
+docs
+README.md

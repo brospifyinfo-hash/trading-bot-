@@ -3,6 +3,11 @@
 Wie dieses System deployt wird, und vor allem: **was ausdrücklich nicht auf
 Vercel gehört**.
 
+> Die Deployment-Checkliste mit dem tatsächlichen Status je Baustein, der
+> vollständigen Env-Var-Matrix und der Provider-Matrix steht in
+> [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md). Diese Datei hier erklärt das Warum,
+> jene das Was-jetzt-zu-tun-ist.
+
 ## 1. Die Trennung
 
 Vier Teile mit unterschiedlichen Lebensdauern. Sie zu vermischen ist der Fehler,

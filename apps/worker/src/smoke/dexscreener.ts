@@ -23,6 +23,7 @@
 
 /* eslint-disable no-console -- Kommandozeilenwerkzeug: die Ausgabe ist das Ergebnis. */
 import { ProviderReadinessStore, createDatabase } from "@sae/db";
+import { classifyFailure } from "@sae/providers";
 
 /** Aus der Spezifikation V1 uebernommen. Nicht aus einer Primaerquelle geprueft. */
 const BASE_URL = "https://api.dexscreener.com";
@@ -111,6 +112,22 @@ async function main(): Promise<void> {
     implementationConfidence: "SCHEMA_KNOWN",
   });
 
+  const succeeded = result.reachable && result.httpStatus !== null && result.httpStatus < 400;
+
+  // Die Einordnung kommt aus derselben Funktion wie im Adapter. Eine zweite
+  // Klassifikation hier waere eine zweite Wahrheit — und war genau der Fehler,
+  // den dieser Test hatte: eine erreichbare Antwort mit HTTP 403 ergab
+  // `success: false` bei `failureClass: null` und verletzte damit den
+  // Constraint `provider_requests_failure_has_reason`. Das Skript stuerzte also
+  // in genau dem Fall ab, fuer dessen Diagnose es gebaut wurde.
+  const failureClass = succeeded
+    ? null
+    : classifyFailure(
+        result.httpStatus === null
+          ? { message: result.detail }
+          : { httpStatus: result.httpStatus, message: result.detail },
+      );
+
   await store.recordRequest({
     providerId: PROVIDER,
     capability: CAPABILITY,
@@ -118,9 +135,10 @@ async function main(): Promise<void> {
     at: new Date(),
     latencyMs: result.latencyMs,
     httpStatus: result.httpStatus,
-    success: result.reachable && result.httpStatus !== null && result.httpStatus < 400,
-    failureClass: result.reachable ? (result.httpStatus === null ? "UNKNOWN" : null) : "UNAVAILABLE",
-    failureReason: result.reachable ? null : result.detail,
+    success: succeeded,
+    failureClass,
+    // Ein Fehlschlag ohne Grund ist eine verlorene Diagnose.
+    failureReason: succeeded ? null : result.detail,
     pipelineStage: "SMOKE_TEST",
     tokensCovered: 1,
   });
@@ -139,7 +157,10 @@ async function main(): Promise<void> {
     console.log("\nZustand:", JSON.stringify(status, null, 2));
   }
 
-  process.exit(result.reachable ? 0 : 1);
+  // Dieselben Exit-Codes wie die uebrigen Smoke-Tests: 0 Erfolg, 1 Fehlschlag,
+  // 3 Sperre. Eine Sperre als 0 zu melden waere die gefaehrlichste Variante —
+  // ein Deployment-Skript haette sie fuer Erfolg gehalten.
+  process.exit(succeeded ? 0 : failureClass === "BLOCKED" ? 3 : 1);
 }
 
 if (process.argv[1]?.endsWith("dexscreener.ts") === true) {
