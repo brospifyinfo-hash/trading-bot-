@@ -68,10 +68,9 @@ verdoppeln ohne Nutzen die Last.
 
 ## 4. Warum die Queue in Postgres liegt
 
-Redis bleibt als schneller Transport sinnvoll; die Zustellgarantie trägt es
-nicht. Ein Auftrag, der eingereiht wurde, muss einen Neustart des Workers, einen
+Ein Auftrag, der eingereiht wurde, muss einen Neustart des Workers, einen
 Absturz mitten in der Bearbeitung und einen Ausfall des Queue-Knotens überleben.
-Deshalb ist `job_queue` eine Tabelle:
+Redis trägt diese Zustellgarantie nicht. Deshalb ist `job_queue` eine Tabelle:
 
 - `UNIQUE (dedupe_key) WHERE state IN ('QUEUED','RUNNING')` — derselbe fachliche
   Vorgang liegt höchstens einmal offen in der Queue.
@@ -143,8 +142,8 @@ Wer welche Variablen braucht:
 
 | Ziel | Variablen |
 |---|---|
-| Vercel (Web) | `DATABASE_URL` (**Pooler**), `REDIS_URL`, `SESSION_SECRET`, `APP_BASE_URL`, `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `ALERT_TO_EMAIL` |
-| Worker | `DATABASE_URL` (direkt), `REDIS_URL`, `WORKER_ROLE`, `SOLANA_RPC_URL`, `HEALTH_PORT`, `MARKET_DATA_PRIORITY`, Anbieter-URLs und -Schlüssel |
+| Vercel (Web) | `DATABASE_URL` (**Pooler**), `SESSION_SECRET`, `APP_BASE_URL` |
+| Worker (Railway) | `DATABASE_URL` (direkt), `WORKER_ROLE`, `SOLANA_RPC_URL`, optional `MARKET_DATA_PRIORITY` und Anbieter-URLs/-Schlüssel |
 | Signer | ausschließlich `SIGNER_*`, alle als Dateipfade auf Secrets |
 
 Die vollständige Liste, getrennt nach Pflicht und Optional und gegen die
@@ -197,11 +196,11 @@ einen Worker und keinen umgekehrt. Beide Seiten kennen nur die Datenbank.
 **Welche Queue?** `job_queue` — eine Tabelle in derselben PostgreSQL-Datenbank
 (Begründung in Abschnitt 4). Kein SQS, kein BullMQ, kein separater Broker.
 
-`REDIS_URL` steht im Env-Schema (`baseEnvSchema`) und ist dort **Pflicht** —
-ohne gültige URL startet weder Web noch Worker. Gelesen wird sie heute von
-keinem Code-Pfad: der Auftragsweg läuft vollständig über PostgreSQL. Sie muss
-also gesetzt sein, tut aber nichts. Das ist eine bekannte Unsauberkeit im
-Schema, keine versteckte Abhängigkeit.
+Es gibt **keine** Redis-Abhängigkeit mehr. `REDIS_URL` war Pflicht im Schema
+und wurde von keiner Codezeile gelesen; `bullmq` und `ioredis` waren ungenutzte
+Abhängigkeiten aus dem Entwurf vor der Postgres-Queue. Alles entfernt (siehe
+`DECISIONS.md`, Entscheidung 77). Für Railway heißt das: **kein Redis-Dienst
+nötig**.
 
 **Wer reiht heute ein?** Ausschließlich der `scheduler`-Worker
 (`apps/worker/src/roles/scheduler.ts` → `JobDispatcher.enqueue`), per
@@ -230,7 +229,7 @@ Dieselbe Datenbank, zwei Endpunkte. Das ist kein Versehen:
 | Warum | hunderte kurzlebige Instanzen; der Pooler bündelt sie auf wenige echte Verbindungen | wenige langlebige Prozesse; ein Pooler dazwischen brächte nur Latenz |
 | Poolgröße je Prozess | 1 | 10 |
 | Prepared Statements | aus | aus |
-| Migrationen | nein | ja, vor dem Start — und über die **Direktverbindung**, ein Pooler im Transaction Mode verträgt DDL-Transaktionen nicht zuverlässig |
+| Migrationen | nein | ja, vor dem Start — über `DATABASE_URL_DIRECT`, ein Pooler im Transaction Mode verträgt DDL nicht zuverlässig |
 
 ### Environment Variables, vollständig
 
@@ -242,7 +241,6 @@ was dort `optional()` fehlt, lässt den Prozess beim Start abbrechen.
 | Variable | Wert |
 |---|---|
 | `DATABASE_URL` | Pooler-Endpunkt |
-| `REDIS_URL` | gültige `redis://`-URL — vom Schema verlangt, von keinem Code gelesen |
 | `SESSION_SECRET` | ≥ 32 Zeichen, zufällig (`openssl rand -base64 48`) |
 | `APP_BASE_URL` | `https://<deine-domain>` |
 
@@ -256,8 +254,7 @@ Schlüssel. Die Signer-Grenze ist eine Deploy-Grenze, keine Code-Konvention.
 
 | Variable | Wert |
 |---|---|
-| `DATABASE_URL` | Direktverbindung |
-| `REDIS_URL` | wie oben: verlangt, ungenutzt |
+| `DATABASE_URL` | Direktverbindung (Neon-Host **ohne** `-pooler`) |
 | `WORKER_ROLE` | eine Rolle je Prozess |
 | `SOLANA_RPC_URL` | **Pflicht, auch für `scheduler` und `provider-health`** — das Schema ist rollenunabhängig |
 

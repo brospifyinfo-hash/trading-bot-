@@ -14,13 +14,14 @@ Vercel kommunizieren) steht in [`DEPLOYMENT.md`](DEPLOYMENT.md).
 | Baustein | Status | Belegt durch |
 |---|---|---|
 | GitHub-Repository | **READY** | `main` sauber, synchron, einziger Branch |
-| PostgreSQL-Schema | **READY** | 10 Migrationen gegen echtes PG 16 angewendet: 61 Tabellen, 158 Indizes, 34 CHECK-Constraints |
+| PostgreSQL-Schema | **READY** | 10 Migrationen gegen echtes PG 16 angewendet: 61 Tabellen, 158 Indizes, 34 CHECK-Constraints. Zweitlauf ist ein No-Op |
+| Neon-Projekt | **BLOCKED** | Kein Neon-Zugang, `console.neon.tech` per Egress gesperrt. Migrationspfad auf den Direktendpunkt umgestellt und verifiziert |
 | Persistente Stores | **READY** | Schreiben + Zurücklesen + Rollback über den Produktionstreiber `postgres-js` geprüft |
 | Worker (startfähig) | **READY** | `scheduler`, `provider-health`, `consumer` gestartet, `/ready` → 200, Queue-Zeilen geschrieben |
-| Worker-Host | **BLOCKED** | Kein Host verbunden. `Dockerfile.worker` liegt bereit, ist aber ungebaut |
+| Worker-Host (Railway) | **BLOCKED** | Kein Railway-Zugang. `Dockerfile.worker` + `railway/*.json` liegen bereit; der Dateisatz des Images wurde nachgestellt und der Worker daraus gestartet, das Image selbst ist **ungebaut** |
 | Web-Build | **READY** | `pnpm --filter @sae/web build` erfolgreich, 5 Routen |
 | Web zur Laufzeit | **READY** | Gegen echte Datenbank gestartet, `/api/health` → 200, `/api/diagnostics/providers` → 503 mit echten Daten |
-| Vercel-Projekt | **BLOCKED** | Kein Vercel-Token, kein CLI in dieser Umgebung. Konfiguration geprüft, Verbindung muss manuell erfolgen |
+| Vercel-Projekt | **BLOCKED** | Kein Token, kein CLI, `api.vercel.com` per Egress gesperrt. Konfiguration geprüft, Verbindung muss manuell erfolgen |
 | Resend | **PARTIALLY READY** | Adapter und Bestätigungskette implementiert und getestet; kein API-Schlüssel, also nie ein echter Versand |
 | Marktdaten | **BLOCKED** | Kein Anbieter erreichbar. DexScreener-Adapter vorhanden, Response-Vertrag `UNVERIFIED`, Host per Egress gesperrt |
 | Live Trading | **AUS (gewollt)** | Signer antwortet auf jede Signieranfrage mit 501, `execution`-Rolle ist ein leerer Platzhalter |
@@ -29,120 +30,74 @@ Vercel kommunizieren) steht in [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ## 2. Environment Variables
 
-Maßgeblich sind die Zod-Schemata, nicht diese Tabellen: `packages/config/src/env.ts`
+Maßgeblich sind die Zod-Schemata, nicht diese Tabelle: `packages/config/src/env.ts`
 (Web, Worker, Signer) und `packages/config/src/providers.ts` (Anbieter). Was dort
 kein `.optional()` trägt, lässt den Prozess beim Start abbrechen.
 
-Legende: **REQUIRED** = ohne diesen Wert startet der Prozess nicht ·
-**OPTIONAL** = Funktion entfällt ohne den Wert · **BLOCKED** = Wert kann noch
-nicht beschafft werden.
+### Die Matrix
 
-### 2.1 Database
+| VARIABLE | VERCEL | RAILWAY | REQUIRED | PURPOSE |
+|---|---|---|---|---|
+| `DATABASE_URL` | ✅ **gepoolt** | ✅ **direkt** | ja | Laufender Betrieb. Zwei verschiedene Endpunkte **derselben** Neon-Datenbank |
+| `DATABASE_URL_DIRECT` | — | optional | nein | Nur für Migrationen/DDL. Fehlt er, gilt `DATABASE_URL` |
+| `SESSION_SECRET` | ✅ | — | ja (Web) | Sitzungssignatur, ≥ 32 Zeichen |
+| `APP_BASE_URL` | ✅ | — | ja (Web) | Basis der INVEST-NOW-Links in den Mails |
+| `WORKER_ROLE` | — | ✅ | ja (Worker) | `scheduler` \| `provider-health` \| `consumer` — je Dienst genau einer |
+| `SOLANA_RPC_URL` | — | ✅ | ja (Worker) | **Auch für `scheduler` und `provider-health`** — das Schema ist rollenunabhängig |
+| `SOLANA_RPC_FALLBACK_URL` | — | optional | nein | Zweiter RPC-Endpunkt |
+| `PORT` | automatisch | automatisch | nein | Setzt die Plattform. Der Worker richtet den Health-Port danach aus |
+| `HEALTH_PORT` | — | optional | nein | Nur wenn der Port von Hand gesetzt wird (Compose, lokal). Vorgabe 3001 |
+| `RESEND_API_KEY` | optional | ✅ (alerts) | für Alerts | Ohne ihn meldet der Adapter `NOT_CONFIGURED` und sendet nichts |
+| `ALERT_FROM_EMAIL` | — | ✅ (alerts) | für Alerts | Absender einer in Resend **verifizierten** Domain |
+| `ALERT_TO_EMAIL` | — | ✅ (alerts) | für Alerts | Empfänger |
+| `ALERT_ALLOW_TEST_EMAILS` | — | optional | nein | Nur in einer Testumgebung. Ohne den Wert keine Mail aus einer Fixture |
+| `MARKET_DATA_PRIORITY` | — | optional | nein | Reihenfolge der Anbieterkette, komma-getrennt |
+| `DEXSCREENER_BASE_URL` | — | optional | nein | `https://api.dexscreener.com`. Ohne ihn taucht DexScreener in keiner Kette auf |
+| `BIRDEYE_BASE_URL` + `BIRDEYE_API_KEY` | — | optional | beide zusammen | Konto bei Birdeye nötig |
+| `JUPITER_BASE_URL` | — | optional | nein | Router, keine Marktdatenquelle |
+| `HELIUS_BASE_URL` + `HELIUS_API_KEY` | — | optional | beide zusammen | Konto bei Helius nötig |
+| `RUGCHECK_BASE_URL` | — | optional | nein | Kein Schlüssel nötig |
+| `NODE_ENV`, `LOG_LEVEL` | optional | optional | nein | Vorgabe `development` / `info` |
+| `SIGNER_*` | **NIEMALS** | **NIEMALS** | — | Nur auf einem eigenen Signer-Host. Siehe 2.2 |
 
-| Variable | Web | Worker | Wert |
-|---|---|---|---|
-| `DATABASE_URL` | REQUIRED | REQUIRED | **Zwei verschiedene Endpunkte derselben Datenbank.** Web: Pooler (Neon `-pooler`, Supabase `:6543`, PgBouncer transaction mode). Worker: Direktverbindung. Migrationen laufen immer über die Direktverbindung |
+**`REDIS_URL` gibt es nicht mehr.** Sie war Pflicht und wurde von keiner
+Codezeile gelesen; `bullmq` und `ioredis` waren ungenutzte Abhängigkeiten. Alles
+entfernt — Begründung und die dabei gerettete Retry-Politik stehen in
+`DECISIONS.md`, Entscheidung 77. Sie brauchen auf Railway **keinen**
+Redis-Dienst.
 
-### 2.2 Web / Vercel
+### 2.1 Die zwei Neon-Endpunkte
 
-| Variable | Status | Wert |
+Eine Datenbank, zwei Verbindungszeichenfolgen. Neon zeigt beide im Dashboard:
+
+| | Host enthält | Wofür |
 |---|---|---|
-| `DATABASE_URL` | REQUIRED | Pooler-Endpunkt, siehe oben |
-| `REDIS_URL` | REQUIRED | Gültige `redis://`-URL. **Wird von keinem Code-Pfad gelesen** — das Schema verlangt sie trotzdem. Siehe 2.7 |
-| `SESSION_SECRET` | REQUIRED | ≥ 32 Zeichen. Erzeugen: `openssl rand -base64 48` |
-| `APP_BASE_URL` | REQUIRED | `https://<deine-domain>` — die Basis für die INVEST-NOW-Links in den Mails |
-| `RESEND_API_KEY` | OPTIONAL | Nur falls die Web-App selbst versenden soll. Heute versendet der `alerts`-Worker |
-| `NODE_ENV`, `LOG_LEVEL` | OPTIONAL | Vorgabe `development` / `info` |
+| **Pooled** | `-pooler` | Vercel — hunderte kurzlebige Instanzen, der Pooler bündelt sie |
+| **Direct** | kein `-pooler` | Railway und **alle Migrationen** — DDL über einen Transaction-Mode-Pooler ist nicht zuverlässig |
 
-**Niemals auf Vercel setzen:** `SIGNER_*`, irgendeinen privaten Schlüssel. Die
-Signer-Grenze ist eine Deploy-Grenze, keine Code-Konvention.
+`prepare: false` ist im Client fest gesetzt und keine Vorsichtsmaßnahme, sondern
+Pflicht: ein Pooler gibt die Verbindung nach jeder Transaktion weiter, und ein
+vorbereitetes Statement liegt dann auf einer anderen.
 
-### 2.3 Worker
+### 2.2 Signer
 
-| Variable | Status | Wert |
-|---|---|---|
-| `DATABASE_URL` | REQUIRED | Direktverbindung |
-| `REDIS_URL` | REQUIRED | wie oben: verlangt, ungenutzt |
-| `WORKER_ROLE` | REQUIRED | Eine Rolle je Prozess. Produktiv heute: `scheduler`, `provider-health`, `consumer` |
-| `SOLANA_RPC_URL` | REQUIRED | **Auch für `scheduler` und `provider-health`** — das Schema ist rollenunabhängig |
-| `SOLANA_RPC_FALLBACK_URL` | OPTIONAL | Zweiter RPC-Endpunkt |
-| `HEALTH_PORT` | OPTIONAL | Vorgabe 3001. Direkt aus `process.env`, nicht im Schema |
-
-### 2.4 Market Data
-
-Alle optional (`packages/config/src/providers.ts`). Ein Anbieter ohne Basis-URL
-ist `NOT_CONFIGURED` — eine Feststellung, kein Fehler.
-
-| Variable | Status | Wert |
-|---|---|---|
-| `MARKET_DATA_PRIORITY` | OPTIONAL | Komma-getrennt. Erste = PRIMARY, zweite = SECONDARY, Rest = FALLBACK |
-| `DEXSCREENER_BASE_URL` | **BLOCKED** | `https://api.dexscreener.com`. Kein Schlüssel nötig. Ohne diesen Wert taucht DexScreener in keiner Kette auf. Blockiert, weil der Host per Egress gesperrt ist |
-| `BIRDEYE_BASE_URL` + `BIRDEYE_API_KEY` | **REQUIRED für Birdeye** | Beide nötig. Konto bei Birdeye erforderlich |
-| `JUPITER_BASE_URL` | OPTIONAL | Einziger Anbieter mit geprüftem Adapter — aber ein Router, keine Marktdatenquelle |
-| `HELIUS_BASE_URL` + `HELIUS_API_KEY` | **REQUIRED für Helius** | Beide nötig. Konto bei Helius erforderlich |
-| `RUGCHECK_BASE_URL` | OPTIONAL | Kein Schlüssel nötig |
-
-### 2.5 RPC
-
-`SOLANA_RPC_URL` ist Pflicht für jeden Worker. Der öffentliche Endpunkt
-`https://api.mainnet-beta.solana.com` funktioniert zum Starten, hat aber ein
-niedriges Rate-Limit — für den Dauerbetrieb gehört dort ein eigener Endpunkt
-hin (Helius, QuickNode, Triton). **Nicht getestet**, weil in dieser Umgebung
-kein ausgehender Zugriff besteht.
-
-### 2.6 Resend
-
-| Variable | Status | Wert |
-|---|---|---|
-| `RESEND_API_KEY` | **REQUIRED für Alerts** | Aus dem Resend-Dashboard. Ohne ihn meldet der Adapter `NOT_CONFIGURED` und sendet nichts |
-| `ALERT_FROM_EMAIL` | **REQUIRED für Alerts** | Absender einer in Resend **verifizierten** Domain |
-| `ALERT_TO_EMAIL` | **REQUIRED für Alerts** | Empfänger |
-| `ALERT_ALLOW_TEST_EMAILS` | OPTIONAL | Nur in einer Testumgebung. Ohne den Wert verweigert der Adapter jede Mail aus einer Fixture-Gelegenheit |
-
-Diese vier gehören auf den **Worker**-Host (Rolle `alerts`), nicht auf Vercel.
-
-### 2.7 Redis / Queue
-
-**Es wird keine Redis-Queue verwendet.** Die Auftragswarteschlange ist die
-Tabelle `job_queue` in PostgreSQL — Begründung in `DEPLOYMENT.md`, Abschnitt 4.
-
-`REDIS_URL` ist trotzdem in `baseEnvSchema` als Pflicht deklariert und wird von
-keinem Code gelesen. `bullmq` und `ioredis` stehen als Abhängigkeiten in
-`apps/worker/package.json`, ohne benutzt zu werden. Das ist eine bekannte
-Unsauberkeit: sie kostet einen Pflichtwert, den niemand braucht. Bereinigen
-heißt, `REDIS_URL` optional zu machen und die beiden Pakete zu entfernen —
-eine Änderung am Env-Schema, deshalb nicht ohne Rücksprache gemacht.
-
-### 2.8 Signer
-
-Nur auf dem Signer-Host, niemals auf Vercel oder dem Worker-Host.
-
-| Variable | Status |
-|---|---|
-| `SIGNER_KEY_FILE`, `SIGNER_TLS_CERT_PATH`, `SIGNER_TLS_KEY_PATH`, `SIGNER_TLS_CLIENT_CA_PATH` | REQUIRED — **Dateipfade auf Secrets**, nie der Schlüssel selbst |
-| `SIGNER_TRADING_WALLET`, `SIGNER_ALLOWED_PROGRAM_IDS` | REQUIRED — fehlen sie, startet der Signer nicht |
-| `SIGNER_ALLOWED_TIP_ACCOUNTS` | OPTIONAL — leere Vorgabe heißt: keine direkten Empfänger erlaubt |
-| `SIGNER_MAX_SOL_OUT_PER_TX_LAMPORTS`, `SIGNER_MAX_SOL_OUT_PER_WINDOW_LAMPORTS`, `SIGNER_WINDOW_SECONDS` | REQUIRED — harte Abflussgrenzen |
-| `SIGNER_PORT` | OPTIONAL — Vorgabe 8443 |
+Nur auf einem eigenen Signer-Host, **niemals** auf Vercel oder Railway:
+`SIGNER_KEY_FILE`, `SIGNER_TLS_CERT_PATH`, `SIGNER_TLS_KEY_PATH`,
+`SIGNER_TLS_CLIENT_CA_PATH` (alle **Dateipfade auf Secrets**, nie der Schlüssel
+selbst), `SIGNER_TRADING_WALLET`, `SIGNER_ALLOWED_PROGRAM_IDS`,
+`SIGNER_ALLOWED_TIP_ACCOUNTS` (leere Vorgabe = keine direkten Empfänger),
+die drei Abflussgrenzen und `SIGNER_PORT`.
 
 Der Signer ist heute **nicht zu deployen und soll es auch nicht sein**: er
 antwortet auf jede policy-konforme Signieranfrage mit HTTP 501.
 
-### 2.9 Monitoring
+### 2.3 Monitoring
 
-Es gibt **keine** Monitoring-Variablen — kein Sentry, kein Datadog, kein
-OTLP-Endpunkt. Beobachtbarkeit läuft heute über:
-
-- strukturierte Logs auf stdout (`pino`, Redaktion per **Allowlist**),
-- `GET /api/health` auf Vercel — beantwortet „läuft der Prozess",
-- `GET /api/diagnostics/providers` — beantwortet „kommt das System an Daten",
-  200 bei mindestens einem verifizierten Anbieter, sonst 503,
-- `HEALTH_PORT` je Worker, `/ready`.
-
-Ein externer Dienst wäre eine neue Abhängigkeit und ist deshalb nicht ohne
-Rücksprache eingebaut.
-
----
+Es gibt **keine** Monitoring-Variablen — kein Sentry, kein Datadog, kein OTLP.
+Beobachtbarkeit läuft über strukturierte Logs auf stdout (`pino`, Redaktion per
+Allowlist), `GET /api/health` (läuft der Prozess), `GET /api/diagnostics/providers`
+(kommt das System an Daten — 200 nur bei mindestens einem verifizierten
+Anbieter, sonst 503) und `/ready` je Worker.
 
 ## 3. Provider-Matrix
 
@@ -190,8 +145,8 @@ liefern soll.
 In dieser Reihenfolge. Jeder Schritt ist ein echter Aufruf, kein Klickpfad.
 
 ```bash
-# 1. Migrationen — über die DIREKTVERBINDUNG, nicht über den Pooler
-DATABASE_URL=<direkt> pnpm --filter @sae/db exec drizzle-kit migrate
+# 1. Migrationen — über die DIREKTVERBINDUNG (Neon-Host OHNE "-pooler")
+DATABASE_URL_DIRECT=<neon-direkt> pnpm --filter @sae/db exec drizzle-kit migrate
 
 # 2. Infrastruktur prüfen (nur lesend)
 DATABASE_URL=<direkt> pnpm --filter @sae/worker smoke:infra
@@ -217,41 +172,34 @@ nicht durch Warten.
 
 ---
 
-## 5. Worker-Host: was zu tun ist
+## 5. Railway: die drei Worker-Dienste
 
-Der Worker braucht einen Host, der **langlebige Prozesse** ausführt. Vercel
-kann das nicht (Begründung: `DEPLOYMENT.md`, Abschnitt 2).
+Drei **getrennte Dienste** im selben Railway-Projekt, aus demselben Repository
+und demselben Dockerfile. Sie unterscheiden sich ausschliesslich durch
+`WORKER_ROLE`. Die vollständige Anleitung steht in
+[`railway/README.md`](../railway/README.md); hier nur das Wesentliche:
 
-**Benötigt wird genau eines davon:**
-
-| Dienst | Konto | Berechtigung | Aufwand |
+| Dienst | `WORKER_ROLE` | Config-Datei | Repliken |
 |---|---|---|---|
-| **Fly.io** | Fly-Konto + Zahlungsmittel | Deploy-Token | `fly launch --dockerfile Dockerfile.worker`, drei Prozessgruppen |
-| **Railway** | Railway-Konto | GitHub-Repo-Zugriff | Dockerfile-Pfad setzen, drei Dienste mit je eigener `WORKER_ROLE` |
-| **Render** | Render-Konto | GitHub-Repo-Zugriff | Drei „Background Worker" mit demselben Dockerfile |
-| **Hetzner / eigener Server** | Server + Docker | SSH | `docker compose` mit drei Diensten |
+| Scheduler | `scheduler` | `railway/scheduler.json` | 1 |
+| Provider Health | `provider-health` | `railway/provider-health.json` | 1 |
+| Consumer | `consumer` | `railway/consumer.json` | 1..n |
 
-**Mindestbesetzung — drei Prozesse:**
+Builder, Dockerfile-Pfad, Start Command, Restart Policy und Healthcheck stehen
+in den JSON-Dateien und müssen nicht geklickt werden. Root Directory bleibt
+**leer** (Repository-Wurzel), Branch ist `main`, und **kein** Dienst bekommt
+eine öffentliche Domain.
 
-```bash
-WORKER_ROLE=scheduler        # genau eine Instanz
-WORKER_ROLE=provider-health  # genau eine Instanz
-WORKER_ROLE=consumer         # eine oder mehrere
-```
+Railway führt **keine** Migrationen aus — kein `releaseCommand`. Drei Dienste,
+die beim Start dieselbe Migration fahren wollen, sind drei gleichzeitige
+DDL-Läufe auf derselben Datenbank.
 
-Mehrere Consumer sind unbedenklich: Aufträge werden per
-`FOR UPDATE SKIP LOCKED` vergeben, zwei Prozesse können denselben Auftrag nicht
-bekommen. Zwei Scheduler wären nicht falsch, aber sinnlos doppelte Last.
-
-`Dockerfile.worker` liegt im Wurzelverzeichnis. **Er ist nicht gebaut worden** —
-in dieser Umgebung läuft kein Docker-Daemon. Erster Schritt auf dem Zielhost ist
-deshalb ein Testbau:
-
-```bash
-docker build -f Dockerfile.worker -t sae-worker .
-```
-
----
+`Dockerfile.worker` ist **nicht gebaut worden** — in dieser Umgebung läuft kein
+Docker-Daemon. Verifiziert wurde stattdessen der Dateisatz, den er erzeugt: die
+`COPY`-Anweisungen nachgestellt, `pnpm install --frozen-lockfile` darin
+ausgeführt (21 Manifeste, erfolgreich) und der Worker mit demselben
+`WORKDIR`/`CMD` daraus gestartet — `/ready` antwortete mit 200. Der erste
+Schritt auf Railway bleibt trotzdem ein Testbau.
 
 ## 6. Vercel: was zu tun ist
 
@@ -286,18 +234,77 @@ echten Smoke-Test mit 2xx bestanden hat.
 
 ---
 
+## 6b. Neon: was einzurichten ist
+
+Eine Datenbank für beide Umgebungen — kein getrenntes Vercel- und
+Railway-Schema. Der Unterschied liegt nur im Endpunkt (siehe 2.1).
+
+1. Projekt anlegen, Region **Europa** (nah an Vercel `fra1`).
+2. Aus dem Dashboard **beide** Connection Strings kopieren: den gepoolten
+   (Host mit `-pooler`) und den direkten (ohne).
+3. Migrationen einmal von der eigenen Maschine fahren:
+   ```bash
+   DATABASE_URL_DIRECT=<neon-direkt> pnpm --filter @sae/db exec drizzle-kit migrate
+   ```
+4. Prüfen, dass wirklich alles da ist:
+   ```bash
+   DATABASE_URL=<neon-direkt> pnpm --filter @sae/worker smoke:infra
+   ```
+   Erwartet: 10 Migrationen, alle benötigten Tabellen, alle 7
+   Sicherheits-Constraints scharf, und Check 5 belegt, dass eines davon
+   tatsächlich auslöst.
+
+**Extensions: keine nötig.** Nachgeprüft, nicht angenommen — nach dem
+vollständigen Migrationslauf gegen ein nacktes PostgreSQL 16 war genau eine
+Extension installiert: `plpgsql`, die Vorgabe. `gen_random_uuid()` ist seit
+PostgreSQL 13 im Kern und braucht kein `pgcrypto`. Keine Migration enthält ein
+`CREATE EXTENSION`.
+
+TimescaleDB unterstützt Neon **nicht**. Das ist folgenlos: `0001_timescale.sql`
+steht ohnehin nicht im Journal (siehe Abschnitt 7) und ist zusätzlich
+selbstsichernd — ohne die Erweiterung tut sie nichts. Das System läuft ohne sie
+mit denselben Indizes, nur langsamer bei sehr grossen Zeiträumen.
+
+**Bestehende Daten:** `drizzle-kit migrate` ist additiv und vorwärts-only. Es
+löscht nichts. Ein zweiter Lauf gegen denselben Stand ist ein No-Op — verifiziert.
+
+## 6c. Resend: was einzurichten ist
+
+Der Adapter ist implementiert und getestet, hat aber **nie eine echte Mail
+versendet** — ohne `RESEND_API_KEY` meldet er `NOT_CONFIGURED` und sendet nichts.
+
+1. Konto anlegen, Domain hinzufügen.
+2. Resend zeigt daraufhin die zu setzenden DNS-Einträge an — typischerweise
+   ein DKIM-Eintrag und ein Eintrag für die Versanddomain. **Die konkreten
+   Namen und Werte erzeugt Resend je Domain**; sie stehen im Resend-Dashboard
+   unter der Domain. Ich kann sie hier nicht angeben, ohne sie zu erfinden.
+3. Diese Einträge bei Ihrem DNS-Anbieter setzen, in Resend auf „Verify" warten.
+4. `RESEND_API_KEY`, `ALERT_FROM_EMAIL` (Adresse **auf der verifizierten
+   Domain**) und `ALERT_TO_EMAIL` als Variablen setzen — auf dem Railway-Dienst,
+   der später die Rolle `alerts` fährt, **nicht** auf Vercel.
+
+Der Schlüssel gehört ausschliesslich in die Plattform-Variablen, niemals ins
+Repository.
+
+**Sicherheitsgrenze, die dabei gilt:** eine E-Mail löst niemals unmittelbar
+eine Ausführung aus. Der INVEST-NOW-Klick trägt ein Einmal-Token
+(`consumedAt` — ein zweiter Klick ist `ALREADY_CONSUMED`), und danach wird der
+gesamte Zustand **neu** erhoben und gegen den Alert gestellt. Der Alert-Preis
+wird nie als Einstieg verwendet. Ohne erreichbare Quelle blockt die Kette mit
+`NO_LIVE_DATA`, und in dieser Phase endet sie ohnehin bei `executes: "PAPER"`
+bzw. `LIVE_TRADING_DISABLED`.
+
 ## 7. Bekannte Unsauberkeiten
 
 Kein Blocker, aber dokumentiert statt versteckt:
 
-1. **`REDIS_URL` ist Pflicht und ungenutzt.** Siehe 2.7.
-2. **`0001_timescale.sql` steht nicht im Migrations-Journal.** Die Datei ist
+1. **`0001_timescale.sql` steht nicht im Migrations-Journal.** Die Datei ist
    selbstsichernd (sie tut ohne die TimescaleDB-Erweiterung nichts), wird von
    `drizzle-kit migrate` aber auch dann nicht ausgeführt, wenn die Erweiterung
    später installiert wird. Wer Timescale einsetzen will, führt sie von Hand aus.
-3. **`adapterImplemented: false` für DexScreener.** Der Adapter existiert seit
+2. **`adapterImplemented: false` für DexScreener.** Der Adapter existiert seit
    der letzten Runde; das Flag bleibt `false`, weil er ohne geprüften Vertrag
    keine Daten liefern darf. Das Verhalten ist richtig, der Feldname ungenau.
-4. **Kein Build-Schritt.** Alle Pakete exportieren TypeScript-Quellen, `tsx`
+3. **Kein Build-Schritt.** Alle Pakete exportieren TypeScript-Quellen, `tsx`
    führt sie direkt aus. Das hält Test- und Betriebscode identisch, kostet aber
    Startzeit und bindet `tsx` in den Betrieb ein.

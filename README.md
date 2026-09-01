@@ -19,6 +19,8 @@ Eine vollständig vorbereitete Pipeline ist **kein Beleg für Profitabilität**.
 - [`docs/PHASE-1-PLAN.md`](docs/PHASE-1-PLAN.md) — Implementierungsplan Phase 1
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — getroffene Annahmen und Abweichungen vom ursprünglichen Plan
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Betriebsarchitektur: was auf Vercel läuft und was ausdrücklich nicht
+- [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) — Deployment-Checkliste: Status je Baustein, Env-Var-Matrix, Provider-Matrix
+- [`railway/README.md`](railway/README.md) — die drei Worker-Dienste auf Railway
 - [`docs/BLOCKED.md`](docs/BLOCKED.md) — was auf echte Daten wartet und warum
 - [`docs/providers/`](docs/providers/) — Verifikationsstand je Datenquelle
 
@@ -60,7 +62,7 @@ Eine vollständig vorbereitete Pipeline ist **kein Beleg für Profitabilität**.
 ```bash
 pnpm install
 pnpm check        # typecheck + lint + test
-pnpm test         # 910 Tests, inkl. No-Look-Ahead, Persistenz und Queue gegen
+pnpm test         # 1085 Tests, inkl. No-Look-Ahead, Persistenz und Queue gegen
                   # echtes Postgres (PGlite, kein Mock)
 ```
 
@@ -68,7 +70,16 @@ Datenbank-Migrationen:
 
 ```bash
 pnpm db:generate                       # Schema → neue Migration
-pnpm --filter @sae/db exec drizzle-kit migrate   # anwenden (vorwärts-only)
+
+# Anwenden (vorwärts-only). Läuft über die DIREKTE Verbindung:
+# ein Pooler im Transaction Mode verträgt kein zuverlässiges DDL.
+DATABASE_URL_DIRECT=<direkt> pnpm --filter @sae/db exec drizzle-kit migrate
+```
+
+Nach einem Deployment prüfen, ob die Datenbank wirklich stimmt:
+
+```bash
+DATABASE_URL=<direkt> pnpm --filter @sae/worker smoke:infra
 ```
 
 Lokal mit Docker:
@@ -92,10 +103,13 @@ Vier Dinge, die getrennt laufen müssen und deshalb getrennt deployt werden:
 
 | Teil | Wo | Warum dort |
 |---|---|---|
-| Web, Dashboard, API, Bestätigungs-Flow | Vercel | anfragegetrieben, kurze Laufzeit, gut horizontal skalierbar |
-| Scheduler, Consumer, Provider-Health | dauerhaft laufender Host (Container/VM) | Prozesse mit Takt und Zustand; eine Serverless-Funktion endet nach jeder Anfrage |
-| PostgreSQL | verwalteter Dienst | Quelle der Wahrheit, inklusive Queue |
+| Web, Dashboard, API, Bestätigungs-Flow | **Vercel** | anfragegetrieben, kurze Laufzeit, gut horizontal skalierbar |
+| Scheduler, Consumer, Provider-Health | **Railway** (Container) | Prozesse mit Takt und Zustand; eine Serverless-Funktion endet nach jeder Anfrage |
+| PostgreSQL | **Neon** | Quelle der Wahrheit, inklusive Queue — es gibt keine zweite Queue |
 | Datenquellen | extern | eigener Rate-Limit- und Ausfallraum |
+
+Vercel und Railway sprechen **ausschliesslich über die Datenbank** miteinander:
+kein direkter Aufruf, kein Callback, kein Webhook.
 
 **Der Worker gehört ausdrücklich nicht auf Vercel.** Details und die Begründung
 stehen in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).

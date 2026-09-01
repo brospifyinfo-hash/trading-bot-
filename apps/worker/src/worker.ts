@@ -57,8 +57,14 @@ async function main(): Promise<void> {
   const health = startHealthServer({
     // Betriebsparameter, kein Handelsinput: ein Standard-Port beeinflusst keine
     // Entscheidung.
+    //
+    // Reihenfolge mit Grund: Railway, Render und Fly setzen `PORT` selbst und
+    // pruefen den Healthcheck genau dort. Wer nur `HEALTH_PORT` liest, laesst
+    // den Host ins Leere pruefen — der Dienst gilt dann als ungesund, obwohl er
+    // laeuft. `HEALTH_PORT` bleibt fuer den Fall, dass der Port von Hand gesetzt
+    // wird (Docker Compose, lokal).
     // eslint-disable-next-line sae/no-numeric-fallback
-    port: Number(process.env["HEALTH_PORT"] ?? 3001),
+    port: Number(process.env["PORT"] ?? process.env["HEALTH_PORT"] ?? 3001),
     isReady: () => !lifecycle.shuttingDown,
   });
 

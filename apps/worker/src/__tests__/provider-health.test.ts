@@ -12,7 +12,6 @@ import { buildStatusReports } from "../roles/provider-health";
 
 const BASE = {
   DATABASE_URL: "postgres://u:p@localhost:5432/db",
-  REDIS_URL: "redis://localhost:6379",
 } satisfies NodeJS.ProcessEnv;
 
 describe("Provider-Statusbericht", () => {

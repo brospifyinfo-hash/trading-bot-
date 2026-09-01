@@ -37,7 +37,19 @@ export const baseEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   DATABASE_URL: nonEmpty.url(),
-  REDIS_URL: nonEmpty.url(),
+  /**
+   * Verbindung fuer Migrationen und andere DDL.
+   *
+   * Neon (und jeder Pooler im Transaction Mode) trennt zwei Endpunkte: der
+   * gepoolte vertraegt kein zuverlaessiges DDL, weil er die Verbindung nach
+   * jeder Transaktion weitergibt. Fehlt der Wert, wird DATABASE_URL benutzt —
+   * richtig fuer einen einzelnen Postgres ohne Pooler davor.
+   *
+   * Kein `REDIS_URL` mehr: die dauerhafte Queue liegt in PostgreSQL
+   * (Entscheidung 43), und ein Pflichtwert, den niemand liest, kostet auf
+   * jeder Plattform einen Eintrag. Siehe Entscheidung 77.
+   */
+  DATABASE_URL_DIRECT: nonEmpty.url().optional(),
 });
 
 export const workerEnvSchema = baseEnvSchema.extend({

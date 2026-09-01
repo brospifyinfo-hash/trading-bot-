@@ -3,7 +3,6 @@ import { loadEnv, signerEnvSchema, workerEnvSchema } from "../env";
 
 const validWorkerEnv = {
   DATABASE_URL: "postgres://user:pw@localhost:5432/sae",
-  REDIS_URL: "redis://localhost:6379",
   WORKER_ROLE: "scoring",
   SOLANA_RPC_URL: "https://rpc.example.com",
 };

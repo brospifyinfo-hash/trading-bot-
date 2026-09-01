@@ -37,6 +37,34 @@ jobs:
       - name: Web-Build
         run: pnpm --filter @sae/web build
 
+  # Baut das Worker-Image wirklich. Ohne diesen Job faellt ein Fehler im
+  # Dockerfile erst auf dem Worker-Host auf — also dort, wo die Rueckmeldung am
+  # langsamsten und die Fehlersuche am unangenehmsten ist.
+  worker-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Worker-Image bauen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: false
+          load: true
+          tags: sae-worker:ci
+
+      - name: Startet der Container und meldet er sich gesund?
+        run: |
+          # Ohne WORKER_ROLE muss der Container sichtbar scheitern — das ist die
+          # Zusicherung, dass er nie stillschweigend eine falsche Rolle uebernimmt.
+          if docker run --rm --env DATABASE_URL=postgres://x@127.0.0.1:1/x \
+                        --env SOLANA_RPC_URL=https://example.invalid \
+                        sae-worker:ci 2>/dev/null; then
+            echo "FEHLER: Container startete ohne WORKER_ROLE"; exit 1
+          fi
+          echo "OK: ohne WORKER_ROLE kein Start."
+
   secrets:
     runs-on: ubuntu-latest
     steps:

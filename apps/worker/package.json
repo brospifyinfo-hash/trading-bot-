@@ -22,9 +22,7 @@
     "@sae/risk": "workspace:*",
     "@sae/scoring": "workspace:*",
     "@sae/simulation": "workspace:*",
-    "@sae/trading": "workspace:*",
-    "bullmq": "^5.34.6",
-    "ioredis": "^5.4.2"
+    "@sae/trading": "workspace:*"
   },
   "devDependencies": {
     "drizzle-orm": "^0.38.3"

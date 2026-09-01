@@ -9,50 +9,56 @@
 #
 # Starten:
 #   docker run --rm \
-#     -e DATABASE_URL=... -e REDIS_URL=... -e SOLANA_RPC_URL=... \
-#     -e WORKER_ROLE=scheduler -p 3001:3001 sae-worker
+#     -e DATABASE_URL=... -e SOLANA_RPC_URL=... -e WORKER_ROLE=scheduler \
+#     -p 3001:3001 sae-worker
 #
-# Laeuft auf jedem Host, der ein OCI-Image annimmt: Fly.io, Railway, Render,
-# Hetzner mit Docker, ECS. Ausdruecklich NICHT auf Vercel — die Begruendung
-# steht in docs/DEPLOYMENT.md, Abschnitt 2.
+# Laeuft auf jedem Host, der ein OCI-Image annimmt: Railway (siehe
+# railway/README.md), Fly.io, Render, Hetzner mit Docker. Ausdruecklich NICHT
+# auf Vercel — Begruendung in docs/DEPLOYMENT.md, Abschnitt 2.
 
 FROM node:22-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-# corepack liefert exakt die im Repository festgelegte pnpm-Version.
+# corepack liefert exakt die in package.json festgelegte pnpm-Version.
 RUN corepack enable
-
 WORKDIR /app
 
-# ---------------------------------------------------------------- Abhaengigkeiten
-# Erst nur die Manifeste kopieren: solange sich keine Abhaengigkeit aendert,
-# bleibt diese Schicht im Cache und ein Rebuild dauert Sekunden statt Minuten.
-FROM base AS deps
+# ---------------------------------------------------------------- Bauen
+FROM base AS build
+
+# Erst die Manifeste: solange sich keine Abhaengigkeit aendert, bleibt die
+# Installationsschicht im Cache und ein Rebuild dauert Sekunden.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/worker/package.json apps/worker/
+
+# apps/web und apps/signer werden im Worker-Image nicht ausgefuehrt, ihre
+# Manifeste muessen aber vorhanden sein: `pnpm-workspace.yaml` erfasst `apps/*`,
+# und `--frozen-lockfile` vergleicht die Lockfile gegen ALLE Arbeitsbereiche.
+# Fehlt eines, bricht die Installation mit "lockfile is not up to date" ab.
 COPY apps/web/package.json apps/web/
 COPY apps/signer/package.json apps/signer/
+
+# Die internen Pakete werden als TypeScript-Quellen eingebunden, deshalb
+# vollstaendig und nicht nur ihre Manifeste.
 COPY packages/ packages/
-# --frozen-lockfile: ein Build, der die Lockfile stillschweigend aendert, ist
-# nicht derselbe Build wie der gepruefte.
+COPY apps/worker/ apps/worker/
+
+# --ignore-scripts: keine Postinstall-Skripte fremder Pakete im Build.
+# Genau eine Installation im gesamten Dockerfile — eine zweite gegen einen
+# unvollstaendigen Arbeitsbereich waere der wahrscheinlichste Grund fuer einen
+# fehlschlagenden Build.
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ---------------------------------------------------------------- Laufzeit
 FROM base AS runtime
 ENV NODE_ENV=production
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/packages ./packages
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/worker ./apps/worker
+# pnpm verlinkt Abhaengigkeiten quer durch den Arbeitsbereich (Wurzel-
+# `node_modules` plus je Paket). Deshalb wird der Baum als Ganzes uebernommen —
+# einzelne Verzeichnisse zu kopieren zerreisst die Verlinkung.
+COPY --from=build /app /app
 
-# Die Pakete werden als TypeScript-Quellen eingebunden; tsx fuehrt sie direkt
-# aus. Ein eigener Build-Schritt existiert bewusst nicht — er waere eine
-# zweite Wahrheit neben dem, was Tests und Typecheck pruefen.
-RUN pnpm install --frozen-lockfile --ignore-scripts --filter @sae/worker...
-
-# Nicht als root laufen: ein Prozess mit Datenbankzugriff braucht keine
-# Rechte am Dateisystem des Containers.
+# Nicht als root laufen: ein Prozess mit Datenbankzugriff braucht keine Rechte
+# am Dateisystem des Containers.
 RUN useradd --create-home --shell /bin/bash worker \
  && chown -R worker:worker /app
 USER worker
@@ -60,11 +66,14 @@ USER worker
 # Der Health-Port ist der einzige, den dieser Container oeffnet. Er dient dem
 # Host zum Prueflauf, nicht der Kommunikation mit Vercel — die laeuft
 # ausschliesslich ueber die Datenbank.
+#
+# Railway, Render und Fly setzen `PORT` selbst; der Worker liest ihn vorrangig
+# und faellt sonst auf `HEALTH_PORT` und zuletzt auf 3001 zurueck.
 ENV HEALTH_PORT=3001
 EXPOSE 3001
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.HEALTH_PORT||3001)+'/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
+  CMD node -e "const p=process.env.PORT||process.env.HEALTH_PORT||3001;fetch('http://127.0.0.1:'+p+'/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # WORKER_ROLE wird bewusst NICHT gesetzt: ein Container ohne ausdrueckliche
 # Rolle soll sichtbar nicht starten, statt stillschweigend eine falsche zu

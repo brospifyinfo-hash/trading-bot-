@@ -1474,3 +1474,46 @@ die falsche Richtung.
 
 Deshalb gibt es auch keinen Simulator als Provider-Ersatz. Er würde die gesamte
 Kette grün färben und nichts beweisen.
+
+## 77. Redis raus — und was dabei fast verlorengegangen wäre
+
+`REDIS_URL` war Pflicht in `baseEnvSchema` und wurde von keiner einzigen
+Codezeile gelesen. `ioredis` war nirgends importiert, `bullmq` genau einmal —
+als Typ-Import, der wegkompiliert. `apps/worker/src/queues.ts` war vollständig
+toter Code: nichts importierte `QUEUES`, `QUEUE_OPTIONS`, `QUEUE_CONCURRENCY`
+oder `JobPayloads`.
+
+Der Grund ist Entscheidung 43: die dauerhafte Queue liegt in PostgreSQL, weil
+Redis die Zustellgarantie nicht trägt. Die BullMQ-Definitionen stammten aus dem
+Entwurf davor und sind beim Umstieg liegengeblieben. Ein Pflichtwert, den
+niemand liest, ist keine Kleinigkeit: er kostet auf jeder Plattform einen
+Eintrag, und wer ihn vergisst, bekommt einen Startfehler ohne Zusammenhang zur
+eigentlichen Ursache.
+
+**Beim Löschen wäre allerdings etwas Echtes mitgegangen.** `queues.ts` trug eine
+Retry-Politik je Auftragsart, und die ist im Postgres-Queue **nicht** umgesetzt:
+
+| Auftragsart | Absicht in `queues.ts` | Postgres-Queue heute |
+|---|---|---|
+| `execution` | **genau 1 Versuch** | `max_attempts` DEFAULT 4 |
+| `decision` | 1 Versuch | DEFAULT 4 |
+| `reconciler` | 5 Versuche | DEFAULT 4 |
+| `alerts` | 4 Versuche | DEFAULT 4 |
+| `scoring`, `positions`, `paper` | 2 Versuche | DEFAULT 4 |
+
+Die Begründung im gelöschten Code war präzise und gilt weiter: *„Ein
+automatischer Retry auf einer gesendeten Transaktion ist der direkte Weg zur
+doppelten Position."*
+
+Heute ist das folgenlos — der Scheduler reiht ausschliesslich datenunabhängige
+Takte ein, und einen `EXECUTION`-Auftrag gibt es nicht, weil Live-Handel aus ist
+und die `execution`-Rolle ein leerer Platzhalter bleibt. Es ist aber eine
+**harte Voraussetzung** für jede spätere Execution-Arbeit:
+
+> Bevor der erste `EXECUTION`-Auftrag eingereiht werden darf, muss
+> `max_attempts` je Auftragsart gesetzt werden — für `execution` auf 1. Ein
+> globaler Standard von 4 bedeutet dort vier Versuche, eine Transaktion zu
+> senden.
+
+Aufgeschrieben statt gelöscht, weil eine Absicht, die nur in totem Code stand,
+beim nächsten Aufräumen endgültig verschwunden wäre.
