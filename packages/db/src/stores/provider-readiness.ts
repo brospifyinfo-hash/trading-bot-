@@ -19,6 +19,9 @@ import {
  */
 
 export type CapabilityState = (typeof CAPABILITY_STATES)[number];
+
+/** Statuscodes, die eine Sperre bedeuten und keinen Ausfall. */
+const BLOCKING_STATUSES: ReadonlySet<number> = new Set([403, 407, 451]);
 export type ImplementationConfidence = (typeof IMPLEMENTATION_CONFIDENCES)[number];
 
 export interface CapabilityStatusRow {
@@ -100,15 +103,25 @@ export class ProviderReadinessStore {
     readonly schemaVerified: boolean;
   }): Promise<CapabilityStatusRow | null> {
     const passed = input.httpStatus >= 200 && input.httpStatus < 300;
+    const blocked = BLOCKING_STATUSES.has(input.httpStatus);
 
-    // Ein Fehlschlag befoerdert den Zustand NICHT — und stuft ihn auch nicht
-    // herab. Ein 403 kann vom Anbieter kommen oder von einem Proxy dazwischen;
-    // von hier aus ist das nicht unterscheidbar. Ihn als CONNECTED zu
-    // verbuchen waere eine Behauptung ueber eine Verbindung, die es
-    // moeglicherweise nie gab.
-    const promotion: { state?: CapabilityState } = !passed
-      ? {}
-      : { state: input.schemaVerified ? "CAPABILITY_READY" : "CONNECTED" };
+    /**
+     * Drei Faelle, drei Folgen:
+     *
+     *   2xx           befoerdern — CONNECTED, mit geprueftem Vertrag READY
+     *   403/407/451   BLOCKED — etwas dazwischen verweigert, warten hilft nicht
+     *   sonst         nichts aendern
+     *
+     * Der mittlere Fall ist der wichtige. Ihn als CONNECTED zu verbuchen waere
+     * eine Behauptung ueber eine Verbindung, die es nie gab; ihn als
+     * UNAVAILABLE zu fuehren hiesse, auf eine Erholung zu warten, die ohne
+     * Freigabe nicht kommt.
+     */
+    const promotion: { state?: CapabilityState } = passed
+      ? { state: input.schemaVerified ? "CAPABILITY_READY" : "CONNECTED" }
+      : blocked
+        ? { state: "BLOCKED" }
+        : {};
 
     const updated = await this.db
       .update(providerCapabilityStatus)

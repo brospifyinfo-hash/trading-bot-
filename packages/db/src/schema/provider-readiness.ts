@@ -21,6 +21,14 @@ import {
  */
 export const CAPABILITY_STATES = [
   "CONFIGURED",
+  /**
+   * Etwas zwischen uns und dem Anbieter verweigert (403, 407, 451).
+   *
+   * Eigener Zustand und ausdruecklich nicht UNAVAILABLE: eine Sperre aendert
+   * sich nicht durch Warten, sondern durch eine Freigabe. Wer beides
+   * zusammenwirft, wartet auf etwas, das nie von selbst passiert.
+   */
+  "BLOCKED",
   "CONNECTED",
   "SCHEMA_VERIFIED",
   "CAPABILITY_READY",

@@ -99,7 +99,13 @@ export function classifyFailure(input: {
   if (input.httpStatus === 429) return "RATE_LIMITED";
   if (input.httpStatus !== null && input.httpStatus !== undefined) {
     if (input.httpStatus >= 500) return "UNAVAILABLE";
-    if (input.httpStatus === 407) return "BLOCKED";
+    // 403, 407 und 451 heissen: etwas zwischen uns und dem Anbieter verweigert.
+    // Ob das der Anbieter selbst ist oder ein Proxy davor, laesst sich von hier
+    // aus nicht unterscheiden — und fuer die Folge ist es dasselbe: warten
+    // hilft nicht, eine Freigabe schon. Genau das bedeutet BLOCKED.
+    if (input.httpStatus === 403 || input.httpStatus === 407 || input.httpStatus === 451) {
+      return "BLOCKED";
+    }
     if (input.httpStatus >= 400) return "BAD_REQUEST";
   }
 

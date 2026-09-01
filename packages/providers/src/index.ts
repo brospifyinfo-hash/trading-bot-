@@ -9,3 +9,5 @@ export * from "./http";
 export * from "./registry";
 export * from "./jupiter/schema";
 export * from "./jupiter/provider";
+export * from "./contract";
+export * from "./dexscreener/provider";

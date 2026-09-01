@@ -118,10 +118,25 @@ describe("PRODUCTION_VERIFIED nur nach echtem Request", () => {
     });
 
     expect(result?.productionVerified).toBe(false);
-    // Ein 403 kann vom Anbieter kommen oder von einem Proxy dazwischen. Von
-    // hier aus ist das nicht unterscheidbar, also wird nichts befoerdert.
-    expect(result?.state).toBe("CONFIGURED");
+    // 403 heisst: etwas dazwischen verweigert. Eigener Zustand, weil Warten
+    // nicht hilft — es braucht eine Freigabe.
+    expect(result?.state).toBe("BLOCKED");
     expect(result?.lastSmokeTestStatus).toBe(403);
+  });
+
+  it("meldet einen 500er weder als BLOCKED noch als verbunden", async () => {
+    // Ein Ausfall erholt sich von selbst, eine Sperre nicht. Der Zustand
+    // bleibt unveraendert, statt eine falsche Erwartung zu setzen.
+    const result = await store.recordSmokeTest({
+      providerId: "dexscreener",
+      capability: "TOKEN_MARKET",
+      at: at(1_000),
+      httpStatus: 503,
+      detail: "Service Unavailable",
+      schemaVerified: false,
+    });
+    expect(result?.state).toBe("CONFIGURED");
+    expect(result?.productionVerified).toBe(false);
   });
 
   it("erreicht ohne geprueftes Schema kein CAPABILITY_READY", async () => {

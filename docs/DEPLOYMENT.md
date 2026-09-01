@@ -142,6 +142,9 @@ Wer welche Variablen braucht:
 | Worker | `DATABASE_URL` (direkt), `REDIS_URL`, `WORKER_ROLE`, `SOLANA_RPC_URL`, `HEALTH_PORT`, `MARKET_DATA_PRIORITY`, Anbieter-URLs und -Schlüssel |
 | Signer | ausschließlich `SIGNER_*`, alle als Dateipfade auf Secrets |
 
+Die vollständige Liste, getrennt nach Pflicht und Optional und gegen die
+Zod-Schemata geprüft, steht in Abschnitt 6b.
+
 Der Resend-Schlüssel gehört auf **beide** Seiten nur dorthin, wo tatsächlich
 versendet wird — heute ist das der `alerts`-Worker, nicht die Web-App. Ist
 `ALERT_ALLOW_TEST_EMAILS` nicht gesetzt, verweigert der Adapter jede Mail aus
@@ -155,10 +158,217 @@ keine `crons`-Sektion** — Vercel Cron löst höchstens minütlich aus, und die
 Positionsüberwachung eines Memecoins im Minutenraster ist keine Überwachung.
 Der Takt gehört auf den Worker-Host.
 
+## 6b. Worker und Vercel: wer redet mit wem
+
+Die kurze Antwort: **gar nicht direkt.** Es gibt keinen HTTP-Aufruf von Vercel in
+einen Worker und keinen umgekehrt. Beide Seiten kennen nur die Datenbank.
+
+```
+   Browser
+      |
+      v
++---------------------------+
+|  VERCEL  (@sae/web)       |   Next.js: Dashboard, API, Auth,
+|  anfragegetrieben         |   Bestätigungs-Flow, /api/diagnostics/providers
++---------------------------+
+      |  liest / schreibt (Pooler-Endpunkt, max 1 Verbindung je Prozess)
+      v
++---------------------------------------------------------------+
+|  POSTGRESQL   job_queue · job_queue_history · provider_requests |
+|               provider_capability_status · provider_status_...  |
+|               snapshots · decisions · opportunities · paper_... |
++---------------------------------------------------------------+
+      ^  liest / schreibt (Direktverbindung, Pool 10)
+      |
++---------------------------+
+|  WORKER-HOST              |   ein Image, Rolle aus WORKER_ROLE:
+|  langlebige Prozesse      |   scheduler · consumer · provider-health
++---------------------------+
+      |  HTTPS nach draußen
+      v
+   ANBIETER (DexScreener, Jupiter, RPC …)
+```
+
+**Welche Queue?** `job_queue` — eine Tabelle in derselben PostgreSQL-Datenbank
+(Begründung in Abschnitt 4). Kein SQS, kein BullMQ, kein separater Broker.
+
+`REDIS_URL` steht im Env-Schema (`baseEnvSchema`) und ist dort **Pflicht** —
+ohne gültige URL startet weder Web noch Worker. Gelesen wird sie heute von
+keinem Code-Pfad: der Auftragsweg läuft vollständig über PostgreSQL. Sie muss
+also gesetzt sein, tut aber nichts. Das ist eine bekannte Unsauberkeit im
+Schema, keine versteckte Abhängigkeit.
+
+**Wer reiht heute ein?** Ausschließlich der `scheduler`-Worker
+(`apps/worker/src/roles/scheduler.ts` → `JobDispatcher.enqueue`), per
+`INSERT … ON CONFLICT DO NOTHING` auf dem `dedupe_key`. Der nächste
+Consumer-Takt zieht die Zeile per `FOR UPDATE SKIP LOCKED`.
+
+**Reiht Vercel ein?** Heute **nein**. Die Web-App liest ausschließlich —
+Dashboard-Abfragen und `/api/diagnostics/providers`. Es gibt derzeit keine
+Route, die `job_queue` beschreibt. Die Repository-Methode dafür existiert
+(`packages/db/src/repositories/job-queue.ts`), sie wird von der Web-Seite nur
+noch nicht aufgerufen. Wenn eine Aktion im Dashboard später einen Auftrag
+auslösen soll, ist das der vorgesehene Weg: Zeile schreiben, Antwort geht raus,
+bevor der Auftrag läuft — sie bestätigt die Einreihung, nicht das Ergebnis.
+
+**Wie sieht Vercel Ergebnisse?** Es liest die Zieltabelle. Kein Callback, kein
+Webhook, kein offener Socket. Deshalb überlebt der Weg einen Cold Start, einen
+Worker-Neustart und ein Vercel-Deployment mitten in der Bearbeitung.
+
+### Zwei verschiedene `DATABASE_URL`
+
+Dieselbe Datenbank, zwei Endpunkte. Das ist kein Versehen:
+
+| | Vercel (Web) | Worker-Host |
+|---|---|---|
+| Endpunkt | **Pooler** (Neon `-pooler`, Supabase `:6543`, PgBouncer transaction mode) | **Direktverbindung** (Neon direkt, Supabase `:5432`) |
+| Warum | hunderte kurzlebige Instanzen; der Pooler bündelt sie auf wenige echte Verbindungen | wenige langlebige Prozesse; ein Pooler dazwischen brächte nur Latenz |
+| Poolgröße je Prozess | 1 | 10 |
+| Prepared Statements | aus | aus |
+| Migrationen | nein | ja, vor dem Start — und über die **Direktverbindung**, ein Pooler im Transaction Mode verträgt DDL-Transaktionen nicht zuverlässig |
+
+### Environment Variables, vollständig
+
+Maßgeblich ist das Schema in `packages/config/src/env.ts`, nicht diese Tabelle —
+was dort `optional()` fehlt, lässt den Prozess beim Start abbrechen.
+
+**Vercel (@sae/web)** — Pflicht (`webEnvSchema`):
+
+| Variable | Wert |
+|---|---|
+| `DATABASE_URL` | Pooler-Endpunkt |
+| `REDIS_URL` | gültige `redis://`-URL — vom Schema verlangt, von keinem Code gelesen |
+| `SESSION_SECRET` | ≥ 32 Zeichen, zufällig (`openssl rand -base64 48`) |
+| `APP_BASE_URL` | `https://<deine-domain>` |
+
+Optional: `RESEND_API_KEY` (nur falls die Web-App selbst versenden soll — heute
+versendet der `alerts`-Worker), `NODE_ENV`, `LOG_LEVEL`.
+
+**Nicht auf Vercel setzen:** `SIGNER_*`, `WALLET_*`, irgendeinen privaten
+Schlüssel. Die Signer-Grenze ist eine Deploy-Grenze, keine Code-Konvention.
+
+**Worker-Host** — Pflicht (`workerEnvSchema`):
+
+| Variable | Wert |
+|---|---|
+| `DATABASE_URL` | Direktverbindung |
+| `REDIS_URL` | wie oben: verlangt, ungenutzt |
+| `WORKER_ROLE` | eine Rolle je Prozess |
+| `SOLANA_RPC_URL` | **Pflicht, auch für `scheduler` und `provider-health`** — das Schema ist rollenunabhängig |
+
+Optional: `SOLANA_RPC_FALLBACK_URL`, `HEALTH_PORT` (Standard 3001, direkt aus
+`process.env`), `RESEND_API_KEY` + `ALERT_FROM_EMAIL` + `ALERT_TO_EMAIL` (für
+`alerts`), `SIGNER_URL` + `SIGNER_CLIENT_CERT_PATH` + `SIGNER_CLIENT_KEY_PATH`
+(nur `execution`), `NODE_ENV`, `LOG_LEVEL`.
+
+Anbieter-Variablen liegen in einem eigenen Schema
+(`packages/config/src/providers.ts`) und sind **alle optional**:
+`MARKET_DATA_PRIORITY`, `DEXSCREENER_BASE_URL`, `BIRDEYE_BASE_URL`,
+`BIRDEYE_API_KEY`, `JUPITER_BASE_URL`, `HELIUS_BASE_URL`, `HELIUS_API_KEY`,
+`RUGCHECK_BASE_URL`, `ALERT_ALLOW_TEST_EMAILS`. Ein Anbieter ohne Basis-URL ist
+`NOT_CONFIGURED` — eine Feststellung, kein Fehler.
+
+DexScreener braucht **keinen** Schlüssel, aber `DEXSCREENER_BASE_URL` muss
+gesetzt sein, sonst gilt er als nicht konfiguriert und taucht in keiner Kette
+auf. Was er darüber hinaus braucht, ist ausgehender Zugriff auf
+`api.dexscreener.com` — siehe `docs/providers/dexscreener.md`.
+
+**Signer-Host** (existiert noch nicht produktiv): ausschließlich `SIGNER_*`, alle
+als Dateipfade auf Secrets, nie als Wert in einer Env-Variablen.
+
+### Minimalbesetzung
+
+Drei Prozesse auf dem Worker-Host, plus Vercel:
+
+```bash
+WORKER_ROLE=scheduler       pnpm --filter @sae/worker start
+WORKER_ROLE=provider-health pnpm --filter @sae/worker start
+WORKER_ROLE=consumer        pnpm --filter @sae/worker start   # 1..n
+```
+
+Genau eine `scheduler`- und eine `provider-health`-Instanz, beliebig viele
+`consumer`.
+
 ## 7. Health
 
 Jeder Worker öffnet einen HTTP-Health-Port (`HEALTH_PORT`, Standard 3001). Er
-meldet `ready`, solange kein Herunterfahren läuft. Web hat `/api/health`.
+meldet `ready`, solange kein Herunterfahren läuft. Web hat `/api/health` — das
+beantwortet „läuft der Prozess", mehr nicht.
+
+### `GET /api/diagnostics/providers`
+
+Die Frage danach: **kommt dieses System an Daten, und wenn nein, woran hängt
+es?** Beantwortbar ohne Kenntnis des Codes.
+
+HTTP-Status des Endpunkts selbst: **200**, wenn mindestens ein Anbieter
+`productionVerified` ist, sonst **503**. Ein Monitoring, das nur den Statuscode
+liest, bekommt damit die richtige Antwort.
+
+| Feld | Bedeutung |
+|---|---|
+| `headline` | `PROVIDER VERIFIED` \| `BLOCKED` \| `WAITING FOR PROVIDER` \| `NO PROVIDER CONFIGURED` |
+| `anyProductionVerified` | ob irgendein Anbieter je eine echte 2xx-Antwort geliefert hat |
+| `providers[].state` | `CONFIGURED` \| `CONNECTED` \| `BLOCKED` \| `CAPABILITY_READY` \| `PRODUCTION_ENABLED` |
+| `providers[].implementationConfidence` | `NONE` \| `SHAPE_ONLY` \| `SCHEMA_KNOWN` \| `SCHEMA_VERIFIED` |
+| `providers[].productionVerified` | nur `true` nach einem echten Smoke-Test mit 2xx |
+| `providers[].schemaValidated` | `true` / `false` / **`null`** (noch nie validiert) |
+| `providers[].lastSuccessAt` · `lastSuccessLatencyMs` | letzte erfolgreiche Antwort und ihre Latenz |
+| `providers[].lastFailureAt` · `lastFailureClass` · `lastFailureReason` | letzter Fehler, klassifiziert |
+| `providers[].lastSmokeTestAt` · `lastSmokeTestStatus` · `lastSmokeTestDetail` | letzter Smoke-Test |
+| `providers[].requestsLastHour` | Anzahl Anfragen in der letzten Stunde |
+| `providers[].errorRateLastHour` | Fehlerquote — **`null`** bei null Anfragen, nicht `0` |
+| `chains[]` | die Anbieterkette je Capability: Mitglieder, einsatzbereite, Begründung |
+
+`null` heißt hier durchgehend „nicht gemessen" und nie „null". Eine Fehlerquote
+von 0 % ohne eine einzige Anfrage wäre eine Aussage über nichts.
+
+Was der Endpunkt **nicht** ausgibt: Verbindungszeichenfolgen, API-Schlüssel,
+Anbieter-Rohantworten. Auch der `catch`-Zweig bindet den Fehler nicht — eine
+Postgres-Verbindungsfehlermeldung enthält die Verbindungszeichenfolge.
+
+### Deployment-Smoke-Test
+
+Nach dem Deployment auf dem Worker-Host ausführen. Er simuliert nichts: jede
+Stufe ist ein echter Aufruf, und der Lauf endet an der ersten Stufe, die nicht
+durchkommt.
+
+```bash
+DATABASE_URL=<direkt> pnpm --filter @sae/worker exec tsx src/smoke/pipeline.ts \
+  So11111111111111111111111111111111111111112
+```
+
+Die Stufen:
+
+```
+1. SCHEMA CONTRACT          geprüftes Response-Schema vorhanden?
+2. REAL RESPONSE            echter Abruf: HTTP-Status, Latenz, Datensätze
+3. PRODUCTION_VERIFIED      Reifegrad wird gesetzt — nur nach echtem 2xx
+4. MARKET SNAPSHOT          normalisiert und in snapshots aufgenommen
+5. FEATURE VECTOR           aus der Historie über den PitReader
+6. DECISION
+7. OPPORTUNITY (AUTO + MANUAL)
+8. 100 EUR AUTO PAPER
+```
+
+| Exit-Code | Bedeutung |
+|---|---|
+| `0` | alle Stufen PASS |
+| `1` | eine Stufe FAIL — echter Fehler |
+| `3` | eine Stufe BLOCKED — Voraussetzung fehlt (Egress, Schema, Historie) |
+| `2` | Aufruffehler (Mint oder `DATABASE_URL` fehlt) |
+
+Der Unterschied zwischen `1` und `3` ist der Punkt: eine Sperre ist kein
+Fehlschlag, und ein Fehlschlag löst sich nicht durch Warten.
+
+Einzelner Anbieter-Smoke-Test, ohne die restliche Kette:
+
+```bash
+DATABASE_URL=<direkt> pnpm --filter @sae/worker exec tsx src/smoke/dexscreener.ts
+```
+
+Ein Aufruf, keine Wiederholung. Das Ergebnis landet in `provider_requests` und
+im Reifegrad — auch ein 403, denn ein nicht dokumentierter Fehlschlag ist ein
+verlorener Befund.
 
 ## 8. Startbedingung
 
@@ -209,7 +419,11 @@ existiert bereits im Code und darf nicht aufgeweicht werden.
 Kein Punkt davon ist durch Code allein zu lösen:
 
 - eine erreichbare Marktdatenquelle mit einem gegen ihre Spezifikation geprüften
-  Adapter (heute: nur Jupiter, und der ist ein Router, keine Marktdatenquelle),
+  Adapter. Stand heute: der DexScreener-Adapter ist gebaut und getestet, aber
+  sein Response-Vertrag ist `UNVERIFIED` und der Host in dieser Umgebung per
+  Egress gesperrt (HTTP 403). Er lehnt deshalb jede Antwort ab, statt zu raten.
+  Jupiter ist erreichbar, aber ein Router und keine Marktdatenquelle. Details
+  und der genaue Freischaltschritt: `docs/providers/dexscreener.md`,
 - daraus eine kalibrierte Kostenannahme statt der derzeitigen Festlegung,
 - eine Strategie, die Backtest, Walk-Forward, Out-of-Sample und Shadow Trading
   durchlaufen hat,
