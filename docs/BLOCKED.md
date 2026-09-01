@@ -121,6 +121,18 @@ Kurzfassung: **fünf** Worker/Handler laufen mit echter Fachlogik
 Anbieter blockiert (`enrichment`, `positions`, `reconciler`). **Einer** ist
 bewusst nicht gebaut (`execution` — Live-Handel ist abgeschaltet).
 
+## Provider-Integration
+
+Die Analyse zu Provider-Spezifikation V1 steht in
+[`PROVIDER-INTEGRATION-PLAN.md`](PROVIDER-INTEGRATION-PLAN.md): Capability-Mapping,
+Kostenmodell, Progressive Filtering, Datenbank- und Worker-Aenderungen.
+
+Kernbefund: In dieser Umgebung ist **keine** Anbieter-Dokumentation lesbar
+(`curl` und WebFetch blockiert, nur WebSearch funktioniert). Verifiziert ist
+genau ein Vertrag — Jupiter Swap v1 aus der Hersteller-OpenAPI — und der steht
+im Widerspruch zu dem Pfad, den Spezifikation V1 nennt. Kein Adapter, bevor das
+geklaert ist.
+
 ## Womit anfangen
 
 Genau eine Sache: **eine erreichbare Marktdatenquelle.** Alles andere hängt

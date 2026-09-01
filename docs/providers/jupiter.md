@@ -1,6 +1,10 @@
 # Jupiter — Swap API
 
-**Status:** teilweise verifiziert
+**Status:** teilweise verifiziert — ⚠️ **Pfadkonflikt offen**, siehe
+[`../PROVIDER-INTEGRATION-PLAN.md`](../PROVIDER-INTEGRATION-PLAN.md) §1.1:
+Spezifikation V1 nennt `swap/v2` mit `/order` + `/execute`, Suchtreffer deuten
+auf die Ultra-API. Unten steht, was aus der OpenAPI von Swap **v1** verifiziert
+ist. Bis zur Klaerung wird kein Adapter gebaut.
 **Quelle:** `https://raw.githubusercontent.com/jup-ag/jupiter-quote-api-node/main/swagger.yaml`
 — OpenAPI 3.0.2, `info.title: "Swap API"`, `info.version: 1.0.0`, Hersteller-eigenes Repository
 **Geprüft am:** 2026-08-30
