@@ -1,216 +1,213 @@
-# Provider-Integrationsplan — Analyse zu Spezifikation V1
+# Provider-Integrationsplan
 
-**Stand:** 2026-09-01 · **Status:** Analyse, kein Code · **Nächster Schritt:** deine Freigabe
+**Stand:** 2026-09-01 · **Revision:** 2 (nach deinen Entscheidungen) · **Status:** Analyse, kein Code
+**Nächster Schritt:** deine Freigabe für **einen** Provider und **eine** Capability
 
 ---
 
-## 0. Was ich in dieser Umgebung verifizieren konnte — und was nicht
+## 0. Vorbemerkung: was hier verifiziert ist
 
-Das ist die wichtigste Vorbemerkung, weil sie den Wert jeder folgenden Zeile bestimmt.
-
-Gemessen, nicht vermutet:
+Gemessen in dieser Umgebung, nicht angenommen:
 
 | Zugang | Ergebnis |
 |---|---|
-| `curl` auf alle sechs Doku-Hosts | `000` — Verbindung scheitert |
+| `curl` auf alle sechs Doku-Hosts | `000` |
 | `WebFetch` auf `docs.birdeye.so`, `developers.jup.ag` | `EGRESS_BLOCKED` |
-| `WebSearch` | **funktioniert** — liefert Titel, URLs, Zusammenfassungen |
+| `WebSearch` | funktioniert |
 
-**Ich kann keine einzige Dokumentationsseite lesen.** Suchergebnisse geben mir
-Seitentitel und die Zusammenfassung eines kleinen Modells — nicht die
-Primärquelle. Ein Response-Schema lässt sich daraus nicht ableiten.
+Ich kann **keine Dokumentationsseite lesen**. Suchergebnisse liefern Titel, URLs
+und die Zusammenfassung eines kleinen Modells — daraus entsteht kein
+Response-Schema.
 
-Deshalb führe ich vier Evidenzstufen, und jede Aussage unten trägt eine davon:
+Zwei Korrekturen an Annahmen aus deiner Nachricht, beide klein:
+
+1. **`SOCIAL_SIGNALS` existiert bereits** (`packages/providers/src/capability.ts:41`).
+   Es muss nicht ergänzt werden. Die Capability-Landschaft hat heute acht Werte,
+   nicht sieben.
+2. **`decisionId` wird berechnet, aber nie gespeichert**
+   (`apps/worker/src/pipeline/opportunity-pipeline.ts:167`). Ohne Persistenz kann
+   `feature_observations.decision_id` nichts referenzieren. Siehe Abschnitt N.
+
+---
+
+## C. Evidenzstufen und die zwei neuen Reifegrade
+
+Die vier Erkenntnisstufen bleiben. Sie beantworten: **woher weiß ich das?**
 
 | Stufe | Bedeutung |
 |---|---|
-| **V** — verifiziert | Ich habe die Primärquelle in dieser Umgebung gelesen. Gilt für **genau einen** Fall: Jupiters eigene OpenAPI über `raw.githubusercontent.com`, geprüft am 2026-08-30. |
-| **S** — Spec | Steht in deiner Spezifikation V1, von dir der offiziellen Doku zugeschrieben. Deine Verifikation, nicht meine. |
-| **C** — korroboriert | Ein Suchergebnis bestätigt, dass eine Doku-Seite mit diesem Namen existiert, oder gibt eine Zahl wieder. Die Seite selbst habe ich nicht gelesen. |
-| **U** — unverifiziert | Weder noch. Wird nicht implementiert. |
+| **V** | Primärquelle in dieser Umgebung gelesen |
+| **S** | Aus deiner Spezifikation, dir zugeschrieben |
+| **C** | Suchtreffer belegt die Existenz einer Seite oder gibt eine Zahl wieder |
+| **U** | Unverifiziert |
 
-**Kein einziges Response-Schema hat Stufe V** — außer Jupiter Swap v1.
+Neu daneben zwei **Reifegrade**, die eine andere Frage beantworten: **wie weit
+darf der Code damit gehen?** Das ist bewusst getrennt — eine Erkenntnisstufe
+sagt nichts über Produktionsreife.
+
+### `IMPLEMENTATION_CONFIDENCE`
+
+| Wert | Heißt |
+|---|---|
+| `NONE` | Kein Vertrag. Kein Code. |
+| `SHAPE_ONLY` | Endpunktname bekannt, Schema nicht. Höchstens eine Capability-Hülle. |
+| `SCHEMA_KNOWN` | Feldnamen und Typen bekannt. Parser und Contract-Tests möglich. |
+| `SCHEMA_VERIFIED` | Aus Primärquelle (OpenAPI, `llms.txt`, aufgezeichnete Antwort). Adapter baubar. |
+
+### `PRODUCTION_VERIFIED`
+
+Ein Boolean, und nur der echte Smoke-Test setzt ihn: DNS → TLS → HTTP → Auth →
+Endpunkt → Schema → Zeitstempel → Normalisierung, gegen die echte API mit
+echtem Schlüssel.
+
+**Die Regel, die daraus folgt:**
+`PRODUCTION_VERIFIED = false` → der Provider erreicht nie `CAPABILITY_READY`,
+egal wie gut das Schema dokumentiert ist. Und `SCHEMA_VERIFIED` allein
+rechtfertigt keinen Eintrag in `MARKET_DATA_PRIORITY`.
+
+Heute gilt für **jeden** der sechs Anbieter: `PRODUCTION_VERIFIED = false`.
 
 ---
 
-## 1. Drei Befunde, die vor allem anderen kommen
+## A. Finale Capability-Matrix
 
-### 1.1 Jupiter: drei widersprüchliche Pfade — BLOCKIEREND
+Deiner Vorgabe folgend habe ich meinen eigenen Vorschlag von acht neuen
+Capabilities auf **fünf** gekürzt. Der Maßstab: eine Capability verdient einen
+eigenen Wert nur, wenn (a) die Kette sie unabhängig auflösen kann, (b) sie eine
+eigene Staleness-Policy hat und (c) ein Anbieter für sie **einzeln** `READY`
+sein kann.
 
-| Quelle | Base-URL | Endpunkte | Stufe |
-|---|---|---|---|
-| `docs/providers/jupiter.md` (mein Repo, aus Hersteller-OpenAPI) | `https://api.jup.ag/swap/v1` | `GET /quote`, `POST /swap` | **V** |
-| Deine Spezifikation V1, §16 | `https://api.jup.ag/swap/v2` | `GET /order`, `POST /execute` | S |
-| Suchtreffer | `.../ultra/v1/order`, `lite-api.jup.ag/ultra/v1/execute` | `/order` + `/execute`, Parameter `taker` | C |
+### Bestehend (8) — unverändert
 
-Die Semantik, die du beschreibst — `/order` liefert Quote **plus** fertige
-Transaktion, `taker` optional für reine Preisabfragen, `/execute` mit „managed
-landing" — passt exakt auf das, was die Suchtreffer **Ultra API** nennen, nicht
-auf „Swap v2".
+`TOKEN_DISCOVERY` · `TOKEN_MARKET` · `PRICE_HISTORY` · `ROUTE_QUOTE` ·
+`SWAP_TRANSACTION` · `SECURITY_REPORT` · `HOLDER_DISTRIBUTION` · `SOCIAL_SIGNALS`
 
-Das ist kein Formfehler. Der Unterschied entscheidet über:
+### Neu (5) — mit Begründung
 
-- **wer signiert.** Swap v1 gibt eine unsignierte Transaktion zurück, die wir
-  signieren und selbst senden. Ultra `/execute` sendet für uns — das verschiebt
-  die Grenze zum Signer-Prozess, und diese Grenze ist unser Sicherheitsmodell.
-- **`otherAmountThreshold`.** Meine verifizierte Notiz zu Swap v1 hält fest:
-  der im Quote genannte Mindestausgabewert wird **nicht** zum Bauen der
-  Transaktion benutzt. Die tatsächlich durchgesetzte Untergrenze steht in der
-  Transaktion. Ob das bei `/order` genauso ist, weiß ich nicht — und davon
-  hängt ab, woher `SignerPolicy` ihren `minOut` liest.
-
-**Vor jeder Zeile Jupiter-Code muss geklärt sein, welche der drei Oberflächen
-gilt.** Ich rate nicht.
-
-### 1.2 Wir haben acht Capabilities, nicht sieben
-
-Deine Spezifikation listet sieben. `packages/providers/src/capability.ts:33`
-führt acht — `SOCIAL_SIGNALS` fehlt in deiner Liste. Für die DexScreener-Rolle
-(§9/§10 deiner Spezifikation) ist genau die relevant; sie muss nicht neu
-erfunden werden.
-
-### 1.3 Listen-Endpunkte amortisieren, Einzel-Endpunkte nicht
-
-Das ist die zentrale Kostenerkenntnis, und sie strukturiert das ganze
-Progressive Filtering.
-
-Aus deinen CU-Angaben (Stufe S):
-
-| Endpunkt | CU | Kosten **je Token** bei N Tokens |
+| Capability | Warum eigenständig | Erste Nutzung |
 |---|---|---|
-| Meme Token List | 40 | 40 / N |
-| Smart Money Token List | 20 | 20 / N |
-| Token Trending | 30 | 30 / N |
-| Price Single | 3 | 3 |
-| Token Market Data | 10 | 10 |
-| Token Security | 25 | 25 |
-| Token Creation Info | 40 | 40 |
+| `TOKEN_TRADES` | Ereignisliste, kein Aggregatzustand. Andere Form, andere Staleness (Sekunden statt Minuten) als `TOKEN_MARKET`. | Momentum-Stufe |
+| `TOKEN_IDENTITY` | **Unveränderliche** Daten (Creator, Erstellungszeit, Decimals). Einmal holen, permanent cachen — ein Kostenprofil, das keine andere Capability hat. | Identitätsstufe |
+| `SMART_MONEY` | Anbieterabgeleitet, eigene Tarifstufe (S: paketabhängig). Kann `NOT_READY` sein, während `TOKEN_MARKET` läuft. | Discovery |
+| `ONCHAIN_HISTORY` | Rohe Transaktions- und Wallet-Historie. Grundlage aller eigenen Ableitungen. | Wallet-Forschung |
+| `MARKET_STREAM` | **Eigene Gesundheit.** Ein WebSocket kann tot sein, während REST antwortet. Ohne eigene Capability meldet Provider-Health `CONNECTED` für einen Anbieter, der nichts mehr pusht. | Discovery, Monitoring |
 
-Eine Liste über 100 Tokens kostet 0,4 CU je Token. Dieselbe Information je
-Token einzeln zu holen kostet das Hundertfache. **Listen gehören deshalb in die
-Discovery, Einzelabfragen erst hinter den Filter** — nicht umgekehrt.
+**Zusammenlegungen gegenüber Revision 1**, im Sinne deiner Minimalvorgabe:
 
-Konkret: Smart Money als *Liste* ist billig genug für die Discovery-Stufe. Smart
-Money je Token wäre es nicht. Das kehrt die naheliegende Reihenfolge um, in der
-Smart Money erst spät kommt.
+- `TOKEN_CREATION` + `TOKEN_METADATA` → **`TOKEN_IDENTITY`**. Beides sind Stammdaten
+  eines Tokens; sie über verschiedene Endpunkte zu holen ist eine
+  Adapter-Frage, keine Capability-Frage.
+- `WALLET_ACTIVITY` + `TRANSACTION_HISTORY` → **`ONCHAIN_HISTORY`**. Beides ist
+  „lies On-Chain-Historie, gefiltert nach Adresse oder Signatur". Eine Fähigkeit,
+  zwei Filter.
+
+### Zurückgestellt (1)
+
+`EXECUTION_SIMULATION` — sinnvoll, aber erst relevant, wenn tatsächlich
+Transaktionen gebaut werden. Paper Trading braucht sie nicht. **Wird ergänzt,
+wenn Live-Ausführung ansteht, nicht vorher.**
+
+### Nicht aufgenommen (10) — Begründung je Fall
+
+| Abgelehnt | Grund |
+|---|---|
+| `DEV_ACTIVITY`, `INSIDER_ACTIVITY`, `SNIPER_ACTIVITY`, `BUNDLER_ACTIVITY` | **Features**, keine Capabilities. Sie kommen als Felder in `SECURITY_REPORT` (Solana Tracker Risk) oder werden von uns aus `ONCHAIN_HISTORY` abgeleitet. Eine eigene Capability hätte keinen eigenen Endpunkt und keine eigene Bereitschaft. |
+| `RPC` | **Transport**, nicht Fähigkeit. Gehört als `rpcUrl` in die Provider-Konfiguration. |
+| `TOKEN_RISK` | Duplikat von `SECURITY_REPORT` |
+| `TOKEN_SOCIAL` | Duplikat von `SOCIAL_SIGNALS` |
+| `LIQUIDITY_HISTORY` | Dieselbe Endpunktfamilie wie `PRICE_HISTORY` |
+| `WALLET_HISTORY` | Zeitfenster von `ONCHAIN_HISTORY` |
+| `EXECUTION_QUOTE` | Duplikat von `ROUTE_QUOTE` |
+| `TRANSACTION_STREAM`, `REALTIME_MARKET_STREAM` | Von `MARKET_STREAM` abgedeckt |
+
+**Ergebnis: 8 + 5 = 13 Capabilities.** Der Diff zu heute ist ein
+Enum-Wert-Zuwachs von fünf; die Kette, `resolveFromChain` und
+`ProviderStatusReport` ändern sich nicht.
 
 ---
 
-## A. Provider-Matrix
+## B. Provider-Matrix
 
-| Provider | Rolle | Auth | Doku gelesen? | Adapter im Repo | Nächster Schritt |
+| Provider | Auth | Doku lesbar | `IMPLEMENTATION_CONFIDENCE` | `PRODUCTION_VERIFIED` | Adapter |
 |---|---|---|---|---|---|
-| **Birdeye** | Discovery, Markt, Trades, Security, Smart Money | API-Key (S) | nein | nein | Doku-Export beschaffen |
-| **Solana Tracker** | Discovery, Markt, Risk, Holder, Dev/Insider, RPC | `x-api-key` (S) | nein | nein | Doku-Export + Tarif klären |
-| **DexScreener** | Discovery, Metadaten, Socials, Cross-Check | keine (S) | nein | nein | Doku-Export |
-| **Helius** | RPC, Transaktionen, Wallets, Streams, Webhooks | API-Key in URL (S) | nein | nein | Doku-Export |
-| **GoPlus** | Security (tertiär), TX-Simulation | (U) | nein | nein | **`llms.txt` + OpenAPI holen** |
-| **Jupiter** | Route, Quote, Ausführung | keine für Quote (V, Swap v1) | **ja, Swap v1** | nein | **Pfadkonflikt klären** |
+| Birdeye | API-Key (S) | nein | `SHAPE_ONLY` | **false** | nein |
+| Solana Tracker | `x-api-key` (S) | nein | `SHAPE_ONLY` | **false** | nein |
+| DexScreener | keine (S) | nein | `SCHEMA_KNOWN` | **false** | nein |
+| Helius | Key in URL (S) | nein | `SCHEMA_KNOWN` | **false** | nein |
+| GoPlus | (U) | nein | `NONE` | **false** | nein |
+| Jupiter Swap **v1** | keine für Quote (V) | **ja** | **`SCHEMA_VERIFIED`** | **false** | nein |
+| Jupiter **Ziel** (v2 / Order-Execute) | (U) | nein | `SHAPE_ONLY` | **false** | nein |
 
-GoPlus ist der einzige Anbieter, für den ein Suchtreffer eine
-maschinenlesbare Spezifikation nennt (`docs.gopluslabs.io/llms.txt`, plus
-OpenAPI). Das ist der billigste Weg zu Stufe V — wenn du eine dieser Dateien
-beschaffst, kann ich sie hier lesen, sofern sie über einen erreichbaren Host
-liegt.
-
----
-
-## B. Capability-Mapping
-
-Hypothese, nicht Festlegung. `?` heißt: die Spezifikation legt es nahe, das
-Schema ist aber unbekannt.
-
-| Capability | Birdeye | Solana Tracker | DexScreener | Helius | GoPlus | Jupiter |
-|---|---|---|---|---|---|---|
-| `TOKEN_DISCOVERY` | P (S) | S (S) | F (S) | — | — | — |
-| `TOKEN_MARKET` | P (S) | S (S) | F (S) | — | — | X-Check (V) |
-| `PRICE_HISTORY` | P (S) | ? | — | — | — | — |
-| `SOCIAL_SIGNALS` | ? | ? (S: Socials-Filter) | P (S) | — | — | — |
-| `SECURITY_REPORT` | S (S) | S (S) | — | — | T (C) | — |
-| `HOLDER_DISTRIBUTION` | ? (C: 35 CU) | S (S) | — | abgeleitet | ? | — |
-| `ROUTE_QUOTE` | — | — | — | — | — | **P (V)** |
-| `SWAP_TRANSACTION` | — | — | — | — | — | **P (V)** |
-
-P = Primär · S = Sekundär · F = Fallback · T = Tertiär · X = Cross-Check
+DexScreener und Helius stehen auf `SCHEMA_KNOWN`, weil deine Spezifikation
+konkrete Feldnamen nennt (Stufe S). Birdeye steht auf `SHAPE_ONLY`, weil dort
+Endpunktnamen bekannt sind, aber **kein einziges Feld**.
 
 ---
 
-## C. Endpunkte
+## Jupiter: LEGACY / VERIFIED gegen TARGET / NOT YET VERIFIED
 
-Alles Stufe S, außer Jupiter. Ich liste sie so, wie du sie angegeben hast, ohne
-Ergänzungen.
+Deiner Entscheidung folgend.
 
-**Birdeye** (S): `/defi/price` · `/defi/history_price` · `/defi/v3/ohlcv` ·
-`/defi/token_overview` · `/defi/v3/token/txs` · `/defi/token_trending` ·
-`/defi/v3/token/meme/list` · `/defi/v3/token/meme/detail/single` ·
-`/defi/token_security` · `/smart-money/v1/token/list` · `/defi/v3/search`
-Zusätzlich korroboriert (C): `/defi/v3/token/holder`, WebSocket mit
-`SUBSCRIBE_PRICE`, `SUBSCRIBE_TOKEN_NEW_LISTING`, `SUBSCRIBE_BASE_QUOTE_PRICE`.
-
-**Solana Tracker** (S), Base `https://data.solanatracker.io`:
-`/tokens/latest` · `/tokens/multi/all` · `/tokens/{tokenAddress}` · `/search` ·
-`/price` · `/stats/{token}` · `/stats/{token}/{pool}` ·
-`/tokens/{tokenAddress}/ath` · `/wallet/{owner}` · `/deployer/{wallet}`
-RPC (S): `https://rpc-mainnet.solanatracker.io`, `wss://rpc-mainnet.solanatracker.io`
-
-**DexScreener** (S): `/token-profiles/latest/v1` · `/community-takeovers/latest/v1` ·
-`/token-boosts/latest/v1` · `/token-boosts/top/v1` ·
-`/latest/dex/pairs/{chainId}/{pairId}` · `/latest/dex/search` ·
-`/token-pairs/v1/{chainId}/{tokenAddress}` · `/tokens/v1/{chainId}/{tokenAddresses}`
-
-**Helius** (S): `https://mainnet.helius-rpc.com/?api-key=` ·
-`wss://mainnet.helius-rpc.com/?api-key=` · `POST /v0/transactions` ·
-`POST /v0/webhooks` · WS-Methoden `transactionSubscribe`, `accountSubscribe`,
-`logsSubscribe`
-
-**GoPlus** (C): Solana Token Security API und Solana Transaction Simulation API
-existieren laut Suchtreffern; **Pfade unverifiziert**.
-
-**Jupiter** (V, Swap v1): `GET /quote` · `POST /swap` · `POST /swap-instructions` ·
-`GET /program-id-to-label` — siehe aber Befund 1.1.
-
----
-
-## D. Response-Schemas
-
-**Der schwächste Teil dieser Analyse, und ich sage das deutlich.**
-
-| Endpunkt | Bekannte Felder | Stufe |
+| | **LEGACY / VERIFIED** | **TARGET / NOT YET VERIFIED** |
 |---|---|---|
-| Jupiter `GET /quote` | `inputMint`, `outputMint`, `inAmount`, `outAmount`, `otherAmountThreshold`, `swapMode`, `slippageBps`, `priceImpactPct`, `routePlan`; optional `platformFee`, `contextSlot`, `timeTaken` | **V** |
-| Solana Tracker `/price` | `price`, `priceQuote`, `liquidity`, `marketCap`, `lastUpdated` | S |
-| DexScreener Pairs | `priceNative`, `priceUsd`, `txns`, `volume`, `priceChange`, `liquidity`, `fdv`, `marketCap`, `pairCreatedAt`, `websites`, `socials`, `boosts` | S |
-| Helius `POST /v0/transactions` | `signature`, `fee`, `feePayer`, `slot`, `timestamp`, `nativeTransfers`, `tokenTransfers`, `accountData` | S |
-| Solana Tracker `/search` (Sortierfelder) | `liquidityUsd`, `marketCapUsd`, `volume`, `volume_5m…1h`, `holders`, `buys`, `sells`, `top10`, `dev`, `insiders`, `snipers`, `fees`, `createdAt`, `lpBurn`, `curvePercentage` | S |
-| **Birdeye — sämtliche Endpunkte** | — | **U** |
-| **GoPlus — sämtliche Endpunkte** | — | **U** |
+| Oberfläche | Swap **v1** | Swap v2 bzw. Order-&-Execute |
+| Base-URL | `https://api.jup.ag/swap/v1` (V) | (U) — Spezifikation nennt `swap/v2`, Suchtreffer deuten auf Ultra |
+| Endpunkte | `GET /quote`, `POST /swap`, `POST /swap-instructions`, `GET /program-id-to-label` (V) | `GET /order`, `POST /execute` (S) |
+| Schema | vollständig aus Hersteller-OpenAPI (V) | (U) |
+| Signaturmodell | **wir** signieren und senden | Anbieter sendet („managed landing", S) |
+| Reifegrad | `SCHEMA_VERIFIED`, `PRODUCTION_VERIFIED = false` | `SHAPE_ONLY` |
+| Status | **bleibt dokumentiert, wird nicht gelöscht** | Zielarchitektur, kein Code |
 
-Zwei Typ-Details aus der verifizierten Jupiter-Spezifikation, die für uns zählen:
-`inAmount`/`outAmount`/`otherAmountThreshold` sind **Strings** (u64 überschreitet
-Double-Präzision — passt zu unserer bigint-Arithmetik), und `priceImpactPct` ist
-ein **String-Dezimalbruch**, keine Basispunkte. Wer das verwechselt, rechnet um
-den Faktor 10 000 falsch.
+`docs/providers/jupiter.md` bleibt bestehen und ist entsprechend markiert.
+
+**Warum das nicht kosmetisch ist:** Die verifizierte Spezifikation sagt zu
+`otherAmountThreshold` wörtlich, der Wert werde *nicht* zum Bauen der
+Transaktion verwendet. Die on-chain durchgesetzte Untergrenze steckt in der
+Transaktion selbst. Ob das im Ziel-Modell genauso ist, weiß niemand hier — und
+davon hängt ab, woher `SignerPolicy` ihren `minOut` liest.
+
+**Signer-Grenze unverändert:** Web/API sehen nie einen privaten Schlüssel. Der
+Signer bleibt ein eigener Prozess mit mTLS, Programm-Allowlist und
+Abflussgrenzen. Ein Modell, in dem ein Anbieter für uns sendet, verschiebt diese
+Grenze — und genau deshalb wird es nicht implementiert, bevor der Vertrag
+verifiziert ist.
 
 ---
 
-## E. Timestamp-Qualität
+## D. Endpunkt-Status
 
-Der entscheidende Punkt für den `PitReader`: liefert die Antwort einen
-Beobachtungszeitpunkt, oder müssen wir den Empfangszeitpunkt nehmen?
+Ausschließlich das, was du angegeben hast, plus was ich verifizieren konnte.
+Keine Ergänzungen.
 
-| Quelle | Feld | Stufe | Folge |
+| Provider | Endpunkte | Stufe |
+|---|---|---|
+| **Birdeye** | `/defi/price` · `/defi/history_price` · `/defi/v3/ohlcv` · `/defi/token_overview` · `/defi/v3/token/txs` · `/defi/token_trending` · `/defi/v3/token/meme/list` · `/defi/v3/token/meme/detail/single` · `/defi/token_security` · `/smart-money/v1/token/list` · `/defi/v3/search` | S |
+| Birdeye (zusätzlich) | `/defi/v3/token/holder`; WS `SUBSCRIBE_PRICE`, `SUBSCRIBE_TOKEN_NEW_LISTING`, `SUBSCRIBE_BASE_QUOTE_PRICE` | C |
+| **Solana Tracker** | `/tokens/latest` · `/tokens/multi/all` · `/tokens/{tokenAddress}` · `/search` · `/price` · `/stats/{token}` · `/stats/{token}/{pool}` · `/tokens/{tokenAddress}/ath` · `/wallet/{owner}` · `/deployer/{wallet}` | S |
+| **DexScreener** | `/token-profiles/latest/v1` · `/community-takeovers/latest/v1` · `/token-boosts/latest/v1` · `/token-boosts/top/v1` · `/latest/dex/pairs/{chainId}/{pairId}` · `/latest/dex/search` · `/token-pairs/v1/{chainId}/{tokenAddress}` · `/tokens/v1/{chainId}/{tokenAddresses}` | S |
+| **Helius** | RPC + WSS-Endpunkt · `POST /v0/transactions` · `POST /v0/webhooks` · WS `transactionSubscribe`, `accountSubscribe`, `logsSubscribe` | S |
+| **GoPlus** | Solana Token Security API, Solana Transaction Simulation API — **Pfade unbekannt** | C |
+| **Jupiter v1** | `GET /quote` · `POST /swap` · `POST /swap-instructions` · `GET /program-id-to-label` | **V** |
+
+---
+
+## E. Response-Schema-Status
+
+| Endpunkt | Bekannte Felder | Stufe | Confidence |
 |---|---|---|---|
-| Solana Tracker `/price` | `lastUpdated` | S | brauchbar als `observedAt`, Semantik ungeklärt |
-| DexScreener Pairs | `pairCreatedAt` (Paar, nicht Preis) | S | **kein** Beobachtungszeitpunkt für den Preis |
-| Helius Transactions | `timestamp`, `slot` | S | bester Zeitstempel im ganzen Feld — on-chain |
-| Jupiter `/quote` | `contextSlot`, `timeTaken` | V | Slot, keine Uhrzeit — braucht Slot→Zeit-Auflösung |
-| Birdeye | — | U | ungeklärt |
+| Jupiter `GET /quote` | `inputMint`, `outputMint`, `inAmount`, `outAmount`, `otherAmountThreshold`, `swapMode`, `slippageBps`, `priceImpactPct`, `routePlan`; optional `platformFee`, `contextSlot`, `timeTaken` | **V** | `SCHEMA_VERIFIED` |
+| DexScreener Pairs | `priceNative`, `priceUsd`, `txns`, `volume`, `priceChange`, `liquidity`, `fdv`, `marketCap`, `pairCreatedAt`, `websites`, `socials`, `boosts` | S | `SCHEMA_KNOWN` |
+| Solana Tracker `/price` | `price`, `priceQuote`, `liquidity`, `marketCap`, `lastUpdated` | S | `SCHEMA_KNOWN` |
+| Solana Tracker `/search` (Sortierfelder) | `liquidityUsd`, `marketCapUsd`, `volume`, `volume_5m…1h`, `holders`, `buys`, `sells`, `top10`, `dev`, `insiders`, `snipers`, `fees`, `createdAt`, `lpBurn`, `curvePercentage` | S | `SCHEMA_KNOWN` |
+| Helius `POST /v0/transactions` | `signature`, `fee`, `feePayer`, `slot`, `timestamp`, `nativeTransfers`, `tokenTransfers`, `accountData` | S | `SCHEMA_KNOWN` |
+| **Birdeye — alle** | — | **U** | `SHAPE_ONLY` |
+| **GoPlus — alle** | — | **U** | `NONE` |
 
-**Regel, die daraus folgt:** liefert ein Anbieter keinen Beobachtungszeitpunkt,
-ist `observedAt = fetchedAt` und `freshnessSeconds = 0` — was eine *Behauptung*
-ist, keine Messung. Solche Datensätze dürfen höchstens `SECONDARY` sein, nie
-`PRIMARY`. `snapshotSupportsEntry` in `packages/pipeline/src/ingestion.ts` setzt
-das bereits durch; die Einstufung muss im Adapter passieren, nicht später.
+Zwei Typdetails aus der verifizierten Jupiter-Spezifikation:
+`inAmount`/`outAmount`/`otherAmountThreshold` sind **Strings** (u64 überschreitet
+Double-Präzision — passt zu unserer bigint-Arithmetik), `priceImpactPct` ist ein
+**String-Dezimalbruch**, keine Basispunkte. Faktor 10 000, wenn man das
+verwechselt.
 
 ---
 
@@ -218,243 +215,441 @@ das bereits durch; die Einstufung muss im Adapter passieren, nicht später.
 
 | Provider | Limit | Stufe |
 |---|---|---|
-| DexScreener | 60 RPM (Profiles/Boosts), 300 RPM (Pairs/Search/Tokens) | S |
-| Solana Tracker Free | 2 500 Anfragen/Monat, **3 rps** | C |
+| DexScreener | 60 RPM (Profiles/Boosts), **300 RPM** (Pairs/Search/Tokens) | S |
+| Solana Tracker Free | 2 500/Monat, **3 rps** | C |
 | Solana Tracker €50 | 200 000/Monat, kein rps-Limit | C |
 | Solana Tracker €200 / €397 | 1 Mio / 10 Mio pro Monat | C |
-| Birdeye | CU-basiert; **RPM/Concurrency unbekannt** | U |
+| Birdeye | CU-basiert; **RPM und Nebenläufigkeit unbekannt** | U |
 | Helius | **unbekannt** | U |
 | GoPlus | **unbekannt** | U |
 
-**Folge:** Solana Tracker Free mit 3 rps und 2 500 Anfragen/Monat trägt keine
-Discovery. 2 500 Anfragen im Monat sind ~3,5 pro Stunde. Als PRIMARY-Discovery
-scheidet der Free-Tarif aus; als SECONDARY-Cross-Check auf wenige Kandidaten ist
-er brauchbar.
+2 500 Anfragen im Monat sind etwa 3,5 pro Stunde. Der Free-Tarif von Solana
+Tracker trägt damit keine Discovery und keine Snapshot-Reihe.
 
 ---
 
 ## G. Kostenmodell
 
-Aus deinen CU-Angaben (S). Die Rechnung darunter ist meine, mit einem
-**angenommenen** Budget — die Zahl musst du setzen.
+**Getrennt von den Handelskosten**, deiner Vorgabe entsprechend.
 
-Sei `B` das CU-Budget pro Stunde und `N_k` die Zahl der Tokens, die Stufe `k`
-erreichen. Dann gilt für jede Stufe mit Einzelabfrage-Kosten `c_k`:
+| Ebene | Enthält | Tabelle |
+|---|---|---|
+| **API-Kosten** | Anfragen, Credits, Compute Units je Endpunkt | `provider_requests` (neu) |
+| **Handelskosten** | DEX-Gebühr, Netzgebühr, Priority Fee, Slippage, Preis-Impact | `paper_positions.costs_paid_minor` (existiert) |
 
-```
-Σ_k  N_k · c_k  ≤  B
-```
+Die beiden dürfen nie in derselben Zahl landen. Eine Position, deren
+API-Beschaffungskosten in ihre PnL wandern, ist nicht mehr mit einem Backtest
+vergleichbar.
 
-Worked example mit `B = 100 000 CU/h` (Annahme) und einer Discovery, die
-1 000 Kandidaten pro Stunde liefert:
+Aus deinen CU-Angaben (S):
 
-| Stufe | Endpunkt | CU | max. Tokens bei 20 % des Budgets |
-|---|---|---|---|
-| Discovery | Meme List + Trending (Listen) | 70/Aufruf | ~alle, amortisiert |
-| Basisfilter | Price Single | 3 | 6 666 |
-| Marktfilter | Token Market Data | 10 | 2 000 |
-| Trades | Token Trade Data | 12 | 1 666 |
-| Security | Token Security | 25 | 800 |
-| Creation | Token Creation Info | 40 | 500 |
+| Endpunkt | CU | je Token bei N=100 |
+|---|---|---|
+| Meme Token List | 40 | 0,4 |
+| Smart Money Token List | 20 | 0,2 |
+| Token Trending | 30 | 0,3 |
+| Price Single | 3 | 3 |
+| Token Market Data | 10 | 10 |
+| Token Trade Data | 12 | 12 |
+| Token Security | 25 | 25 |
+| Token Creation Info | 40 | 40 |
 
-Die Zahlen sagen: **hinter dem Basisfilter darf höchstens ein Drittel der
-Kandidaten übrig bleiben, hinter dem Marktfilter höchstens ein Zehntel.** Das
-ist keine Meinung über Trading, sondern eine Budgetgleichung.
+Budgetgleichung: mit `B` CU pro Stunde und `N_k` Tokens auf Stufe `k` mit
+Einzelkosten `c_k` gilt `Σ N_k · c_k ≤ B`.
 
-`Token Creation Info` ist mit 40 CU der teuerste Einzelabruf — aber sein Ergebnis
-ist **unveränderlich**. Einmal geholt, nie wieder. Das gehört in einen
-permanenten Cache, nicht in einen Takt.
+Worked example, `B = 100 000 CU/h` (**Annahme**, du setzt die Zahl):
+
+| Stufe | CU | max. Tokens bei 20 % Budget |
+|---|---|---|
+| Price Single | 3 | 6 666 |
+| Token Market Data | 10 | 2 000 |
+| Token Trade Data | 12 | 1 666 |
+| Token Security | 25 | 800 |
+| Token Creation Info | 40 | 500 |
+
+Daraus folgt die Filterschärfe: **hinter dem Basisfilter höchstens ein Drittel
+der Kandidaten, hinter dem Marktfilter höchstens ein Zehntel.** Das ist
+Arithmetik, keine Handelsmeinung.
+
+Spätere Forschungsfragen, die `provider_requests` beantwortbar macht:
+API-Kosten je Gelegenheit, je angenommenem Trade, je Gewinner, je validiertem
+Signal.
 
 ---
 
 ## H. Latenz
 
-| Transport | Erwartung | Stufe | Eignung |
+| Transport | Erwartung | Stufe |
+|---|---|---|
+| Birdeye WS `SUBSCRIBE_TOKEN_NEW_LISTING` | schnellste bekannte Discovery | C |
+| Helius `transactionSubscribe` | Echtzeit mit Filtern | S |
+| Helius Webhooks | Push, **Wiederholungen möglich** | S |
+| Solana Tracker WSS RPC | vorhanden, ungeklärt | S |
+| REST-Polling | taktgebunden | — |
+
+Helius' 10-Minuten-Inaktivitätstimer (S) verlangt Heartbeat und Reconnect. Das
+ist ein Lebenszyklusmodell, das unsere Worker heute nicht haben: sie kennen
+Takte und Queue-Aufträge, keine dauerhaft offene Verbindung.
+
+---
+
+## I. Coverage
+
+Ehrlich: **Coverage lässt sich heute nicht messen.**
+
+Wie viele Tokens ein Anbieter kennt, wie schnell er ein neues Paar aufnimmt und
+wie viele davon handelbar sind — das steht in keiner Dokumentation und ergibt
+sich erst aus dem Betrieb.
+
+Was ich sagen kann, ist die *Form* der Abdeckung:
+
+| Provider | Discovery-Form | Bulk-Abruf | Stufe |
 |---|---|---|---|
-| Birdeye WebSocket | `SUBSCRIBE_TOKEN_NEW_LISTING` für Neulistungen | C | schnellste bekannte Discovery |
-| Helius `transactionSubscribe` | Echtzeit, Filter | S | Rohdaten für eigene Ableitungen |
-| Helius Webhooks | Push, **Wiederholungen möglich** | S | asynchron, braucht Idempotenz |
-| Solana Tracker WSS RPC | vorhanden | S | ungeklärt |
-| REST-Polling | Takt-gebunden | — | Fallback |
+| Birdeye | Listen (Meme, Trending) + WS-Neulistungen | ja, Listen | S/C |
+| Solana Tracker | `/tokens/latest`, `/search` mit Sortierung | `/tokens/multi/all` | S |
+| DexScreener | `/token-profiles/latest`, `/latest/dex/search` | **`/tokens/v1/{chainId}/{tokenAddresses}`** — mehrere Adressen je Aufruf | S |
 
-Helius' 10-Minuten-Inaktivitäts-Timer (S) verlangt Heartbeat und Reconnect. Das
-ist ein eigener Worker-Baustein, den es heute nicht gibt — unsere
-Worker-Infrastruktur kennt Takte und Queue-Aufträge, aber keine dauerhafte
-Verbindung mit Lebenszeichen.
+Die letzte Zeile ist für den ersten Adapter entscheidend, siehe Abschnitt P.
 
 ---
 
-## I. Provider-Redundanz
+## J. Provider-Redundanz
 
-Cross-Check möglich bei: **Preis** (Birdeye / Solana Tracker / DexScreener /
-Jupiter-Quote), **Liquidität** (Birdeye / Solana Tracker / DexScreener),
-**Market Cap** (dieselben drei), **Security** (Birdeye / Solana Tracker / GoPlus).
+Cross-Check möglich bei Preis, Liquidität, Market Cap (Birdeye / Solana Tracker
+/ DexScreener) und Security (Birdeye / Solana Tracker / GoPlus).
 
-Und jetzt der Punkt, den §20 deiner Spezifikation richtig benennt und den ich
-schärfen möchte:
+**Der Punkt, der zählt:** Diese drei lesen dieselben On-Chain-Pools. Ihre
+Übereinstimmung ist fast garantiert und beweist nichts. Jupiters Quote ist der
+einzige Wert anderer Natur — er sagt nicht „was ist der Preis", sondern „was
+bekäme ich".
 
-Jupiters Quote ist der **einzige** Preis mit anderer Natur. Die anderen drei
-lesen dieselben On-Chain-Pools und melden deshalb notwendigerweise Ähnliches —
-Übereinstimmung ist dort fast garantiert und beweist nichts. Der Jupiter-Quote
-dagegen sagt, was wir **tatsächlich bekämen**, inklusive Route und Impact.
+> Eine Abweichung zwischen Jupiter und den Marktdatenanbietern ist ein Signal.
+> Eine Übereinstimmung zwischen Birdeye und DexScreener ist keins.
 
-**Eine Abweichung zwischen Jupiter und den Marktdatenanbietern ist ein Signal.
-Eine Übereinstimmung zwischen Birdeye und DexScreener ist keins.**
+Deshalb wird **nicht gemittelt** (§16 deiner Vorgabe). Alle Werte werden
+einzeln gespeichert; `agreement`, `disagreement`, `spread`,
+`freshness_difference` und `source_correlation` sind Forschungsfeatures, die
+sich später aus `feature_observations` berechnen lassen.
 
 ---
 
-## J. Datenqualität
-
-Vorschlag für die Einstufung, gebunden an das, was ein Anbieter nachweislich
-liefert — nicht an seinen Namen:
+## K. Datenqualität
 
 | Tier | Bedingung |
 |---|---|
 | `PRIMARY` | Beobachtungszeitpunkt vom Anbieter · Schema validiert · Frische ≤ Policy · Auth ok |
-| `SECONDARY` | wie oben, aber ohne Beobachtungszeitpunkt (`observedAt = fetchedAt`) |
-| `FALLBACK` | erreichbar, aber Frische über Policy oder Teilfelder fehlen |
-| `DERIVED` | von uns aus Rohdaten berechnet (Helius → Dev-/Insider-Aktivität) — **neu** |
-| `TEST_FIXTURE` | existiert bereits als `source_type`, getrennt vom Tier |
+| `SECONDARY` | wie oben, **aber ohne Beobachtungszeitpunkt** (`observedAt = fetchedAt`) |
+| `FALLBACK` | erreichbar, Frische über Policy oder Teilfelder fehlen |
+| `DERIVED` | von uns aus Rohdaten berechnet — **neu, fehlt heute in `SourceTier`** |
+| `TEST_FIXTURE` | existiert als `source_type`, orthogonal zum Tier |
 
-`DERIVED` fehlt heute in `SourceTier` (`capability.ts:190`) und muss ergänzt
-werden — mit einer Entscheidung darüber, ob abgeleitete Daten eine
-Einstiegsentscheidung tragen dürfen. Mein Vorschlag: ja, aber nie allein.
+Zeitstempel-Semantik, soweit bekannt:
+
+| Quelle | Feld | Folge |
+|---|---|---|
+| Solana Tracker `/price` | `lastUpdated` (S) | kann `PRIMARY` werden, Semantik ungeklärt |
+| Helius Transactions | `timestamp`, `slot` (S) | bester Zeitstempel im Feld — on-chain |
+| Jupiter `/quote` | `contextSlot` (V) | Slot, keine Uhrzeit → braucht Slot→Zeit-Auflösung |
+| DexScreener | `pairCreatedAt` (S) — **Paar, nicht Preis** | **kein** Beobachtungszeitpunkt für den Preis → `SECONDARY` |
+| Birdeye | unbekannt (U) | ungeklärt |
+
+**Regel:** Ohne Beobachtungszeitpunkt ist `observedAt = fetchedAt` und
+`freshnessSeconds = 0` — eine *Behauptung*, keine Messung. Solche Datensätze
+dürfen höchstens `SECONDARY` sein. `snapshotSupportsEntry` setzt die Folgen
+bereits durch; die Einstufung gehört in den Adapter.
+
+Staleness je Feldklasse (**Annahmen**, zu überprüfen sobald echte Latenzen
+vorliegen):
+
+| Klasse | Grenze | | Klasse | Grenze |
+|---|---|---|---|---|
+| Execution-Quote | 5 s | | Holder | 15 min |
+| Preis | 30 s | | Security | 60 min |
+| Liquidität | 60 s | | Identität | unbegrenzt (unveränderlich) |
+| Volumen / Trades | 120 s | | Social | 24 h |
 
 ---
 
-## K. Progressive Filtering
+## L. Discovery-Ökonomie
 
-Reihenfolge nach Kosten und Informationswert, nicht nach Bequemlichkeit:
+Das System muss zwei Abrufarten **explizit** unterscheiden — als Eigenschaft im
+Adapter, nicht als Konvention:
+
+| Art | Kosten | Wo sie hingehört |
+|---|---|---|
+| **LIST / BULK** | je Aufruf, amortisiert über N Tokens | Discovery-Stufe |
+| **INDIVIDUAL** | je Token | erst hinter dem Filter |
+
+Eine Liste über 100 Tokens kostet ein Hundertstel je Token. Das kehrt zwei
+naheliegende Reihenfolgen um:
+
+- **Smart Money gehört in die Discovery**, nicht hinter Security — als Liste
+  kostet es 0,2 CU je Token, als Einzelabruf wäre es teurer als Security.
+- **Identität vor Preis.** Das Token-Alter ist der billigste harte Ausschluss
+  und einmalig zu holen. Ihn hinter den Preis zu setzen heißt, Preise für Tokens
+  zu kaufen, die am Alter scheitern.
+
+Für den Adapter heißt das ein zusätzliches Merkmal:
 
 ```
-1. DISCOVERY            Listen-Endpunkte + WS-Neulistungen     ~0,4 CU/Token
-                        → token_candidates (dedupliziert)
-2. IDENTITÄT            Creation Info (einmalig, Cache)        40 CU, dann 0
-                        → Alter, Creator. Zu jung/zu alt: raus
-3. BASISFILTER          Price Single                            3 CU
-                        → kein Preis, kein Kandidat
-4. MARKTFILTER          Token Market Data                      10 CU
-                        → Liquidität, Volumen, MCap
-5. TRADES               Token Trade Data                       12 CU
-                        → Momentum-Rohfeatures
-6. SECURITY             Token Security (+ Tracker Risk)        25 CU
-                        → harte Blocker; alles andere als Feature
-7. SMART MONEY          aus der Discovery-Liste, kein Einzelabruf
-8. SOCIAL               DexScreener-Metadaten                  billig
-9. JUPITER-QUOTE        /quote mit echter Positionsgröße        —
-                        → Ein- UND Ausstieg prüfen
-10. EV                  netto nach Ausführungskosten
+fetchMarket(mint)            → Einzelabruf
+fetchMarketBatch(mints[])    → Bulk, wenn der Anbieter ihn hat
 ```
 
-Zwei Abweichungen von deinem Entwurf, beide begründet:
-
-- **Identität vor Basisfilter.** Das Alter ist der billigste harte Ausschluss
-  überhaupt und einmalig zu holen. Ihn hinter den Preis zu setzen heißt, Preise
-  für Tokens zu kaufen, die am Alter scheitern.
-- **Smart Money nicht als eigene Stufe.** Als Liste kostet es fast nichts und
-  gehört in die Discovery. Als Einzelabruf je Token wäre es teurer als Security.
-
-Jeder Reject wird gespeichert (§26) — mit Stufe, Grund und den bis dahin
-bekannten Feldern. Ohne das gibt es später keine False-Negative-Forschung.
+Fehlt der Bulk-Pfad, fällt die Kette auf Einzelabrufe zurück — sichtbar, mit
+entsprechend höherem Kostenposten in `provider_requests`.
 
 ---
 
-## L. Capability-Lücken
+## M. Progressive Filtering
 
-Was keiner der sechs liefert:
+```
+1. DISCOVERY       Listen + WS-Neulistungen          ~0,4 CU/Token
+                   → token_candidates (dedupliziert)
+2. IDENTITÄT       TOKEN_IDENTITY (einmalig, Cache)  40 CU, dann 0
+                   → Alter, Creator. Zu jung/zu alt: raus
+3. BASISFILTER     Price Single                       3 CU
+4. MARKTFILTER     TOKEN_MARKET (Bulk, wenn möglich) 10 CU
+5. TRADES          TOKEN_TRADES                      12 CU
+6. SECURITY        SECURITY_REPORT (Ensemble)        25 CU
+7. SMART MONEY     aus der Discovery-Liste, kein Einzelabruf
+8. SOCIAL          SOCIAL_SIGNALS                    billig
+9. EXECUTION       ROUTE_QUOTE mit echter Größe — Ein- UND Ausstieg
+10. EV             netto nach Ausführungskosten
+```
 
-| Fehlt | Warum es zählt | Ersatz |
-|---|---|---|
-| **Exit-Liquidität bei Größe X** | §33: +500 % nützen nichts, wenn nicht verkäuflich | Jupiter-Quote in Gegenrichtung mit realer Größe |
-| **Wallet-PnL-Historie** | „gute Wallet" empirisch statt vom Anbieter | selbst aus Helius-Transaktionen ableiten |
-| **Social-Aktivität über Zeit** | Existenz eines X-Kontos ist kein Signal | keiner; nur Existenz (DexScreener) |
-| **Order-Book-Tiefe** | auf AMMs gibt es keine | Preis-Impact-Kurve über mehrere Quote-Größen |
-| **Slot→Zeit-Auflösung** | Jupiter liefert `contextSlot`, wir brauchen Zeit | Helius RPC |
+Jeder Reject wird gespeichert — mit Stufe, Grund und den bis dahin bekannten
+Feldern. Ohne das gibt es später keine False-Negative-Forschung.
 
-Der letzte Punkt ist unscheinbar und wichtig: ohne Slot→Zeit können wir einen
-Quote nicht sauber in die Zeitachse einordnen — und damit nicht gegen
-Look-Ahead prüfen.
+Und die Regel aus deiner §18: eine positive Marktdaten-Geschichte reicht nicht.
+`Erwarteter Bruttoertrag > 0` bei `ausführungsbereinigter Nettoerwartung ≤ 0`
+heißt **NO TRADE**.
 
 ---
 
-## M. Neue Capabilities — 8 von 17 empfohlen
+## N. Feature-Observation-Modell
 
-Mein Maßstab: eine Capability verdient einen eigenen Wert nur, wenn (a) die
-Kette sie unabhängig auflösen kann, (b) sie eine eigene Staleness-Policy hat und
-(c) ein Anbieter für sie einzeln `READY` sein kann.
+Die folgenreichste Schemaänderung. Heute trägt ein `token_snapshot` **eine**
+Herkunft für die ganze Zeile. Dein §3 verlangt Herkunft **je Feld** — Preis von
+Birdeye, Liquidität von Solana Tracker, in derselben Beobachtung.
 
-**Empfohlen (8):**
+```sql
+CREATE TABLE feature_observations (
+  id                  uuid PRIMARY KEY,
+  token_id            uuid NOT NULL REFERENCES tokens(id),
+  feature_name        text NOT NULL,          -- 'market.liquidity_usd'
 
-| Neu | Begründung | Nutzer in der Pipeline |
-|---|---|---|
-| `TOKEN_TRADES` | Trade-Ebene, Staleness in Sekunden statt Minuten | Momentum-Stufe |
-| `TOKEN_CREATION` | **unveränderlich** — völlig anderes Cache- und Kostenprofil | Identitätsstufe |
-| `TOKEN_METADATA` | Name, Symbol, Decimals; mutabel, billig | Anzeige, Alert |
-| `SMART_MONEY` | eigene Auth-/Tarifstufe (S: paketabhängig) | Discovery |
-| `WALLET_ACTIVITY` | Rohdaten für eigene Ableitungen | Dev-/Insider-Forschung |
-| `TRANSACTION_HISTORY` | historische Rekonstruktion | Replay, §60 |
-| `EXECUTION_SIMULATION` | anderer Fehlermodus als ein Quote | Vor-Ausführung |
-| `MARKET_STREAM` | ein WebSocket kann tot sein, während REST lebt — **eigene Gesundheit** | Discovery, Monitoring |
+  -- Genau eine der drei Wertspalten ist gesetzt.
+  -- Bewusst getrennt statt jsonb: die ganze Tabelle existiert fuer
+  -- numerische Auswertung (Perzentile, Korrelation). Ein jsonb-Feld
+  -- wuerde jede Forschungsabfrage zu einem Cast zwingen.
+  value_num           double precision,
+  value_bool          boolean,
+  value_text          text,
 
-**Nicht empfohlen (9), mit Grund:**
+  provider            text NOT NULL,
+  endpoint            text NOT NULL,
+  observed_at         timestamptz NOT NULL,
+  received_at         timestamptz NOT NULL,
+  data_age_ms         integer NOT NULL,
+  source_tier         text NOT NULL,          -- + DERIVED
+  data_quality        double precision NOT NULL,
+  schema_version      text NOT NULL,
+  adapter_version     text NOT NULL,
 
-| Abgelehnt | Grund |
+  snapshot_id         uuid REFERENCES token_snapshots(id),
+  decision_id         text,                   -- siehe unten
+  decision_timestamp  timestamptz,
+
+  CONSTRAINT feature_obs_one_value CHECK (
+    (value_num IS NOT NULL)::int + (value_bool IS NOT NULL)::int
+      + (value_text IS NOT NULL)::int = 1),
+
+  -- Kein Feature kann nach seinem Empfang beobachtet worden sein.
+  CONSTRAINT feature_obs_causality CHECK (observed_at <= received_at),
+
+  -- §17: NO LOOK-AHEAD, als Constraint statt als Filter.
+  CONSTRAINT feature_obs_no_lookahead CHECK (
+    decision_timestamp IS NULL OR observed_at <= decision_timestamp)
+);
+
+-- Idempotenz: derselbe Anbieter, dasselbe Feature, derselbe
+-- Beobachtungszeitpunkt sind EINE Zeile. Entschieden von der Datenbank,
+-- nicht von einem vorherigen SELECT.
+CREATE UNIQUE INDEX feature_obs_unique
+  ON feature_observations (token_id, feature_name, provider, observed_at);
+```
+
+Drei Entwurfsentscheidungen, die Begründung verdienen:
+
+1. **Drei Wertspalten statt `jsonb`.** Die Tabelle existiert für numerische
+   Forschung. `jsonb` würde jede Perzentil- und Korrelationsabfrage zu einem
+   Cast zwingen und Indizes unbrauchbar machen.
+2. **Look-Ahead als CHECK.** `observed_at <= decision_timestamp` steht in der
+   Datenbank, nicht in einer Abfrage. Ein vergessener Filter ist ein Bug; eine
+   abgelehnte Zeile ist ein Zustand. Das ist dieselbe Linie wie beim
+   Fixture-Schutz.
+3. **`decision_id` ist `text` ohne Fremdschlüssel.** Grund: eine Entscheidung
+   erzeugt **zwei** Gelegenheiten (Auto und Manual). `opportunity_id` wäre also
+   falsch. Wir haben bereits eine Entscheidungskennung —
+   `dec-<hash>` in `opportunity-pipeline.ts:167` — aber **sie wird nirgends
+   gespeichert.** Voraussetzung: eine Spalte `decision_id` auf `opportunities`,
+   sonst zeigt diese Referenz ins Leere.
+
+**Größe und Aufbewahrung:** Das wird die größte Tabelle im System — bei 30
+Features je Snapshot und einem Snapshot je Token und Minute wächst sie
+30-mal so schnell wie `token_snapshots`. Aufbewahrungsfrist und Partitionierung
+nach `received_at` gehören mitentschieden, bevor sie läuft.
+
+**Keine Rohantworten.** Gespeichert werden normalisierte Felder plus die
+anbieterspezifischen Signale, die wir behalten wollen (Solana Tracker:
+`insiders`, `snipers`, `bundlers`; Birdeye: Smart Money; DexScreener: Socials,
+Boosts). Nicht der Antwortkörper.
+
+### Weitere Tabellen
+
+| Tabelle | Zweck |
 |---|---|
-| `TOKEN_RISK` | Duplikat von `SECURITY_REPORT` |
-| `TOKEN_SOCIAL` | Duplikat von `SOCIAL_SIGNALS` (existiert bereits) |
-| `DEV_ACTIVITY`, `INSIDER_ACTIVITY` | **Features**, keine Capabilities — Felder in `SECURITY_REPORT` bzw. abgeleitet aus `WALLET_ACTIVITY` |
-| `LIQUIDITY_HISTORY` | dieselbe Endpunktfamilie wie `PRICE_HISTORY` |
-| `WALLET_HISTORY` | Zeitfenster von `WALLET_ACTIVITY`, kein eigener Vertrag |
-| `RPC` | **Transport**, keine Fähigkeit — gehört in die Provider-Konfiguration |
-| `TRANSACTION_STREAM` | von `MARKET_STREAM` abgedeckt, wenn wir es als „Stream-Gesundheit" fassen |
-| `REALTIME_MARKET_STREAM` | Langform von `MARKET_STREAM` |
-| `EXECUTION_QUOTE` | Duplikat von `ROUTE_QUOTE` |
+| `token_candidates` | Discovery-Dedup: `mint`, `first_seen_provider`, `first_seen_at`, `all_seen_providers` |
+| `provider_requests` | API-Kosten: `provider`, `endpoint`, `capability`, `cost_units`, `http_status`, `latency_ms`, `token_id`, `pipeline_stage`, `decision_id` |
+| `provider_capability_status` | Reifegrad je (Provider, Capability) |
+| `execution_quotes` | Quote mit Alter, Route, Impact — Ein- und Ausstieg getrennt |
+| `holder_observations` | Holder-Verlauf; absolute Werte und Änderungen getrennt |
+| `security_observations` | Rohsignale je Anbieter, vor der eigenen Engine |
 
-Ergebnis: **8 vorhandene + 8 neue = 16 Capabilities.**
+Erweiterungen: `token_snapshots` um `schema_version` und `adapter_version`,
+`opportunities` um `decision_id`, `SourceTier` um `DERIVED`.
 
 ---
 
-## N. Datenbank-Änderungen
+## O. Provider-Vertrag
 
-| Tabelle | Art | Zweck | Spezifikation |
-|---|---|---|---|
-| `token_candidates` | **neu** | Discovery-Dedup: `mint`, `first_seen_provider`, `first_seen_at`, `all_seen_providers` | §49 |
-| `feature_observations` | **neu** | Ein Feature, ein Anbieter, ein Zeitstempel: `feature_name`, `value`, `provider`, `endpoint`, `observed_at`, `received_at`, `data_age_ms`, `source_tier`, `quality` | §21, §48 |
-| `provider_requests` | **neu** | Kostenzuordnung: `provider`, `endpoint`, `capability`, `cost_units`, `http_status`, `latency_ms`, `token_id`, `pipeline_stage`, `decision_id` | §38 |
-| `provider_capability_status` | **neu** | Reifegrad je (Provider, Capability): `CONFIGURED → CONNECTED → SCHEMA_VERIFIED → CAPABILITY_READY → PRODUCTION_ENABLED` | §65 |
-| `execution_quotes` | **neu** | Quote mit Alter, Route, Impact — Ein- und Ausstieg getrennt | §32, §33 |
-| `holder_observations` | **neu** | Holder-Verlauf; absolute Werte und Änderungen getrennt | §29 |
-| `security_observations` | **neu** | Rohsignale je Anbieter, vor der eigenen Engine | §15 |
-| `token_snapshots` | **erweitern** | `schema_version`, `adapter_version` | §61 |
-| `rejections` | **erweitern** | Pipeline-Stufe des Rejects | §26 |
-| `SourceTier` | **erweitern** | `DERIVED` ergänzen | §35 |
+Deine dreizehn Punkte, ergänzt um die beiden Reifegrade. **Alle dreizehn**
+müssen erfüllt sein, bevor ein Anbieter in `MARKET_DATA_PRIORITY` aufgenommen
+wird.
 
-`feature_observations` ist die folgenreichste Änderung. Heute trägt ein
-`token_snapshot` **eine** Herkunft für die ganze Zeile. §21 verlangt Herkunft je
-Feld — Preis von Birdeye, Liquidität von Solana Tracker, in derselben Zeile.
-Das geht nur mit einer schmalen Tabelle. Sie wird die größte im System; die
-Aufbewahrungsfrist gehört mitentschieden.
-
----
-
-## O. Worker-Änderungen
-
-| Worker | Änderung | Neu? |
+| # | Bedingung | Prüfbar durch |
 |---|---|---|
-| `market-refresh` | echte Adapter statt leerer Kette; Checkpoint bleibt | bestehend |
-| `discovery` | Listen-Endpunkte + Dedup nach `token_candidates` | bestehend, leer |
-| `enrichment` | Security-Ensemble aus drei Quellen | bestehend, leer |
-| **`stream`** | dauerhafte WebSockets: Connect, Heartbeat, Reconnect, Backoff, Resume, Dedup | **neu** |
-| **`webhook-ingest`** | Helius-Push, idempotent über `SeenKeys` | **neu** |
-| `provider-health` | Reifegrad je Capability statt je Provider | erweitern |
+| 1 | Endpunkt bekannt | Primärquelle |
+| 2 | Response-Schema bekannt | Primärquelle |
+| 3 | Auth bekannt | Primärquelle |
+| 4 | Rate Limit bekannt | Primärquelle oder Tarif |
+| 5 | Zeitstempel-Semantik bekannt | Primärquelle |
+| 6 | Normalisierung definiert | Code-Review |
+| 7 | Schema-Validierung vorhanden | Zod-Schema + Test |
+| 8 | Fehlerabbildung vorhanden | Test je Fehlerklasse |
+| 9 | Provider-Health integriert | `provider_status_samples` |
+| 10 | Idempotenz berücksichtigt | `UNIQUE`-Index |
+| 11 | Staleness-Policy definiert | Konfiguration |
+| 12 | Tests vorhanden | Contract-Tests |
+| 13 | **Echter Smoke-Test erfolgreich** | gegen die echte API |
 
-Der `stream`-Worker ist der einzige echte Neubau. Unsere Infrastruktur kennt
-Takte und Queue-Aufträge — eine Verbindung, die *offen bleibt* und dabei
-Lebenszeichen braucht, ist ein anderes Lebenszyklusmodell.
+Punkte 1–5 setzen `IMPLEMENTATION_CONFIDENCE = SCHEMA_VERIFIED` voraus.
+Punkt 13 setzt `PRODUCTION_VERIFIED = true`.
+Erst dann: `CAPABILITY_READY`.
+
+Reifekette je (Provider, Capability):
+
+```
+CONFIGURED → CONNECTED → SCHEMA_VERIFIED → CAPABILITY_READY → PRODUCTION_ENABLED
+```
+
+Ein Anbieter kann für `TOKEN_MARKET` bereit sein und für `SMART_MONEY` nicht.
+
+**Contract-Tests** arbeiten mit aufgezeichneten Antworten, markiert als
+`PROVIDER_SCHEMA_FIXTURE`. Sie prüfen Parser und Fehlerpfade — **nie** Marktdaten
+oder Handelsleistung, und sie färben keinen Provider-Status.
 
 ---
 
-## P. Vercel / Worker
+## P. Vorgeschlagener erster Adapter
+
+### Bewertung nach deinen sieben Kriterien
+
+| Kriterium | DexScreener | Solana Tracker | Birdeye |
+|---|---|---|---|
+| Coverage | mittel | mittel | **hoch** |
+| Datenqualität | **niedrig** — kein Preis-Zeitstempel | **hoch** — `lastUpdated` | unbekannt |
+| Kosten | **keine** | Tarif nötig | Tarif nötig |
+| Latenz (REST) | unbekannt | unbekannt | unbekannt |
+| Rate Limit | **300 RPM** | 3 rps (Free) | unbekannt |
+| Discovery-Nutzen | gut | gut | **sehr gut** |
+| Marktdaten-Nutzen | gut | gut | **sehr gut** |
+| Schema bekannt | **`SCHEMA_KNOWN`** | `SCHEMA_KNOWN` | `SHAPE_ONLY` |
+| Bulk-Abruf | **ja** (mehrere Adressen je Aufruf) | ja | ja |
+| Auth-Hürde | **keine** | Schlüssel + Tarif | Schlüssel + Tarif |
+
+### Empfehlung
+
+> **DexScreener · Capability `TOKEN_MARKET` · über den Bulk-Endpunkt**
+
+Sechs Gründe:
+
+1. **Keine Auth-Hürde.** Der einzige der drei, mit dem sich der vollständige
+   Pfad bauen und smoke-testen lässt, **ohne dass du vorher etwas kaufst.**
+2. **Bulk eingebaut.** `/tokens/v1/{chainId}/{tokenAddresses}` nimmt mehrere
+   Adressen je Aufruf — genau das Prinzip aus Abschnitt L, gleich im ersten
+   Adapter geübt.
+3. **Bestbekanntes Schema der drei Marktquellen.** `SCHEMA_KNOWN` gegen
+   `SHAPE_ONLY` bei Birdeye. Ein Adapter gegen `SHAPE_ONLY` ist geraten.
+4. **300 RPM tragen eine echte Snapshot-Reihe.** Der Free-Tarif von Solana
+   Tracker mit 3,5 Anfragen pro Stunde nicht.
+5. **De-Risking.** Wir beweisen Adapter → Schema-Validierung → Normalisierung →
+   Health → Snapshot → Feature-Observation → Persistenz → Tests an einem
+   kostenlosen Anbieter, bevor Geld in Birdeye fließt.
+6. **Bleibt dauerhaft nützlich** als Discovery-Quelle, Cross-Check und Fallback
+   — auch wenn er nie PRIMARY wird.
+
+### Die Schwäche, die ich nicht verschweige
+
+DexScreener liefert für den **Preis** keinen Beobachtungszeitpunkt (`pairCreatedAt`
+gehört zum Paar). Er wird deshalb als **`SECONDARY`** eingestuft und kann nach
+unseren eigenen Regeln **nie PRIMARY-Marktquelle** werden.
+
+Das ist für die jetzige Phase in Ordnung und langfristig nicht:
+
+- **Jetzt:** Wir bauen Historie, wir handeln nicht. `SECONDARY` reicht für
+  Snapshots vollständig.
+- **Später:** Für Einstiegsentscheidungen brauchen wir eine Quelle mit echtem
+  Beobachtungszeitpunkt — Birdeye oder Solana Tracker mit bezahltem Tarif.
+
+Das ist also ausdrücklich eine Entscheidung über den **ersten Pfad**, nicht über
+die **finale Priorität**.
+
+### Wenn du bereits einen Birdeye-Schlüssel hast
+
+Dann ändert sich die Empfehlung — unter einer Bedingung: Du müsstest das
+Response-Schema beschaffen (OpenAPI-Export, `llms.txt` oder eine aufgezeichnete
+echte Antwort je Endpunkt). Mit `SCHEMA_VERIFIED` wäre **Birdeye ·
+`TOKEN_MARKET`** die bessere erste Wahl, weil er auch langfristig PRIMARY
+werden kann. Ohne Schema bleibt es bei DexScreener.
+
+### Zur Discovery-Vergleichsmatrix (deine §6)
+
+Deine Vorgabe war, den objektiven Vergleich **vor** der Priorisierung zu
+erstellen. Das geht für einen Teil der Spalten nicht, und ich sage lieber warum,
+als eine Tabelle mit erfundenen Zahlen zu liefern:
+
+| Spalte | Heute bestimmbar? |
+|---|---|
+| Rate Limit, Kosten, Auth | **ja** — dokumentiert |
+| Discovery-Form, Bulk | **ja** — dokumentiert |
+| Freshness, Latenz | nein — braucht Messung |
+| Coverage | nein — braucht Messung |
+| Unique Signals, Overlap | nein — braucht **zwei** laufende Quellen |
+| False Positive / Negative Rate | nein — braucht Kursverläufe **nach** der Entdeckung |
+
+Overlap und Eindeutigkeit fallen automatisch aus `token_candidates` heraus,
+sobald zwei Discovery-Quellen laufen: `first_seen_provider` und
+`all_seen_providers` sind genau diese Messung. False-Positive- und
+False-Negative-Raten brauchen zusätzlich Wochen an Kursverläufen.
+
+**Der Vergleich ist also selbst eine Messaufgabe, die den ersten Adapter
+voraussetzt.** Die Reihenfolge lässt sich nicht umdrehen, ohne zu raten.
+
+---
+
+## Q. Vercel- und Worker-Abhängigkeit
 
 | Läuft **nicht** auf Vercel | Grund |
 |---|---|
@@ -462,112 +657,70 @@ Lebenszeichen braucht, ist ein anderes Lebenszyklusmodell.
 | Discovery-Polling | Takt |
 | Snapshot-Aufnahme | Takt + Checkpoint |
 | Provider-Health | Takt |
-| Rate-Limit-Budget | zentraler Zustand über alle Aufrufe |
+| **Rate-Limit-Budget** | zentraler Zustand über alle Aufrufe |
 
 | Läuft auf Vercel | Grund |
 |---|---|
 | Dashboard | liest nur die Datenbank |
-| INVEST-NOW-Bestätigung | **einzelner** Jupiter-Quote pro Klick, anfragegebunden |
-| Webhook-**Empfang** | HTTP-Endpunkt; Verarbeitung geht sofort in die Queue |
+| INVEST-NOW-Bestätigung | **ein** Quote je Klick, anfragegebunden |
+| Webhook-**Empfang** | kurzer HTTP-Endpunkt; Verarbeitung geht sofort in die Queue |
 
-Die letzte Zeile ist eine Nuance: Helius-Webhooks *empfangen* darf Vercel — die
-Anfrage ist kurz. Verarbeiten darf es sie nicht; sie gehen als Queue-Auftrag an
-den Worker. Sonst hängt die Verarbeitung an einem 15-Sekunden-Deckel.
-
-Das Rate-Limit-Budget (§37) ist der Grund, warum Provider-Aufrufe *nicht* auf
-beiden Seiten stattfinden dürfen: zwei Prozesse mit je eigenem Zähler halten
-kein gemeinsames Limit ein.
+Das Rate-Limit-Budget ist der Grund, warum Provider-Aufrufe nicht auf beiden
+Seiten stattfinden dürfen: zwei Prozesse mit je eigenem Zähler halten kein
+gemeinsames Limit ein. Die INVEST-NOW-Ausnahme ist vertretbar, weil sie an einen
+menschlichen Klick gebunden ist — sie kann nicht in eine Schleife geraten.
 
 ---
 
-## Q. Implementierungsreihenfolge
+## R. Implementierungsreihenfolge
 
-Sortiert nach Risiko und Abhängigkeit, nicht nach Interesse.
-
-| # | Schritt | Warum zuerst |
+| # | Schritt | Warum an dieser Stelle |
 |---|---|---|
-| 0 | **Jupiter-Pfad klären** | blockiert das Sicherheitsmodell |
-| 1 | **Ein** Marktdaten-Adapter, `TOKEN_MARKET` | schaltet die Snapshot-Historie frei — der Engpass |
-| 2 | Smoke-Test + `CAPABILITY_READY` (§63) | ohne ihn ist „verbunden" eine Vermutung |
-| 3 | `provider_requests` + Budget | vor dem zweiten Adapter, sonst misst niemand |
-| 4 | Discovery über Listen | erst wenn Markt läuft |
-| 5 | Security-Ensemble | braucht Kandidaten |
-| 6 | Jupiter-Quote in den Paper-Flow | macht EV realistisch |
-| 7 | `stream`-Worker | Latenzoptimierung, nicht Voraussetzung |
-| 8 | Helius-Rohdaten → eigene Wallet-Features | teuerste Ableitung, größter Eigenwert |
+| 0 | Fünf neue Capabilities ins Enum, `DERIVED` in `SourceTier` | reine Typerweiterung, blockiert sonst alles Folgende |
+| 1 | `decision_id` auf `opportunities` persistieren | Voraussetzung für `feature_observations` |
+| 2 | `feature_observations` + `provider_requests` (Migration) | vor dem ersten Adapter, sonst misst niemand |
+| 3 | **Erster Adapter: eine Capability, ein Anbieter** | der Engpass |
+| 4 | Schema-Validierung, Normalisierung, Fehlerabbildung | Vertragspunkte 6–8 |
+| 5 | Provider-Health je Capability + Smoke-Test | Vertragspunkte 9, 13 → `CAPABILITY_READY` |
+| 6 | Snapshot- und Feature-Observation-Schreibpfad | schließt den Pfad |
+| 7 | Contract-Tests je Fehlerklasse | Vertragspunkt 12 |
+| 8 | **Erst dann:** zweiter Anbieter | |
+| 9 | Discovery über Listen | braucht laufende Marktdaten |
+| 10 | Security-Ensemble | braucht Kandidaten |
+| 11 | Jupiter-Quote im Paper-Flow | macht EV realistisch |
+| 12 | `stream`-Worker | Latenzoptimierung, keine Voraussetzung |
 
-Schritt 1 mit **einem** Anbieter, nicht mit dreien. Ein Adapter, dessen Daten in
-die Historie fließen, ist mehr wert als drei halbe.
-
----
-
-## R. Risiken
-
-| Risiko | Bewertung | Gegenmaßnahme |
-|---|---|---|
-| **Jupiter-Pfad falsch** | hoch, sofort | Klärung vor Code |
-| **CU-Explosion** | hoch | Budget vor dem zweiten Adapter; Listen vor Einzelabrufen |
-| **Scheinunabhängigkeit** | hoch, unsichtbar | `feature_observations` mit Anbieter je Feld; Korrelation als Forschungsfrage |
-| **Schema-Drift** | mittel, schleichend | `schema_version` je Zeile, Contract-Tests |
-| **WS-Abbruch** | mittel | Heartbeat + Reconnect + Dedup |
-| **Webhook-Wiederholung** | mittel | `SeenKeys` — bereits gebaut |
-| **Free-Tarif-Limits** | mittel | Solana Tracker Free trägt keine Discovery |
-| **Stale Data** | hoch | Staleness je Feldklasse, nicht global |
-| **Vendor-Score als Wahrheit** | hoch, konzeptionell | Vendor-Score ist Feature; eigene Engine entscheidet |
-
-Zur Staleness (§22) mein Vorschlag als Ausgangspunkt — **Annahmen, keine
-Messungen**, zu überprüfen sobald echte Latenzen vorliegen:
-
-| Feldklasse | Grenze |
-|---|---|
-| Execution-Quote | 5 s |
-| Preis | 30 s |
-| Liquidität | 60 s |
-| Volumen / Trades | 120 s |
-| Holder | 15 min |
-| Security | 60 min |
-| Creation | unbegrenzt (unveränderlich) |
-| Social | 24 h |
+Schritte 0–2 sind Vorarbeiten ohne Anbieterbezug und könnten vorgezogen werden.
+Ich schlage sie **nicht** eigenmächtig vor — sie gehören in dieselbe Freigabe
+wie der Adapter, weil sie sonst Schema ändern, ohne dass etwas darauf zugreift.
 
 ---
 
-## S. Empfehlung
+## Live-Data-Gate
 
-**Bedingt** — jede Zeile gilt erst nach Schema-Verifikation.
+Unverändert und durch nichts in diesem Plan gelockert:
 
-| Bereich | PRIMARY | SECONDARY | FALLBACK |
-|---|---|---|---|
-| Discovery | Birdeye (Listen + WS) | DexScreener | Solana Tracker |
-| Markt | Birdeye | Solana Tracker | DexScreener |
-| Ausführungswahrheit | **Jupiter** | — | — |
-| On-Chain | Helius | Solana Tracker RPC | — |
-| Security | **eigene Engine** | Birdeye + Solana Tracker | GoPlus |
-| Smart Money | Birdeye (Liste) | eigene Helius-Ableitung | — |
+```
+CONNECTED → CAPABILITY_READY → LIVE SNAPSHOTS → BUILDING_HISTORY
+  → SUFFICIENT_HISTORY → PAPER TRADING → RESEARCH → SHADOW
+  → CHALLENGER → HUMAN APPROVAL → (irgendwann) LIVE
+```
 
-**Drei Abweichungen von deiner Hypothese:**
-
-1. **DexScreener vor Solana Tracker in der Discovery.** Keine Auth, 300 RPM (S)
-   — der Free-Tarif von Solana Tracker mit 3 rps und 2 500 Anfragen im Monat (C)
-   trägt keine Discovery. Sobald du einen bezahlten Tarif hast, dreht sich das um.
-2. **Jupiter als eigene Kategorie „Ausführungswahrheit", nicht als Cross-Check.**
-   Er beantwortet eine andere Frage als die Marktdatenanbieter: nicht „was ist
-   der Preis", sondern „was bekäme ich". Ihn in denselben Topf zu werfen
-   verschenkt genau das Signal, das eine Abweichung trägt.
-3. **Smart Money aus der Discovery-Liste, nicht als eigene Stufe.** Kostenfrage,
-   siehe Abschnitt G.
+Der erste Meilenstein ist **nicht** ein Live-Kauf, sondern
+**24/7-Paper-Trading gegen echte Marktdaten**. Auto Paper mit 100 € und Manual
+Opportunity laufen parallel; `MISSED` und `USER_REJECTED` bleiben vollständig
+für die Forschung erhalten und **niemals** in der Performance-PnL.
 
 ---
 
-## Freigabe
+## Was ich zur Freigabe brauche
 
-Bevor eine Zeile Adaptercode entsteht, brauche ich von dir:
-
-1. **Jupiter:** welche Oberfläche gilt — Swap v1, Swap v2 oder Ultra?
-2. **Schemas:** OpenAPI-Export, `llms.txt` oder ein aufgezeichneter
-   Beispiel-Response je Endpunkt, den ich implementieren soll. GoPlus' `llms.txt`
-   ist der billigste Anfang.
-3. **Tarife:** welcher Birdeye-Plan, welcher Solana-Tracker-Plan? Davon hängt
-   das CU-Budget ab und damit das ganze Progressive Filtering.
-4. **Erster Adapter:** welcher Anbieter, welche eine Capability?
-
-Ohne 1 und 2 bleibt es bei UNVERIFIED, und dann wird nichts gebaut.
+1. **Erster Anbieter und Capability** — meine Empfehlung: DexScreener ·
+   `TOKEN_MARKET`. Oder Birdeye · `TOKEN_MARKET`, falls du Schlüssel **und**
+   Schema hast.
+2. **Schema-Quelle** für den gewählten Anbieter: OpenAPI, `llms.txt` oder eine
+   aufgezeichnete echte Antwort. Ohne sie bleibt es bei `SHAPE_ONLY`, und dann
+   wird nichts gebaut.
+3. **Freigabe für die Vorarbeiten** (Schritte 0–2): Capabilities, `decision_id`,
+   `feature_observations`, `provider_requests`.
+4. **CU-Budget**, falls Birdeye — davon hängt die Filterschärfe ab.

@@ -1,10 +1,21 @@
 # Jupiter — Swap API
 
-**Status:** teilweise verifiziert — ⚠️ **Pfadkonflikt offen**, siehe
-[`../PROVIDER-INTEGRATION-PLAN.md`](../PROVIDER-INTEGRATION-PLAN.md) §1.1:
-Spezifikation V1 nennt `swap/v2` mit `/order` + `/execute`, Suchtreffer deuten
-auf die Ultra-API. Unten steht, was aus der OpenAPI von Swap **v1** verifiziert
-ist. Bis zur Klaerung wird kein Adapter gebaut.
+**Status:** **LEGACY / VERIFIED** — Swap v1, aus der Hersteller-OpenAPI geprueft.
+Bleibt bestehen und wird nicht geloescht.
+
+**Zielarchitektur:** **TARGET / NOT YET VERIFIED** — Swap v2 bzw. die aktuelle
+Order-&-Execute-Architektur. `IMPLEMENTATION_CONFIDENCE = SHAPE_ONLY`,
+`PRODUCTION_VERIFIED = false`. Der Vertrag ist aus dieser Umgebung nicht
+lesbar; bis zur Verifikation wird dafuer kein Adapter gebaut.
+
+Unterschied, der zaehlt: bei Swap v1 signieren und senden **wir**, im
+Zielmodell sendet der Anbieter. Das verschiebt die Signer-Grenze — und die
+bleibt unveraendert, solange der Vertrag nicht verifiziert ist.
+
+Siehe [`../PROVIDER-INTEGRATION-PLAN.md`](../PROVIDER-INTEGRATION-PLAN.md),
+Abschnitt „Jupiter: LEGACY / VERIFIED gegen TARGET / NOT YET VERIFIED".
+
+Unten steht ausschliesslich das aus Swap **v1** Verifizierte.
 **Quelle:** `https://raw.githubusercontent.com/jup-ag/jupiter-quote-api-node/main/swagger.yaml`
 — OpenAPI 3.0.2, `info.title: "Swap API"`, `info.version: 1.0.0`, Hersteller-eigenes Repository
 **Geprüft am:** 2026-08-30
