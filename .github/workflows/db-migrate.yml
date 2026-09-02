@@ -1,0 +1,95 @@
+name: Datenbank migrieren
+
+# Ausschliesslich von Hand ausloesbar.
+#
+# Kein `push`-Trigger, und das ist Absicht: Migrationen bei jedem Commit
+# automatisch zu fahren heisst, ein Schema zu aendern, ohne dass jemand
+# hinsieht. Der Lauf ist additiv und idempotent, aber „idempotent" ist kein
+# Grund, ihn unbeaufsichtigt laufen zu lassen.
+on:
+  workflow_dispatch:
+    inputs:
+      bestaetigung:
+        description: 'Zum Bestaetigen "MIGRATE" eintippen'
+        required: true
+        default: ""
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    # 10 Minuten reichen weit; ein Lauf, der laenger braucht, haengt.
+    timeout-minutes: 10
+
+    steps:
+      - name: Bestaetigung pruefen
+        run: |
+          if [ "${{ inputs.bestaetigung }}" != "MIGRATE" ]; then
+            echo "Abbruch: Bestaetigung fehlt oder ist falsch geschrieben." >&2
+            echo 'Erwartet wird exakt MIGRATE (Grossbuchstaben).' >&2
+            exit 1
+          fi
+          echo "Bestaetigt."
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Endpunkt pruefen
+        env:
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          if [ -z "$DATABASE_URL_DIRECT" ]; then
+            echo "Das Secret DATABASE_URL_DIRECT ist nicht gesetzt." >&2
+            echo "Anzulegen unter: Settings -> Secrets and variables -> Actions." >&2
+            exit 1
+          fi
+          # Der Wert wird nie ausgegeben — geprueft wird nur seine Form.
+          case "$DATABASE_URL_DIRECT" in
+            *-pooler*)
+              echo "Abbruch: der Endpunkt enthaelt '-pooler'." >&2
+              echo "Migrationen gehoeren auf die DIREKTE Verbindung." >&2
+              echo "DDL ueber einen Transaction-Mode-Pooler ist nicht zuverlaessig." >&2
+              exit 1 ;;
+          esac
+          echo "Direkter Endpunkt, Form in Ordnung."
+
+      - name: Migrationen anwenden
+        env:
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: pnpm --filter @sae/db exec drizzle-kit migrate
+
+      - name: Ergebnis pruefen
+        env:
+          # Der Smoke-Test liest nur. `--write` waere auf einer produktiven
+          # Datenbank unnoetiges Risiko.
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: pnpm --filter @sae/worker smoke:infra
+
+      - name: Zusammenfassung
+        if: always()
+        run: |
+          {
+            echo "## Datenbank-Migration"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "Durchgelaufen. Erwartet waren 10 Migrationen, 61 Tabellen"
+              echo "und 7 scharfe Sicherheits-Constraints — die Ausgabe des"
+              echo "Schritts \"Ergebnis pruefen\" zeigt, was tatsaechlich da ist."
+              echo ""
+              echo "Die Vercel-Seite sollte jetzt WAITING FOR LIVE MARKET DATA zeigen."
+            else
+              echo "Fehlgeschlagen. Der Schritt, der rot ist, sagt warum."
+              echo ""
+              echo "Haeufigste Ursachen:"
+              echo "- Secret DATABASE_URL_DIRECT fehlt oder ist veraltet (Passwort rotiert?)"
+              echo "- Gepoolter statt direkter Endpunkt eingetragen"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

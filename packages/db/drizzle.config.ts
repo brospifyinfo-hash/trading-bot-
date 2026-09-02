@@ -1,5 +1,7 @@
 import { defineConfig } from "drizzle-kit";
 
+import { sanitizeConnectionString } from "./src/connection-string";
+
 /**
  * Migrationen laufen ueber die DIREKTE Verbindung, nicht ueber den Pooler.
  *
@@ -11,7 +13,22 @@ import { defineConfig } from "drizzle-kit";
  * Deshalb `DATABASE_URL_DIRECT` zuerst. Fehlt er, gilt `DATABASE_URL` — richtig
  * fuer einen einzelnen Postgres ohne Pooler davor, etwa lokal.
  */
-const url = process.env["DATABASE_URL_DIRECT"] ?? process.env["DATABASE_URL"];
+const raw = process.env["DATABASE_URL_DIRECT"] ?? process.env["DATABASE_URL"];
+
+/**
+ * Dieselbe Bereinigung wie zur Laufzeit — und zwar aus einem echten Fehlschlag
+ * heraus.
+ *
+ * `drizzle-kit` laeuft NICHT durch `createDatabase()`, sondern baut sich seine
+ * Verbindung selbst aus dieser Konfiguration. Die Bereinigung dort half hier
+ * also nichts: mit einer Neon-Zeichenfolge brach schon der Migrationslauf ab
+ * mit `unrecognized configuration parameter "channel_binding"`.
+ *
+ * Zwei Wege zur Datenbank heissen zwei Stellen, an denen dieselbe Bereinigung
+ * gebraucht wird. Deshalb liegt sie in einem eigenen Modul ohne
+ * Abhaengigkeiten, das beide importieren.
+ */
+const url = raw === undefined ? undefined : sanitizeConnectionString(raw);
 
 if (url === undefined || url.length === 0) {
   throw new Error(
