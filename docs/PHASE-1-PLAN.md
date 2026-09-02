@@ -78,7 +78,7 @@ Am Ende von Phase 1 läuft: `docker compose up` → Postgres + Redis + leerer Wo
 | `src/pit/backtest-reader.ts` | Implementierung mit hartem `WHERE observed_at <= asOf` |
 | `src/pit/__tests__/no-look-ahead.test.ts` | **Der zentrale Test:** legt Datensätze vor und nach `asOf` an und beweist, dass die späteren nie zurückkommen |
 | `migrations/0000_init.sql` | Initiales Schema inkl. Indizes aus Architektur §5.3 |
-| `migrations/0001_timescale.sql` | Hypertables + Retention/Compression (separat, damit ohne Timescale betreibbar) |
+| `optional/timescale.sql` | Hypertables + Retention/Compression — **keine Migration**, wird von Hand angewendet (siehe `packages/db/optional/README.md`) |
 | `src/seed/wallet-labels.ts` | Startliste bekannter CEX-/Bridge-/Router-/Burn-Adressen. **Ohne diese Liste ist Clustering wertlos** (Architektur §13.4) |
 
 ### E. `packages/simulation` — das eine Kostenmodell

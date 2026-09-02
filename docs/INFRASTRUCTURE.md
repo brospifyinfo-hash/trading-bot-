@@ -370,10 +370,11 @@ Extension installiert: `plpgsql`, die Vorgabe. `gen_random_uuid()` ist seit
 PostgreSQL 13 im Kern und braucht kein `pgcrypto`. Keine Migration enthält ein
 `CREATE EXTENSION`.
 
-TimescaleDB unterstützt Neon **nicht**. Das ist folgenlos: `0001_timescale.sql`
-steht ohnehin nicht im Journal (siehe Abschnitt 7) und ist zusätzlich
-selbstsichernd — ohne die Erweiterung tut sie nichts. Das System läuft ohne sie
-mit denselben Indizes, nur langsamer bei sehr grossen Zeiträumen.
+TimescaleDB unterstützt Neon **nicht**. Das ist folgenlos: die betreffende
+Datei liegt nicht mehr im Migrationsordner, sondern als
+`packages/db/optional/timescale.sql` — sie war nie eine Migration (siehe
+`DECISIONS.md`, Entscheidung 78). Das System läuft ohne sie mit denselben
+Indizes, nur langsamer bei sehr grossen Zeiträumen.
 
 **Bestehende Daten:** `drizzle-kit migrate` ist additiv und vorwärts-only. Es
 löscht nichts. Ein zweiter Lauf gegen denselben Stand ist ein No-Op — verifiziert.
@@ -408,13 +409,9 @@ bzw. `LIVE_TRADING_DISABLED`.
 
 Kein Blocker, aber dokumentiert statt versteckt:
 
-1. **`0001_timescale.sql` steht nicht im Migrations-Journal.** Die Datei ist
-   selbstsichernd (sie tut ohne die TimescaleDB-Erweiterung nichts), wird von
-   `drizzle-kit migrate` aber auch dann nicht ausgeführt, wenn die Erweiterung
-   später installiert wird. Wer Timescale einsetzen will, führt sie von Hand aus.
-2. **`adapterImplemented: false` für DexScreener.** Der Adapter existiert seit
+1. **`adapterImplemented: false` für DexScreener.** Der Adapter existiert seit
    der letzten Runde; das Flag bleibt `false`, weil er ohne geprüften Vertrag
    keine Daten liefern darf. Das Verhalten ist richtig, der Feldname ungenau.
-3. **Kein Build-Schritt.** Alle Pakete exportieren TypeScript-Quellen, `tsx`
+2. **Kein Build-Schritt.** Alle Pakete exportieren TypeScript-Quellen, `tsx`
    führt sie direkt aus. Das hält Test- und Betriebscode identisch, kostet aber
    Startzeit und bindet `tsx` in den Betrieb ein.

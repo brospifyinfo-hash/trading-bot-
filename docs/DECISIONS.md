@@ -18,7 +18,7 @@ weitergebaut — mit folgenden Annahmen, die alle konfigurierbar sind:
 | 3 | Hosting | VPS + Docker Compose | `docker/docker-compose.yml` | Bei Managed-Hosting entfällt die Compose-Topologie, die Netztrennung muss anders abgebildet werden |
 | 4 | Zeithorizont | Minuten bis Stunden | `watchlistRescoreIntervalSeconds: 60` | Kürzerer Horizont vervielfacht die RPC-Kosten |
 | 5 | Solana-Bibliothek | **noch nicht festgelegt** | Signer-Policy arbeitet auf einer normalisierten Struktur, nicht auf Rohbytes | Entscheidung in Phase 2 nach Prüfung der aktuellen Doku; der Adapter ist der einzige betroffene Ort |
-| 6 | Timescale | ja, mit Rückfallebene | `migrations/0001_timescale.sql` ist optional | Ohne Extension läuft alles weiter, nur langsamer |
+| 6 | Timescale | ja, mit Rückfallebene | `optional/timescale.sql`, keine Migration | Ohne Extension läuft alles weiter, nur langsamer |
 
 **Zur Zahl 25.000 $:** Sie ist eine Ableitung, keine Messung. Bei 3 % von 1.000 €
 sind das ~30 € Position; der geforderte Kapazitätsfaktor 3 bei 2 % Impact-Grenze
@@ -1517,3 +1517,31 @@ und die `execution`-Rolle ein leerer Platzhalter bleibt. Es ist aber eine
 
 Aufgeschrieben statt gelöscht, weil eine Absicht, die nur in totem Code stand,
 beim nächsten Aufräumen endgültig verschwunden wäre.
+
+
+## 78. Eine Datei, die wie eine Migration aussah und nie eine war
+
+`migrations/0001_timescale.sql` lag im Migrationsordner, stand aber nicht in
+`meta/_journal.json`. Drizzle liest ausschliesslich das Journal — die Datei
+wurde also nie ausgefuehrt, sah aber in jedem Verzeichnislisting wie ein
+angewendeter Schritt aus. Zweimal hat das zu der Frage gefuehrt, ob das Schema
+vollstaendig ist.
+
+**Sie nachtraeglich ins Journal aufzunehmen waere die schlechtere Loesung
+gewesen.** Drizzle wendet eine Migration genau dann an, wenn
+
+    letzte_angewendete.created_at < migration.when
+
+Ein Eintrag mit einem `when` zwischen `0000_init` und `0002_opportunities`
+haette auf einer frischen Datenbank mitlaufen muessen und auf einer bereits
+migrierten nie — `1788262311821 < 1788132972903` ist falsch. Frische und
+bestehende Datenbanken waeren dauerhaft auseinandergelaufen, unbemerkt. Ein
+Schema-Unterschied, den niemand sieht, ist schlimmer als ein fehlendes Feature.
+
+Deshalb liegt die Datei jetzt als `packages/db/optional/timescale.sql` neben
+einem README, das sagt, wann und wie man sie von Hand anwendet. Sie ist kein
+Migrationsschritt, sondern eine Betriebsmassnahme mit einer Voraussetzung
+(`CREATE EXTENSION timescaledb`), die auf Neon ohnehin nicht erfuellbar ist.
+
+Der Ordner `migrations/` enthaelt seither genau so viele SQL-Dateien wie das
+Journal Eintraege hat. Diese Gleichheit ist pruefbar und wird geprueft.

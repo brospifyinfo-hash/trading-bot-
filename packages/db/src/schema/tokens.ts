@@ -74,7 +74,7 @@ export const tokenPools = pgTable(
  * gewusst haben wir sie trotzdem erst zu `observedAt`.
  *
  * In Produktion ist diese Tabelle eine Timescale-Hypertable (siehe
- * migrations/0001_timescale.sql). Ohne die Extension laeuft sie als normale
+ * optional/timescale.sql). Ohne die Extension laeuft sie als normale
  * Tabelle mit demselben Index — nur langsamer.
  */
 export const tokenSnapshots = pgTable(
