@@ -1,7 +1,7 @@
 import { loadDashboardState, type Panel } from "@sae/db";
 
 import { db } from "@/lib/db";
-import { checkWebEnv, type WebReadiness } from "@/lib/readiness";
+import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/readiness";
 
 import { BotStatusBar } from "@/components/BotStatusBar";
 
@@ -72,14 +72,19 @@ function NotReady({ readiness }: { readonly readiness: WebReadiness }): React.Re
         <h1>
           {readiness.kind === "ENV_INCOMPLETE"
             ? "NICHT KONFIGURIERT"
-            : "DATENBANK NICHT ERREICHBAR"}
+            : readiness.kind === "SCHEMA_MISSING"
+              ? "MIGRATIONEN FEHLEN"
+              : "DATENBANK NICHT ERREICHBAR"}
         </h1>
         <p>
           {readiness.kind === "ENV_INCOMPLETE"
             ? "Dieser Instanz fehlt Konfiguration. Solange sie fehlt, wird nichts angezeigt — " +
               "eine Oberflaeche mit Platzhalterzahlen waere schlimmer als eine leere."
-            : "Die Konfiguration ist vollstaendig, aber die Datenbank antwortet nicht. " +
-              "Das ist kein Marktdatenproblem: ohne Datenbank ist keine Aussage moeglich."}
+            : readiness.kind === "SCHEMA_MISSING"
+              ? "Die Datenbank antwortet, aber sie ist leer: die Migrationen sind noch nicht " +
+                "gefahren. Das ist kein Verbindungsproblem — es fehlt genau ein Befehl."
+              : "Die Konfiguration ist vollstaendig, aber die Datenbank antwortet nicht. " +
+                "Das ist kein Marktdatenproblem: ohne Datenbank ist keine Aussage moeglich."}
         </p>
       </section>
 
@@ -103,13 +108,24 @@ function NotReady({ readiness }: { readonly readiness: WebReadiness }): React.Re
                 ))}
               </tbody>
             </table>
+          ) : readiness.kind === "SCHEMA_MISSING" ? (
+            <p className="placeholder">
+              <strong>SCHEMA LEER</strong>
+              <br />
+              Die Verbindung steht. Es fehlen die Tabellen. Einmal ausfuehren, gegen den
+              DIREKTEN Neon-Endpunkt (Host ohne <code>-pooler</code>):
+              <br />
+              <code>DATABASE_URL_DIRECT=&lt;neon-direkt&gt; pnpm db:deploy</code>
+              <br />
+              Der Lauf ist additiv und loescht nichts; ein zweiter Lauf ist ein No-Op.
+            </p>
           ) : (
             <p className="placeholder">
               <strong>KEINE VERBINDUNG</strong>
               <br />
               Die Verbindungszeichenfolge wird hier bewusst nicht angezeigt — sie enthaelt
-              ein Passwort. Zu pruefen ist, ob die Datenbank laeuft, ob die Migrationen
-              gefahren wurden und ob der gepoolte Endpunkt eingetragen ist.
+              ein Passwort. Zu pruefen ist, ob die Datenbank laeuft und ob der eingetragene
+              Endpunkt stimmt.
             </p>
           )}
         </section>
@@ -138,10 +154,11 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
   try {
     // Modulebene statt Request-Handler: siehe lib/db.ts.
     state = await loadDashboardState({ db: db(), now: new Date() });
-  } catch {
-    // Der Fehler wird bewusst nicht gebunden: eine Postgres-Fehlermeldung
-    // enthaelt die Verbindungszeichenfolge samt Passwort.
-    return <NotReady readiness={{ kind: "DATABASE_UNREACHABLE" }} />;
+  } catch (error: unknown) {
+    // Der Fehler wird nur klassifiziert, nie ausgegeben: eine
+    // Postgres-Fehlermeldung enthaelt die Verbindungszeichenfolge samt Passwort.
+    // `classifyDatabaseFailure` liest ausschliesslich den SQLSTATE-Code.
+    return <NotReady readiness={{ kind: classifyDatabaseFailure(error) }} />;
   }
 
   return (

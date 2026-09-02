@@ -66,6 +66,29 @@ entfernt — Begründung und die dabei gerettete Retry-Politik stehen in
 `DECISIONS.md`, Entscheidung 77. Sie brauchen auf Railway **keinen**
 Redis-Dienst.
 
+### 2.0 `channel_binding` in der Neon-Zeichenfolge
+
+Neon haengt an seine Verbindungszeichenfolgen standardmaessig
+`?sslmode=require&channel_binding=require`. Der zweite Parameter hat die
+Verbindung von Vercel aus verhindert:
+
+`postgres-js` sammelt alle Query-Parameter ein, behandelt die ihm bekannten
+(`sslmode` wird zu `ssl`) und legt **alle uebrigen** in `connection` — von dort
+gehen sie als Startup-Parameter an den Server. PostgreSQL antwortet auf
+`channel_binding` mit
+
+    unrecognized configuration parameter "channel_binding"
+
+und die Verbindung kommt gar nicht erst zustande. Gegen ein echtes PostgreSQL 16
+reproduziert.
+
+`createDatabase()` entfernt diesen und die uebrigen libpq-**Client**-Optionen
+deshalb selbst (`sanitizeConnectionString`, `packages/db/src/client.ts`). Das
+ist kein Sicherheitsverlust: `sslmode` bleibt unangetastet, die Verbindung
+bleibt verschluesselt. Nur in der Plattform wegzuloeschen haette nicht
+gereicht — die Neon-Vercel-Integration traegt die Zeichenfolge bei der naechsten
+Provisionierung unveraendert wieder ein.
+
 ### 2.1 Die zwei Neon-Endpunkte
 
 Eine Datenbank, zwei Verbindungszeichenfolgen. Neon zeigt beide im Dashboard:

@@ -27,7 +27,9 @@ export type WebReadiness =
   | { readonly kind: "READY" }
   /** Namen der fehlenden oder ungueltigen Variablen — niemals ihre Werte. */
   | { readonly kind: "ENV_INCOMPLETE"; readonly problems: readonly EnvProblem[] }
-  | { readonly kind: "DATABASE_UNREACHABLE" };
+  | { readonly kind: "DATABASE_UNREACHABLE" }
+  /** Verbunden, aber die Migrationen sind nicht gefahren. */
+  | { readonly kind: "SCHEMA_MISSING" };
 
 export interface EnvProblem {
   readonly variable: string;
@@ -60,4 +62,30 @@ export function checkWebEnv(
       detail: issue.message,
     })),
   };
+}
+
+/**
+ * Verbunden-aber-leer von gar-nicht-verbunden unterscheiden.
+ *
+ * Beides fuehlte sich vorher gleich an: die Seite meldete
+ * „DATENBANK NICHT ERREICHBAR", auch wenn die Verbindung stand und nur die
+ * Migrationen fehlten. Das schickt die Fehlersuche in die falsche Richtung —
+ * man prueft Netz, Zugangsdaten und Endpunkt, waehrend in Wahrheit ein
+ * einziger Befehl fehlt.
+ *
+ * Klassifiziert wird ueber den SQLSTATE-Code, nicht ueber den Meldungstext:
+ * ein Text ist uebersetzbar und aenderbar, ein Code nicht. Die Meldung selbst
+ * wird bewusst nicht angefasst — sie enthaelt die Verbindungszeichenfolge.
+ */
+export function classifyDatabaseFailure(
+  error: unknown,
+): "DATABASE_UNREACHABLE" | "SCHEMA_MISSING" {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { readonly code: unknown }).code)
+      : "";
+
+  // 42P01 undefined_table, 3F000 invalid_schema_name.
+  // Beide heissen: der Server hat geantwortet, aber das Schema fehlt.
+  return code === "42P01" || code === "3F000" ? "SCHEMA_MISSING" : "DATABASE_UNREACHABLE";
 }
