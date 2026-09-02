@@ -15,13 +15,13 @@ Vercel kommunizieren) steht in [`DEPLOYMENT.md`](DEPLOYMENT.md).
 |---|---|---|
 | GitHub-Repository | **READY** | `main` sauber, synchron, einziger Branch |
 | PostgreSQL-Schema | **READY** | 10 Migrationen gegen echtes PG 16 angewendet: 61 Tabellen, 158 Indizes, 34 CHECK-Constraints. Zweitlauf ist ein No-Op |
-| Neon-Projekt | **BLOCKED** | Kein Neon-Zugang, `console.neon.tech` per Egress gesperrt. Migrationspfad auf den Direktendpunkt umgestellt und verifiziert |
+| Neon-Projekt | **PARTIALLY READY** | Projekt existiert und ist mit Vercel verbunden. Migrationen noch nicht gefahren — der Neon-Host ist von der Entwicklungsumgebung aus nicht erreichbar (TCP 5432 zu, der Egress-Proxy spricht nur HTTP). Ein Befehl, siehe 6b |
 | Persistente Stores | **READY** | Schreiben + Zurücklesen + Rollback über den Produktionstreiber `postgres-js` geprüft |
 | Worker (startfähig) | **READY** | `scheduler`, `provider-health`, `consumer` gestartet, `/ready` → 200, Queue-Zeilen geschrieben |
 | Worker-Host (Railway) | **BLOCKED** | Kein Railway-Zugang. `Dockerfile.worker` + `railway/*.json` liegen bereit; der Dateisatz des Images wurde nachgestellt und der Worker daraus gestartet, das Image selbst ist **ungebaut** |
 | Web-Build | **READY** | `pnpm --filter @sae/web build` erfolgreich, 5 Routen |
 | Web zur Laufzeit | **READY** | Gegen echte Datenbank gestartet, `/api/health` → 200, `/api/diagnostics/providers` → 503 mit echten Daten |
-| Vercel-Projekt | **BLOCKED** | Kein Token, kein CLI, `api.vercel.com` per Egress gesperrt. Root Directory muss auf `apps/web` gesetzt werden — der erste Deploy scheiterte an der Framework-Erkennung, siehe Abschnitt 6 |
+| Vercel-Projekt | **PARTIALLY READY** | Projekt `trading-bot-web-nine` deployt. Root Directory `apps/web`, `outputDirectory` auf `.next` festgeschrieben. Fehlende Variablen zeigt die Startseite selbst an |
 | Resend | **PARTIALLY READY** | Adapter und Bestätigungskette implementiert und getestet; kein API-Schlüssel, also nie ein echter Versand |
 | Marktdaten | **BLOCKED** | Kein Anbieter erreichbar. DexScreener-Adapter vorhanden, Response-Vertrag `UNVERIFIED`, Host per Egress gesperrt |
 | Live Trading | **AUS (gewollt)** | Signer antwortet auf jede Signieranfrage mit 501, `execution`-Rolle ist ein leerer Platzhalter |
@@ -346,23 +346,27 @@ aus der Verbindungszeichenfolge aus. Angezeigt werden nur Variablennamen.
 
 ## 6b. Neon: was einzurichten ist
 
-Eine Datenbank für beide Umgebungen — kein getrenntes Vercel- und
-Railway-Schema. Der Unterschied liegt nur im Endpunkt (siehe 2.1).
+**Ein Befehl.** Er wendet die Migrationen an und prueft anschliessend das
+Ergebnis:
 
-1. Projekt anlegen, Region **Europa** (nah an Vercel `fra1`).
-2. Aus dem Dashboard **beide** Connection Strings kopieren: den gepoolten
-   (Host mit `-pooler`) und den direkten (ohne).
-3. Migrationen einmal von der eigenen Maschine fahren:
-   ```bash
-   DATABASE_URL_DIRECT=<neon-direkt> pnpm --filter @sae/db exec drizzle-kit migrate
-   ```
-4. Prüfen, dass wirklich alles da ist:
-   ```bash
-   DATABASE_URL=<neon-direkt> pnpm --filter @sae/worker smoke:infra
-   ```
-   Erwartet: 10 Migrationen, alle benötigten Tabellen, alle 7
-   Sicherheits-Constraints scharf, und Check 5 belegt, dass eines davon
-   tatsächlich auslöst.
+```bash
+DATABASE_URL_DIRECT='<neon-direkt>' pnpm db:deploy
+```
+
+Der direkte Endpunkt ist der Neon-Host **ohne** `-pooler`. Das Skript bricht ab,
+wenn es `-pooler` in der Zeichenfolge findet — DDL ueber einen
+Transaction-Mode-Pooler ist nicht zuverlaessig, und lieber nichts tun als das.
+
+Die Verbindungszeichenfolge wird nie ausgegeben, auch nicht im Fehlerfall: jede
+Ausgabe der Werkzeuge laeuft durch einen Filter, der sie und ihr Passwort
+ersetzt. Eine Postgres-Fehlermeldung enthaelt sonst beides. Geprueft mit einem
+erzwungenen Verbindungsfehler.
+
+Erwartete Ausgabe: `10 angewendet`, `61 Tabellen`, `Alle 7 scharf`,
+`Gesamt: OK`. Punkt 7 meldet `WARN` — kein Anbieter verifiziert, korrekt
+solange keine Marktdaten fliessen.
+
+Der Lauf ist additiv und loescht nichts; ein zweiter Lauf ist ein No-Op.
 
 **Extensions: keine nötig.** Nachgeprüft, nicht angenommen — nach dem
 vollständigen Migrationslauf gegen ein nacktes PostgreSQL 16 war genau eine

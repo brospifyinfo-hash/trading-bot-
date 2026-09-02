@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "pnpm --filter @sae/db exec drizzle-kit generate",
-    "check": "pnpm typecheck && pnpm lint && pnpm test"
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "db:deploy": "./scripts/db-deploy.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
