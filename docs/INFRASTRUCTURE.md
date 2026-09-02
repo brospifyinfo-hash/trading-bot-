@@ -271,6 +271,50 @@ echten Smoke-Test mit 2xx bestanden hat.
 
 ---
 
+## 6a. Auf Vercel gehoert genau EIN Projekt
+
+**Nur `apps/web`.** Kein zweites Projekt fuer `apps/signer`, keins fuer
+`apps/worker`.
+
+Das ist bereits einmal passiert: ein Vercel-Projekt zeigte auf `apps/signer` und
+lieferte bei jedem Aufruf HTTP 500 mit
+
+> Ungueltige Umgebungskonfiguration: SIGNER_KEY_FILE: Required, …
+
+Der Signer scheiterte dort also korrekt — aber die Meldung liest sich wie eine
+Aufforderung, die Variablen nachzutragen. Genau das waere die gefaehrlichste
+Reaktion gewesen: die Konfiguration des schluesselhaltenden Dienstes auf eine
+oeffentlich erreichbare Plattform zu legen.
+
+Seither bricht der Signer auf Vercel **vor** der Env-Pruefung ab und sagt, was
+zu tun ist (`assertNotServerless`, `packages/config/src/runtime.ts`). Der Worker
+ebenso. Die Pruefung ersetzt keine Plattformkonfiguration — sie sorgt dafuer,
+dass ein falsches Deployment eine richtige Fehlermeldung erzeugt.
+
+| App | Vercel? | Wohin dann |
+|---|---|---|
+| `apps/web` | **ja**, Root Directory `apps/web` | — |
+| `apps/worker` | **nein** | Railway, siehe Abschnitt 5 |
+| `apps/signer` | **nein** | eigener, nicht oeffentlich erreichbarer Host — heute gar nicht |
+
+### Was die Web-App ohne Neon tut
+
+Nachgestellt, nicht vermutet — `DATABASE_URL` ungesetzt:
+
+| Endpunkt | Status | Antwort |
+|---|---|---|
+| `/api/health` | **200** | `{"status":"ok"}` — beruehrt die Datenbank nicht |
+| `/api/diagnostics/providers` | **500** | `{"headline":"DIAGNOSTICS_UNAVAILABLE","detail":"Datenbank nicht erreichbar."}` |
+
+Das ist der erwartete Zustand vor der Neon-Einrichtung und kein Fehler. Die
+Env-Pruefung der Web-App laeuft in `db()`, nicht auf Modulebene — deshalb
+stuerzt die App nicht ab, sondern nur der Endpunkt, der die Datenbank
+tatsaechlich braucht. Die Fehlermeldung enthaelt bewusst keine
+Verbindungszeichenfolge.
+
+Sobald `DATABASE_URL` gesetzt ist, wird daraus 503 (kein Anbieter verifiziert)
+und schliesslich 200.
+
 ## 6b. Neon: was einzurichten ist
 
 Eine Datenbank für beide Umgebungen — kein getrenntes Vercel- und

@@ -1,4 +1,4 @@
-import { loadEnv, workerEnvSchema, type WorkerRole } from "@sae/config";
+import { assertNotServerless, loadEnv, workerEnvSchema, type WorkerRole } from "@sae/config";
 import { createLogger } from "@sae/observability";
 import { Lifecycle } from "./lifecycle";
 import { startHealthServer } from "./health";
@@ -40,6 +40,18 @@ const ROLES: Record<WorkerRole, RoleHandler> = {
 };
 
 async function main(): Promise<void> {
+  // Vor allem anderen: ein Worker auf einer Serverless-Plattform haette weder
+  // einen Takt noch eine gehaltene Frist noch einen Pool, der laenger lebt als
+  // die Anfrage. Er wuerde laufen und dabei das Falsche tun.
+  assertNotServerless({
+    component: "Der Worker",
+    reason:
+      "Er braucht einen durchgehenden Takt, haelt Auftragsfristen ueber Minuten " +
+      "und einen Verbindungspool, der laenger lebt als eine Anfrage. Eine " +
+      "Serverless-Funktion endet, sobald die Antwort raus ist.",
+    belongsOn: "Railway (siehe railway/README.md) oder einen anderen Container-Host",
+  });
+
   const env = loadEnv(workerEnvSchema, process.env);
   const logger = createLogger({ service: `worker:${env.WORKER_ROLE}`, level: env.LOG_LEVEL });
   const lifecycle = new Lifecycle(logger);

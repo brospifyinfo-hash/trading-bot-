@@ -1,6 +1,6 @@
 import { createServer } from "node:https";
 import { readFileSync } from "node:fs";
-import { loadEnv, signerEnvSchema } from "@sae/config";
+import { assertNotServerless, loadEnv, signerEnvSchema } from "@sae/config";
 import { createLogger } from "@sae/observability";
 import { PolicyViolation } from "@sae/core";
 import { SignerPolicy, type SignRequest } from "./policy";
@@ -17,6 +17,17 @@ import { SignerPolicy, type SignRequest } from "./policy";
  * antwortet der Dienst auf eine policy-konforme Anfrage mit 501 — bewusst, statt
  * eine halbe Signierlogik einzubauen, die niemand geprueft hat.
  */
+
+// VOR der Env-Validierung: sonst gewinnt "SIGNER_KEY_FILE: Required", und das
+// liest sich wie eine Aufforderung, die Variablen nachzutragen.
+assertNotServerless({
+  component: "Der Signer",
+  reason:
+    "Er haelt den privaten Schluessel, ist ausschliesslich ueber mTLS im internen " +
+    "Netz erreichbar und setzt harte Abflussgrenzen durch. Auf einer oeffentlich " +
+    "erreichbaren Serverless-Plattform ist nichts davon herstellbar.",
+  belongsOn: "einen eigenen, nicht oeffentlich erreichbaren Host",
+});
 
 const env = loadEnv(signerEnvSchema, process.env);
 const logger = createLogger({ service: "signer", level: env.LOG_LEVEL });
