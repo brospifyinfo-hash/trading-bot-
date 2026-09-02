@@ -299,21 +299,29 @@ dass ein falsches Deployment eine richtige Fehlermeldung erzeugt.
 
 ### Was die Web-App ohne Neon tut
 
-Nachgestellt, nicht vermutet — `DATABASE_URL` ungesetzt:
+Drei Zustaende, alle drei nachgestellt und gemessen — nicht vermutet:
 
-| Endpunkt | Status | Antwort |
-|---|---|---|
-| `/api/health` | **200** | `{"status":"ok"}` — beruehrt die Datenbank nicht |
-| `/api/diagnostics/providers` | **500** | `{"headline":"DIAGNOSTICS_UNAVAILABLE","detail":"Datenbank nicht erreichbar."}` |
+| Zustand | `/` | Ueberschrift | `/api/health` | `/api/diagnostics/providers` |
+|---|---|---|---|---|
+| Keine Variablen gesetzt | **200** | `NICHT KONFIGURIERT` + Namen der fehlenden Variablen | 200 | 500 |
+| Variablen gesetzt, Datenbank nicht erreichbar | **200** | `DATENBANK NICHT ERREICHBAR` | 200 | 500 |
+| Datenbank erreichbar, kein Anbieter | **200** | `WAITING FOR LIVE MARKET DATA` | 200 | **503** |
 
-Das ist der erwartete Zustand vor der Neon-Einrichtung und kein Fehler. Die
-Env-Pruefung der Web-App laeuft in `db()`, nicht auf Modulebene — deshalb
-stuerzt die App nicht ab, sondern nur der Endpunkt, der die Datenbank
-tatsaechlich braucht. Die Fehlermeldung enthaelt bewusst keine
-Verbindungszeichenfolge.
+Diese drei duerfen nicht vermischt werden. `WAITING FOR LIVE MARKET DATA`
+bedeutet: die Datenbank antwortet, es fehlt nur ein Anbieter. Denselben Satz bei
+ausgefallener Datenbank anzuzeigen waere die bequeme Luege — er sieht nach
+Betrieb aus und verdeckt, dass das System nicht einmal lesen kann.
 
-Sobald `DATABASE_URL` gesetzt ist, wird daraus 503 (kein Anbieter verifiziert)
-und schliesslich 200.
+**Vorher stuerzte `/` ab.** Das Dashboard rief `db()` auf, das validierte die
+Umgebung und warf; eine Server-Komponente ohne Fehlergrenze macht daraus
+Next.js' Sammelmeldung „Application error: a server-side exception has
+occurred" — HTTP 500, ohne jeden Hinweis auf die Ursache. Jetzt prueft die Seite
+die Konfiguration vor dem Datenbankzugriff (`apps/web/lib/readiness.ts`) und
+faengt einen Verbindungsfehler ab. `apps/web/app/error.tsx` faengt zusaetzlich
+alles Uebrige.
+
+Gemessen und geprueft: weder die Seite noch das Server-Log geben das Passwort
+aus der Verbindungszeichenfolge aus. Angezeigt werden nur Variablennamen.
 
 ## 6b. Neon: was einzurichten ist
 

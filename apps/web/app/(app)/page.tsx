@@ -1,6 +1,7 @@
 import { loadDashboardState, type Panel } from "@sae/db";
 
 import { db } from "@/lib/db";
+import { checkWebEnv, type WebReadiness } from "@/lib/readiness";
 
 import { BotStatusBar } from "@/components/BotStatusBar";
 
@@ -53,9 +54,92 @@ const STATUS_LABEL: Record<string, string> = {
   NOT_CONFIGURED: "NOT CONFIGURED",
 };
 
+/**
+ * Was angezeigt wird, wenn die Instanz nicht lesen kann.
+ *
+ * Ausdruecklich NICHT „WAITING FOR LIVE MARKET DATA": dieser Satz bedeutet, die
+ * Datenbank antwortet und es fehlt nur ein Anbieter. Ihn bei ausgefallener
+ * Datenbank zu zeigen waere die bequeme Luege — sie sieht nach Betrieb aus und
+ * verdeckt, dass das System nicht einmal lesen kann.
+ */
+function NotReady({ readiness }: { readonly readiness: WebReadiness }): React.ReactNode {
+  return (
+    <>
+      <section className="headline" data-connected={false}>
+        <h1>
+          {readiness.kind === "ENV_INCOMPLETE"
+            ? "NICHT KONFIGURIERT"
+            : "DATENBANK NICHT ERREICHBAR"}
+        </h1>
+        <p>
+          {readiness.kind === "ENV_INCOMPLETE"
+            ? "Dieser Instanz fehlt Konfiguration. Solange sie fehlt, wird nichts angezeigt — " +
+              "eine Oberflaeche mit Platzhalterzahlen waere schlimmer als eine leere."
+            : "Die Konfiguration ist vollstaendig, aber die Datenbank antwortet nicht. " +
+              "Das ist kein Marktdatenproblem: ohne Datenbank ist keine Aussage moeglich."}
+        </p>
+      </section>
+
+      <main className="workspace">
+        <section className="panel">
+          <h2>Was fehlt</h2>
+          {readiness.kind === "ENV_INCOMPLETE" ? (
+            <table className="providers">
+              <thead>
+                <tr>
+                  <th>Variable</th>
+                  <th>Problem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {readiness.problems.map((p) => (
+                  <tr key={p.variable} data-status="NOT_CONFIGURED">
+                    <td>{p.variable}</td>
+                    <td className="status">{p.detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="placeholder">
+              <strong>KEINE VERBINDUNG</strong>
+              <br />
+              Die Verbindungszeichenfolge wird hier bewusst nicht angezeigt — sie enthaelt
+              ein Passwort. Zu pruefen ist, ob die Datenbank laeuft, ob die Migrationen
+              gefahren wurden und ob der gepoolte Endpunkt eingetragen ist.
+            </p>
+          )}
+        </section>
+
+        <section className="panel">
+          <h2>Naechster Schritt</h2>
+          <p className="placeholder">
+            Siehe <code>docs/INFRASTRUCTURE.md</code>. Pruefen laesst sich der Zustand
+            ohne diese Oberflaeche ueber <code>/api/health</code> (laeuft der Prozess)
+            und <code>/api/diagnostics/providers</code> (kommt das System an Daten).
+          </p>
+        </section>
+      </main>
+    </>
+  );
+}
+
 export default async function DashboardPage(): Promise<React.ReactNode> {
-  // Modulebene statt Request-Handler: siehe lib/db.ts.
-  const state = await loadDashboardState({ db: db(), now: new Date() });
+  // Erst die Konfiguration, dann die Datenbank. Ohne diese Reihenfolge wirft
+  // `db()` beim Validieren, und ein Wurf in einer Server-Komponente wird zu
+  // Next.js' Sammelmeldung „Application error" — die dem Betreiber nichts sagt.
+  const readiness = checkWebEnv();
+  if (readiness.kind !== "READY") return <NotReady readiness={readiness} />;
+
+  let state: Awaited<ReturnType<typeof loadDashboardState>>;
+  try {
+    // Modulebene statt Request-Handler: siehe lib/db.ts.
+    state = await loadDashboardState({ db: db(), now: new Date() });
+  } catch {
+    // Der Fehler wird bewusst nicht gebunden: eine Postgres-Fehlermeldung
+    // enthaelt die Verbindungszeichenfolge samt Passwort.
+    return <NotReady readiness={{ kind: "DATABASE_UNREACHABLE" }} />;
+  }
 
   return (
     <>
