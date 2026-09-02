@@ -21,7 +21,7 @@ Vercel kommunizieren) steht in [`DEPLOYMENT.md`](DEPLOYMENT.md).
 | Worker-Host (Railway) | **BLOCKED** | Kein Railway-Zugang. `Dockerfile.worker` + `railway/*.json` liegen bereit; der Dateisatz des Images wurde nachgestellt und der Worker daraus gestartet, das Image selbst ist **ungebaut** |
 | Web-Build | **READY** | `pnpm --filter @sae/web build` erfolgreich, 5 Routen |
 | Web zur Laufzeit | **READY** | Gegen echte Datenbank gestartet, `/api/health` → 200, `/api/diagnostics/providers` → 503 mit echten Daten |
-| Vercel-Projekt | **BLOCKED** | Kein Token, kein CLI, `api.vercel.com` per Egress gesperrt. Konfiguration geprüft, Verbindung muss manuell erfolgen |
+| Vercel-Projekt | **BLOCKED** | Kein Token, kein CLI, `api.vercel.com` per Egress gesperrt. Root Directory muss auf `apps/web` gesetzt werden — der erste Deploy scheiterte an der Framework-Erkennung, siehe Abschnitt 6 |
 | Resend | **PARTIALLY READY** | Adapter und Bestätigungskette implementiert und getestet; kein API-Schlüssel, also nie ein echter Versand |
 | Marktdaten | **BLOCKED** | Kein Anbieter erreichbar. DexScreener-Adapter vorhanden, Response-Vertrag `UNVERIFIED`, Host per Egress gesperrt |
 | Live Trading | **AUS (gewollt)** | Signer antwortet auf jede Signieranfrage mit 501, `execution`-Rolle ist ein leerer Platzhalter |
@@ -203,19 +203,56 @@ Schritt auf Railway bleibt trotzdem ein Testbau.
 
 ## 6. Vercel: was zu tun ist
 
-`vercel.json` liegt im Wurzelverzeichnis und ist geprüft — der darin
-angegebene Build-Befehl wurde ausgeführt und erzeugt das angegebene
-Ausgabeverzeichnis.
+**Root Directory ist `apps/web` — nicht die Repository-Wurzel.** Das ist die
+einzige Einstellung, die von Hand gesetzt werden muss; alles Weitere erkennt
+Vercel selbst.
+
+Der Grund ist keine Vorliebe, sondern die Reihenfolge in Vercels Build:
+**die Framework-Erkennung liest die `package.json` im Root Directory, und zwar
+bevor der Build-Befehl überhaupt läuft.** Steht dort kein `next`, bricht der
+Deploy ab mit
+
+> No Next.js version detected. Make sure your package.json has next in either
+> dependencies or devDependencies.
+
+Genau das passierte mit Root Directory = Repository-Wurzel: die Wurzel-
+`package.json` führt nur Werkzeuge (TypeScript, ESLint, Vitest, tsx), `next`
+steht in `apps/web/package.json`. `buildCommand` und `outputDirectory` konnten
+daran nichts ändern — sie kommen erst nach der Erkennung zum Zug.
+
+`next` in die Wurzel-`package.json` zu schreiben wäre die falsche Abhilfe: sie
+würde eine Abhängigkeit erfinden, die dort nicht hingehört, und die
+Monorepo-Grenze aufweichen. Richtig ist, Vercel auf das Verzeichnis zu zeigen,
+dessen `package.json` `next` tatsächlich führt.
 
 | Einstellung | Wert | Warum |
 |---|---|---|
-| Root Directory | **Repository-Wurzel** (leer lassen) | `vercel.json` steuert den Build von dort aus |
-| Framework Preset | Next.js | steht in `vercel.json` |
-| Build Command | `pnpm --filter @sae/web build` | aus `vercel.json`, verifiziert |
-| Install Command | `pnpm install --frozen-lockfile` | aus `vercel.json` |
-| Output Directory | `apps/web/.next` | aus `vercel.json`, verifiziert |
+| Root Directory | **`apps/web`** | das Verzeichnis, dessen `package.json` `next` führt |
+| Framework Preset | Next.js | wird jetzt korrekt erkannt; steht zusätzlich in `apps/web/vercel.json` |
+| Build Command | *leer lassen* | Vercel erkennt `next build` |
+| Install Command | *leer lassen* | Vercel installiert den pnpm-Workspace von der Repository-Wurzel aus |
+| Output Directory | *leer lassen* | `.next` relativ zum Root Directory |
 | Node-Version | 22 | `engines` in `package.json` |
-| Region | `fra1` | nah an europäischen Anbietern |
+| Region | `fra1` | aus `apps/web/vercel.json` |
+
+`vercel.json` liegt deshalb in **`apps/web/`**, nicht mehr im Wurzelverzeichnis:
+Vercel liest die Datei aus dem Root Directory. Sie enthält nur noch, was Vercel
+nicht selbst erkennen kann — Region und `maxDuration`. Build-, Install- und
+Ausgabepfad stehen bewusst nicht mehr darin: sie relativ zum neuen Root
+Directory noch einmal festzuschreiben wäre genau die Fehlerquelle, die diesen
+Deploy hat scheitern lassen.
+
+**Die pnpm-Workspace-Abhängigkeiten bleiben dabei intakt.** `apps/web` hängt an
+vier Paketen per `workspace:*` (`@sae/core`, `@sae/config`, `@sae/db`,
+`@sae/observability`); die Lockfile und `pnpm-workspace.yaml` liegen in der
+Repository-Wurzel, und Vercel installiert von dort. Lokal nachgestellt: aus
+`apps/web` heraus lösen alle vier Symlinks korrekt auf, und `pnpm build` von
+dort erzeugt `.next` mit allen fünf Routen einschliesslich beider dynamischer
+API-Routen.
+
+**Der CI-Build ist davon nicht betroffen.** `.github/workflows/ci.yml` ruft
+`pnpm --filter @sae/web build` aus der Repository-Wurzel auf — das funktioniert
+unverändert und wurde nach der Umstellung erneut ausgeführt.
 
 **Es gibt bewusst keine `crons`-Sektion.** Vercel Cron löst höchstens minütlich
 aus, und die Positionsüberwachung eines Memecoins im Minutenraster ist keine

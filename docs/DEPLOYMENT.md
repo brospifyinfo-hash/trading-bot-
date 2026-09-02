@@ -156,11 +156,16 @@ einer Fixture-Gelegenheit.
 
 ### `vercel.json`
 
-Liegt im Repository-Wurzelverzeichnis. Es baut ausschließlich `@sae/web`; die
-Worker sind darin bewusst nicht erwähnt, weil sie dort nicht laufen. **Es gibt
-keine `crons`-Sektion** — Vercel Cron löst höchstens minütlich aus, und die
-Positionsüberwachung eines Memecoins im Minutenraster ist keine Überwachung.
-Der Takt gehört auf den Worker-Host.
+Liegt in **`apps/web/`**, nicht im Wurzelverzeichnis — Vercel liest die Datei
+aus dem Root Directory, und das ist `apps/web` (Begründung in
+`INFRASTRUCTURE.md`, Abschnitt 6: die Framework-Erkennung braucht dort ein
+`package.json` mit `next`).
+
+Die Datei enthält nur, was Vercel nicht selbst erkennen kann: Region und
+`maxDuration`. Die Worker sind darin bewusst nicht erwähnt, weil sie dort nicht
+laufen. **Es gibt keine `crons`-Sektion** — Vercel Cron löst höchstens minütlich
+aus, und die Positionsüberwachung eines Memecoins im Minutenraster ist keine
+Überwachung. Der Takt gehört auf den Worker-Host.
 
 ## 6b. Worker und Vercel: wer redet mit wem
 
