@@ -18,6 +18,19 @@ import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Obergrenze der Laufzeit, in Sekunden.
+ *
+ * Steht hier und nicht mehr in `vercel.json`: dort war es ein Glob
+ * (`app/**` + `/*`), der auf Vercels interne Funktionsnamen passen musste. Als
+ * Route-Segment-Export kennt Next.js den Wert selbst und gibt ihn weiter — eine
+ * Musterangabe weniger, die ins Leere zeigen kann.
+ *
+ * 15 s, weil dieser Endpunkt die Datenbank befragt. Laeuft er laenger, ist die
+ * Antwort ohnehin wertlos.
+ */
+export const maxDuration = 15;
+
 export async function GET(): Promise<Response> {
   try {
     const now = new Date();

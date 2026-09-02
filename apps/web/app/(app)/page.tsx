@@ -20,6 +20,9 @@ import { BotStatusBar } from "@/components/BotStatusBar";
 
 export const dynamic = "force-dynamic";
 
+/** Obergrenze der Laufzeit in Sekunden — die Seite liest die Datenbank. */
+export const maxDuration = 15;
+
 function PanelBody<T>({
   panel,
   render,

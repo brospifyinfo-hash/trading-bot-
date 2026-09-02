@@ -231,16 +231,37 @@ dessen `package.json` `next` tatsächlich führt.
 | Framework Preset | Next.js | wird jetzt korrekt erkannt; steht zusätzlich in `apps/web/vercel.json` |
 | Build Command | *leer lassen* | Vercel erkennt `next build` |
 | Install Command | *leer lassen* | Vercel installiert den pnpm-Workspace von der Repository-Wurzel aus |
-| Output Directory | *leer lassen* | `.next` relativ zum Root Directory |
+| Output Directory | *leer lassen* — **oder im Dashboard löschen, falls dort noch etwas steht** | `apps/web/vercel.json` setzt `.next`, siehe unten |
+
+### Warum `outputDirectory` ausdrücklich in `vercel.json` steht
+
+Ein Deploy scheiterte mit
+
+> The Next.js output directory 'apps/web/.next' was not found at
+> '/vercel/path0/apps/web/apps/web/.next'.
+
+Der Wert `apps/web/.next` stand **nicht im Repository** — er stammte aus den
+Projekteinstellungen im Vercel-Dashboard, eingetragen als das Root Directory
+noch die Repository-Wurzel war. Vercel setzt Root Directory und Output Directory
+zusammen, und aus `apps/web` + `apps/web/.next` wird `apps/web/apps/web/.next`.
+
+Eine Einstellung im Dashboard lässt sich aus dem Repository nicht löschen — aber
+überschreiben: Werte in `vercel.json` haben Vorrang vor den Projekteinstellungen.
+Deshalb steht dort jetzt `"outputDirectory": ".next"` — relativ zum Root
+Directory und damit korrekt, unabhängig davon, was im Dashboard übrig ist.
 | Node-Version | 22 | `engines` in `package.json` |
 | Region | `fra1` | aus `apps/web/vercel.json` |
 
 `vercel.json` liegt deshalb in **`apps/web/`**, nicht mehr im Wurzelverzeichnis:
-Vercel liest die Datei aus dem Root Directory. Sie enthält nur noch, was Vercel
-nicht selbst erkennen kann — Region und `maxDuration`. Build-, Install- und
-Ausgabepfad stehen bewusst nicht mehr darin: sie relativ zum neuen Root
-Directory noch einmal festzuschreiben wäre genau die Fehlerquelle, die diesen
-Deploy hat scheitern lassen.
+Vercel liest die Datei aus dem Root Directory. Sie enthält nur noch Framework, Region und
+den Ausgabepfad. Build- und Install-Befehl stehen bewusst nicht darin: Vercel
+erkennt beide korrekt, sobald das Root Directory stimmt.
+
+`maxDuration` ist ebenfalls heraus und steht jetzt als Route-Segment-Export
+(`export const maxDuration = 15`) in den beiden Dateien, die die Datenbank
+befragen. Next.js 15 kennt den Wert nativ und reicht ihn weiter — das ersetzt
+einen Glob in `vercel.json`, der auf Vercels interne Funktionsnamen passen
+musste und ins Leere zeigen konnte.
 
 **Die pnpm-Workspace-Abhängigkeiten bleiben dabei intakt.** `apps/web` hängt an
 vier Paketen per `workspace:*` (`@sae/core`, `@sae/config`, `@sae/db`,

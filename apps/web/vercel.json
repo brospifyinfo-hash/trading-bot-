@@ -2,9 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "regions": ["fra1"],
-  "functions": {
-    "app/**/*": {
-      "maxDuration": 15
-    }
-  }
+  "outputDirectory": ".next"
 }
