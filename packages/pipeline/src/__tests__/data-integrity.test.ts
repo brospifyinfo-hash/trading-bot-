@@ -9,6 +9,7 @@ import {
   type MarketObservation,
 } from "../ingestion";
 import { evaluateReadiness, planBranches, signalValidity } from "../flow";
+import { marketDataFieldsFrom } from "../market-data-quality";
 
 /**
  * Die beiden zusaetzlichen Integritaets-Invarianten, je als eigener Test.
@@ -113,9 +114,12 @@ describe("LIVE_DATA_FAILURE_CANNOT_CREATE_VALID_SIGNAL — LIVE DATA FAILURE MUS
     freshnessSeconds: 5,
     contributors: [],
   };
+  /** Vollstaendig und plausibel — damit die Ablehnung nachweislich an der
+   *  Quelle liegt und nicht an einem fehlenden Feld. */
+  const felder = marketDataFieldsFrom(market);
 
   it("erklaert jedes Signal ohne Marktdaten fuer ungueltig", () => {
-    const v = signalValidity({ fleet: blocked, provenance: fresh });
+    const v = signalValidity({ fleet: blocked, provenance: fresh, market: felder });
     expect(v.valid).toBe(false);
   });
 
@@ -123,7 +127,7 @@ describe("LIVE_DATA_FAILURE_CANNOT_CREATE_VALID_SIGNAL — LIVE DATA FAILURE MUS
     // Die Herkunft sagt „frisch und primaer" — die Quelle ist trotzdem weg.
     // Ein zwischengespeicherter Snapshot darf keine Entscheidung tragen.
     expect(snapshotSupportsEntry(fresh).allowed).toBe(true);
-    expect(signalValidity({ fleet: blocked, provenance: fresh }).valid).toBe(false);
+    expect(signalValidity({ fleet: blocked, provenance: fresh, market: felder }).valid).toBe(false);
   });
 
   it("oeffnet ohne Marktdaten keinen einzigen Strom", () => {
@@ -136,6 +140,7 @@ describe("LIVE_DATA_FAILURE_CANNOT_CREATE_VALID_SIGNAL — LIVE DATA FAILURE MUS
       }),
       systemState: { ...DEFAULT_SYSTEM_STATE, liveTradingEnabled: true },
       provenance: fresh,
+      dataQuality: { kind: "CHECK", market: felder },
     });
 
     // Auch mit freigegebenem Live-Handel und voller Historie: nichts.
@@ -154,7 +159,7 @@ describe("LIVE_DATA_FAILURE_CANNOT_CREATE_VALID_SIGNAL — LIVE DATA FAILURE MUS
   });
 
   it("laesst ein Signal erst zu, wenn Quelle UND Daten stimmen", () => {
-    expect(signalValidity({ fleet: connected, provenance: fresh }).valid).toBe(true);
+    expect(signalValidity({ fleet: connected, provenance: fresh, market: felder }).valid).toBe(true);
   });
 });
 

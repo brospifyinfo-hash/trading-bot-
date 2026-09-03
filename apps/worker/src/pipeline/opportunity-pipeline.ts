@@ -22,7 +22,13 @@ import {
   type Database,
 } from "@sae/db";
 import { decide, type Decision, type DecisionContext } from "@sae/decision";
-import { evaluateReadiness, planBranches, type Readiness } from "@sae/pipeline";
+import {
+  evaluateReadiness,
+  marketDataFieldsFrom,
+  planBranches,
+  type DataQualityCheck,
+  type Readiness,
+} from "@sae/pipeline";
 import { collectMissing, computeScores, type FeatureVector, type ScoringResult } from "@sae/scoring";
 import type { Executor, ExecutionOutcome, ExecutionPlan } from "@sae/trading";
 import type { ProviderFleetStatus } from "@sae/providers";
@@ -191,6 +197,15 @@ export async function runOpportunityPipeline(
     ? { ...readiness, canPaperTrade: true, canCreateOpportunities: true, canAnalyze: true }
     : readiness;
 
+  // Die Datenpruefung ist fuer den Live-Pfad Pflicht und fuer den Fixture-Pfad
+  // ausdruecklich ausgesetzt — nicht heimlich, sondern als eigener Zweig, der
+  // in der Begruendung der Verzweigung sichtbar bleibt. `input.market` ist
+  // beim Fixture `null`, weil ein Fixture keine Marktlage behauptet; ihm hier
+  // Felder zu erfinden waere genau der Fehler, den die Pruefung verhindern soll.
+  const dataQuality: DataQualityCheck = fixture
+    ? { kind: "WAIVED_TEST_FIXTURE", label: input.provenance.sourceProvider }
+    : { kind: "CHECK", market: input.market === null ? null : marketDataFieldsFrom(input.market) };
+
   const plan = planBranches({
     readiness: effectiveReadiness,
     systemState: deps.systemState,
@@ -206,6 +221,7 @@ export async function runOpportunityPipeline(
               1_000,
             contributors: [],
           },
+    dataQuality,
   });
 
   const paperStreams = plan.openStreams.filter(

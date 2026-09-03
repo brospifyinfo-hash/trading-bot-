@@ -10,7 +10,7 @@ Preis, gelieferten Feldern, historischer Tiefe und Prüfdatum.
 |---|---|---|---|
 | Jupiter (Swap/Quote) | **teilweise verifiziert** | Hersteller-eigene OpenAPI-Spezifikation | 2026-08-30 |
 | Helius | **nicht geprüft** — Host blockiert | — | — |
-| Birdeye | **nicht geprüft** — Host blockiert | — | — |
+| Birdeye | **nicht geprüft** — Host blockiert | Websuche liefert nur Trefferlisten, keine Spezifikation | 2026-09-03 |
 | DexScreener | **nicht geprüft** — Host blockiert | — | — |
 | RugCheck | **nicht geprüft** — Host blockiert | — | — |
 

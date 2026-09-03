@@ -1545,3 +1545,79 @@ Migrationsschritt, sondern eine Betriebsmassnahme mit einer Voraussetzung
 
 Der Ordner `migrations/` enthaelt seither genau so viele SQL-Dateien wie das
 Journal Eintraege hat. Diese Gleichheit ist pruefbar und wird geprueft.
+
+## 79. Der Gate fragte, woher die Daten kommen — nicht, ob sie da sind
+
+`snapshotSupportsEntry` prüfte zwei Dinge: Qualitätsstufe und Alter. Beides ist
+nötig. Beides sagt nichts darüber, ob die Felder, auf denen eine Entscheidung
+beruht, überhaupt geliefert wurden.
+
+Ein Snapshot mit `tier = PRIMARY` und acht Sekunden Alter passierte den Gate
+auch dann, wenn `liquidity_usd` und `volume_24h_usd` `NULL` waren. Der Anbieter
+hatte sie nicht geliefert; niemand sah nach. Aus so einem Snapshot konnte eine
+Gelegenheit entstehen, die auf zwei Löchern steht.
+
+Dazu kam ein zweiter Fehler, und der wog schwerer: **die Prüfung galt nur für
+Live.** In `planBranches` hing Paper allein an Bereitschaft und Historienlänge.
+Fallback-Daten öffneten Auto Paper und Manual Paper, obwohl dieselbe Datenlage
+für Live ausdrücklich als zu schwach galt. Paper ist aber die Grundlage der
+späteren Statistik — läuft es auf Daten, die für eine Einstiegsentscheidung
+nicht gut genug sind, misst diese Statistik die Datenqualität und nicht die
+Strategie. Und weil eine Auswertung nicht unterscheiden kann, ob ein Feld
+gefehlt hat oder null war, wäre der Fehler später nicht mehr auffindbar
+gewesen.
+
+**Beides ist jetzt zusammengelegt.** `packages/pipeline/src/market-data-quality.ts`
+prüft die Felder, `entryDataVerdict` in `flow.ts` verbindet Herkunft und Felder
+zu einer Antwort, und `planBranches` wendet sie auf **jeden** Strom an — Auto
+Paper, Manual Paper, Live. Beobachten und speichern darf man Fallback-Daten
+weiterhin; eine Gelegenheit entsteht daraus nicht mehr.
+
+### Fehlend ist nicht null
+
+Das ist die Regel, die die Datei trägt. Ein Token ohne gemeldete Liquidität ist
+nicht ein Token mit Liquidität 0 — das eine heißt „wir wissen es nicht", das
+andere „es ist nichts da". Deshalb kennt `QualityVerdict` beide Fälle getrennt:
+
+| Urteil | Bedeutung |
+|---|---|
+| `INCOMPLETE` | Pflichtfeld fehlt. Unbekannt. |
+| `BELOW_THRESHOLD` | Wert gemessen, Markt zu klein. |
+| `IMPLAUSIBLE` | Negativ, `NaN`, `Infinity` — Anbieterfehler, keine Marktaussage. |
+| `STALE` | Zu alt. |
+| `UNTRUSTED_SOURCE` | Qualitätsstufe trägt keine Entscheidung. |
+
+Die Reihenfolge der Prüfungen ist Absicht: Quelle, Alter, Vollständigkeit,
+Plausibilität, Schwellen. So nennt eine Ablehnung die Ursache und nicht den
+Folgefehler — „Daten sind 900 s alt" führt zur Wurzel, „Liquidität zu niedrig"
+in die Irre, wenn beides zutrifft.
+
+### Pflicht sind vier Felder, nicht zwölf
+
+`REQUIRED_FOR_ENTRY` enthält `priceUsd`, `liquidityUsd`, `volume24hUsd`,
+`marketCapUsd`. Die übrigen acht (Buy/Sell-Zähler, Buy/Sell-Volumen,
+Trade-Count, Unique Wallets, FDV, Holder) verbessern eine Entscheidung, tragen
+sie aber nicht allein. Sie zur Pflicht zu machen hieße, die **Anbieterwahl zur
+Strategieentscheidung** zu machen: wer sie liefert, entschiede damit, was
+handelbar ist.
+
+### Der Verzicht ist sichtbar
+
+Ein Test-Fixture behauptet keine Marktlage — er beweist, dass die Verarbeitung
+dahinter läuft. Ihn durch die Feldprüfung zu schicken hieße, ihn abzulehnen;
+ihm Felder zu erfinden wäre schlimmer. Deshalb ist `DataQualityCheck` eine
+unterschiedene Vereinigung mit einem eigenen Zweig `WAIVED_TEST_FIXTURE`, und
+der Verzicht steht danach in der Begründung der Verzweigung. Ein ausgesetzter
+Gate, der in der Aufzeichnung wie ein bestandener aussieht, wäre die schlechtere
+Variante von gar keiner Aufzeichnung.
+
+Das Feld ist **Pflicht**, kein optionaler Schalter. Ein weglassbares Feld wäre
+ein Gate, das man durch Vergessen umgeht.
+
+### Die Schwellen sind keine Strategieparameter
+
+`minLiquidityUsd = 5 000`, `minVolume24hUsd = 1 000`, `maxAgeSeconds = 120`.
+Bewusst konservativ und ausdrücklich **nicht** kalibriert: sie aus Backtests
+abzuleiten wäre Optimierung auf Vergangenheit. Wer sie ändert, ändert eine
+Sicherheitsgrenze. `maxAgeSeconds` ist derselbe Wert wie in
+`DEFAULT_INGEST_SETTINGS` — dieselbe Frage darf nicht zwei Antworten haben.
