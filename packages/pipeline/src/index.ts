@@ -4,6 +4,7 @@ export * from "./checkpoint";
 export * from "./runner";
 export * from "./scheduler";
 export * from "./market-data-quality";
+export * from "./market-selection";
 export * from "./ingestion";
 export * from "./flow";
 export * from "./provider-chain";

@@ -1621,3 +1621,70 @@ Bewusst konservativ und ausdrücklich **nicht** kalibriert: sie aus Backtests
 abzuleiten wäre Optimierung auf Vergangenheit. Wer sie ändert, ändert eine
 Sicherheitsgrenze. `maxAgeSeconds` ist derselbe Wert wie in
 `DEFAULT_INGEST_SETTINGS` — dieselbe Frage darf nicht zwei Antworten haben.
+
+## 80. Ein Markt war ein Token — und das ist bei Memecoins falsch
+
+Die Pipeline identifizierte einen Markt durch die **Token-Mint-Adresse und
+sonst nichts.** `fetchMarket(mint)` ging hinein, ein Preis kam heraus. Was
+dazwischen geschah, wenn ein Token mehrere Pools hat, stand nirgends.
+
+Bei Solana-Memecoins ist das keine Vereinfachung, sondern ein Fehler. Ein Token
+hat regelmäßig einen Pool auf Raydium, einen auf Orca und einen Rest aus der
+Launch-Phase mit vierstelliger Liquidität. Diese Pools haben **verschiedene
+Preise, verschiedene Liquidität und verschiedene Ausstiegskapazität.** Wer den
+ersten nimmt, den die Antwort liefert, hat seine wichtigste Kennzahl von der
+Sortierreihenfolge eines Anbieters abhängig gemacht — und merkt es nie, weil
+das Ergebnis wie eine Messung aussieht.
+
+Zwei Spuren zeigten, dass die Frage einmal gedacht und dann fallengelassen
+wurde:
+
+- `token_pools` existiert als Tabelle, mit `address`, `dex`, `base_mint`,
+  `quote_mint`, `fee_bps`. **Keine Zeile Code schreibt sie, keine liest sie.**
+- `DiscoveredToken.poolAddress` wird von der Discovery gesetzt und danach
+  fallengelassen. Es erreicht den Snapshot nicht.
+
+### Die Auswahl ist jetzt eine eigene Stufe
+
+`packages/pipeline/src/market-selection.ts`. Anbieterunabhängig: sie arbeitet
+auf `MarketCandidate`, unserem Vokabular, nicht auf der Antwortform eines
+Anbieters.
+
+**Erst ausschließen, dann ordnen.** Ein Pool, der eine harte Bedingung
+verletzt, wird nicht schlechter bewertet — er fällt raus, mit Grund. Ein
+Ausschluss, den eine gute Zahl an anderer Stelle aufwiegt, ist kein Ausschluss.
+
+Die zehn Gründe sind getrennt, weil sie verschiedene Ursachen haben:
+`WRONG_BASE_TOKEN`, `UNUSABLE_QUOTE`, `NO_PRICE_REPORTED`,
+`NO_LIQUIDITY_REPORTED`, `LIQUIDITY_TOO_LOW`, `POOL_TOO_YOUNG`, `STALE`,
+`IMPLAUSIBLE_VALUE`, `TURNOVER_IMPLAUSIBLE`, `ONE_SIDED_FLOW`.
+
+### Liquidität rangiert vor Volumen
+
+Volumen ist die manipulierbarste Zahl in diesem Datensatz — zwei Wallets
+erzeugen beliebig viel davon, und bei Memecoins tun sie das auch. Liquidität
+muss tatsächlich im Pool liegen.
+
+Wichtiger noch: Liquidität bestimmt den **Ausstieg**. Der teuerste Fehler bei
+Memecoins ist nicht ein schlechter Einstieg, sondern eine Position, die der
+Markt nicht zurückkauft. Ein Pool mit hohem Volumen und dünner Liquidität ist
+genau die Falle, in die eine volumenbasierte Auswahl läuft.
+
+### Die Pool-Adresse ist der letzte Entscheider
+
+Bei exakt gleichen Kennzahlen gewinnt die lexikografisch kleinere Adresse. Das
+ist willkürlich — und genau deshalb richtig. Die Alternative wäre die
+Reihenfolge der Anbieterantwort: ebenso willkürlich, aber nicht
+reproduzierbar. Ein Backtest, der die Marktauswahl nicht nachstellen kann,
+misst etwas anderes als der Live-Betrieb.
+
+### Was ausdrücklich nicht eingebaut wurde
+
+Keine „Smart Money"-Aussagen. `TURNOVER_IMPLAUSIBLE` und `ONE_SIDED_FLOW` sind
+Befunde aus der Datenlage selbst — kein Urteil über Absichten. Und beide
+schweigen, wenn die Zähler fehlen: unbekannt ist kein Befund.
+
+Die Schwellen sind Plausibilitätsgrenzen, keine Strategieparameter. Bei
+Memecoins ist das Zehnfache der Liquidität an Tagesumsatz normal; gefangen
+werden soll die Größenordnung darüber. Der Wert ist bewusst hoch und
+ausdrücklich nicht kalibriert.
