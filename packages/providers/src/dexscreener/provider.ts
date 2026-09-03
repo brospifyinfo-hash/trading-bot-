@@ -1,24 +1,27 @@
 import { providerId, type Clock, type ProviderId } from "@sae/core";
 
 import { classifyFailure, type FailureClass, type ProviderCapability } from "../capability";
-import { unverifiedContract, type ContractResult, type ResponseContract } from "../contract";
+import type { ContractResult, ResponseContract } from "../contract";
+import { DEXSCREENER_MARKET_CONTRACT, type DexScreenerMarket } from "./normalize";
+
+export { DEXSCREENER_MARKET_CONTRACT };
+export type { DexScreenerMarket };
 
 /**
  * DexScreener-Adapter fuer `TOKEN_MARKET`.
  *
- * Vollstaendig gebaut — bis auf eine Stelle, und die ist absichtlich leer:
- * `DEXSCREENER_MARKET_CONTRACT` ist ein `unverifiedContract`. Jede Antwort
- * wird abgelehnt, solange die Struktur nicht aus einer Primaerquelle bekannt
- * ist.
+ * Der Vertrag steht seit dem 2026-09-03: `DEXSCREENER_MARKET_CONTRACT` ist ein
+ * `zodContract` mit `verified: true`, abgeleitet aus einer echten Antwort der
+ * API. Siehe `schema.ts` fuer die drei Eigenschaften der Antwort, die man ohne
+ * sie geraten haette — und alle drei falsch geraten haette.
  *
- * Was trotzdem laeuft und geprueft ist: URL-Aufbau, Bulk-Zerlegung, Timeout,
- * Wiederholung mit Backoff, Rate-Limit-Beachtung, Fehlerklassifikation,
- * Latenzmessung, Herkunftsangaben und die Meldung an Provider-Health. Wenn
- * der Vertrag kommt, ist ein Zeilentausch noetig — nicht ein neuer Adapter.
+ * Dass der Tausch tatsaechlich ein Zeilentausch war, ist der Beleg fuer die
+ * Bauweise: URL-Aufbau, Bulk-Zerlegung, Timeout, Rate-Limit-Beachtung,
+ * Fehlerklassifikation, Latenzmessung und Health-Meldung waren vorher fertig
+ * und mussten nicht angefasst werden.
  *
- * Warum der Adapter nicht einfach wartet: die Fehlerpfade sind der groessere
- * Teil der Arbeit und lassen sich ohne Anbieter vollstaendig pruefen. Sie
- * jetzt zu bauen heisst, spaeter nur noch eine Sache zu debuggen statt zehn.
+ * Was der Vertrag NICHT aendert: eine Antwort, die nicht zum Schema passt,
+ * erzeugt weiterhin `SCHEMA_REJECTED` statt eines halb geparsten Marktwerts.
  */
 
 export const DEXSCREENER_PROVIDER_ID: ProviderId = providerId("dexscreener");
@@ -42,39 +45,14 @@ export const DEXSCREENER_BULK_LIMIT = 30;
 export const DEXSCREENER_RATE_LIMIT_PER_MINUTE = 300;
 
 /**
- * Das normalisierte Ergebnis eines Marktabrufs.
+ * Wo die Antwortform steht.
  *
- * Bewusst mit `observedAt: null` als moeglichem Wert: DexScreener liefert
- * laut Spezifikation keinen Beobachtungszeitpunkt fuer den Preis.
- * `pairCreatedAt` gehoert zum Handelspaar, nicht zur Preisangabe. Daraus
- * einen Zeitstempel abzuleiten waere eine Erfindung.
+ * `DexScreenerMarket` und der Vertrag liegen in `normalize.ts` bzw.
+ * `schema.ts` und werden oben re-exportiert. Diese Datei kennt nur noch den
+ * Ablauf eines Abrufs — nicht mehr die Gestalt der Antwort. Beides in einer
+ * Datei zu halten hiesse, bei jeder Formaenderung des Anbieters die
+ * Fehlerbehandlung mitzulesen.
  */
-export interface DexScreenerMarket {
-  readonly mint: string;
-  readonly priceUsd: number;
-  readonly liquidityUsd: number | null;
-  readonly marketCapUsd: number | null;
-  readonly volume24hUsd: number | null;
-  /** `null`, weil der Anbieter keinen liefert. Kein Ersatz. */
-  readonly observedAt: Date | null;
-  /** Erstellungszeitpunkt des Paares. Ein echter Zeitstempel, aber nicht der der Preise. */
-  readonly pairCreatedAt: Date | null;
-}
-
-/**
- * Der Vertrag — noch keiner.
- *
- * Zum Freischalten: gegen `zodContract({ schema, schemaVersion, verified: true })`
- * tauschen, sobald eine echte Antwort vorliegt.
- */
-export const DEXSCREENER_MARKET_CONTRACT: ResponseContract<readonly DexScreenerMarket[]> =
-  unverifiedContract({
-    provider: "dexscreener",
-    endpoint: DEXSCREENER_MARKET_ENDPOINT,
-    needed:
-      "eine echte Antwort von GET /tokens/v1/solana/{address} oder eine offizielle " +
-      "OpenAPI-Spezifikation. Feldnamen sind bekannt, die Verschachtelung nicht.",
-  });
 
 export type MarketFetchOutcome =
   | { readonly kind: "OK"; readonly markets: readonly DexScreenerMarket[]; readonly latencyMs: number; readonly httpStatus: number }

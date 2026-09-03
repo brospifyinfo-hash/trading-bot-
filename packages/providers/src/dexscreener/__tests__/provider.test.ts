@@ -1,13 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 import type { Clock } from "@sae/core";
 
-import { zodContract } from "../../contract";
-import {
-  DexScreenerMarketAdapter,
-  DEXSCREENER_BULK_LIMIT,
-  type DexScreenerMarket,
-} from "../provider";
+import { DexScreenerMarketAdapter, DEXSCREENER_BULK_LIMIT } from "../provider";
+import { DEXSCREENER_REAL_RESPONSE, REAL_BASE_MINT } from "./real-response";
 
 /**
  * Der DexScreener-Adapter — ohne DexScreener.
@@ -16,10 +11,10 @@ import {
  * Zeitueberschreitung, Fehlerklassifikation und vor allem die Verweigerung,
  * aus einer nicht validierten Antwort einen Marktwert zu machen.
  *
- * Der Vertrag, den einige Tests einsetzen, ist ausdruecklich **kein**
- * DexScreener-Schema. Er heisst `FRAMEWORK_TEST_CONTRACT` und existiert nur,
- * um die Rahmenlogik pruefbar zu machen — eine Behauptung ueber das echte
- * Antwortformat waere genau die Erfindung, die dieser Adapter verhindert.
+ * Seit der Vertrag steht, laufen die Vertragstests gegen die **echte**
+ * Antwort aus `real-response.ts` statt gegen ein Ersatzschema. Der Unterschied
+ * ist nicht kosmetisch: ein Test gegen ein selbstgebautes Schema beweist, dass
+ * unser Schema zu unserem Schema passt.
  */
 
 const T0 = new Date("2026-09-01T12:00:00Z");
@@ -33,24 +28,6 @@ class FixedClock implements Clock {
     this.at = new Date(this.at.getTime() + ms);
   }
 }
-
-/** Frei erfundenes Schema, NUR zum Pruefen der Rahmenlogik. */
-const FRAMEWORK_TEST_CONTRACT = zodContract<readonly DexScreenerMarket[]>({
-  schema: z.array(
-    z.object({
-      mint: z.string(),
-      priceUsd: z.number(),
-      liquidityUsd: z.number().nullable(),
-      marketCapUsd: z.number().nullable(),
-      volume24hUsd: z.number().nullable(),
-      observedAt: z.null(),
-      pairCreatedAt: z.null(),
-    }),
-  ),
-  schemaVersion: "FRAMEWORK_TEST_CONTRACT",
-  // Ausdruecklich `false`: er stammt aus keiner Primaerquelle.
-  verified: false,
-});
 
 function respondWith(input: {
   status?: number;
@@ -71,83 +48,147 @@ function respondWith(input: {
 const MINT_A = "So11111111111111111111111111111111111111112";
 const MINT_B = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-describe("Vertrag: ohne geprueftes Schema kein Marktwert", () => {
-  it("lehnt eine syntaktisch gueltige Antwort ab, solange der Vertrag fehlt", async () => {
+describe("Vertrag gegen die echte Antwort", () => {
+  it("validiert die echte Antwort und normalisiert sie", async () => {
     const adapter = new DexScreenerMarketAdapter({
       clock: new FixedClock(T0),
-      // Standardvertrag = unverifiziert.
-      fetchImpl: respondWith({ body: '[{"priceUsd":"0.00042","liquidity":{"usd":180000}}]' }),
+      fetchImpl: respondWith({ body: DEXSCREENER_REAL_RESPONSE }),
     });
 
-    const result = await adapter.fetchMarkets([MINT_A]);
-    expect(result.kind).toBe("SCHEMA_REJECTED");
-    if (result.kind !== "SCHEMA_REJECTED") return;
-    // Der entscheidende Unterschied: nicht der Anbieter weicht ab, WIR wissen
-    // nicht, was richtig waere.
-    expect(result.verified).toBe(false);
-    expect(result.reason).toContain("Kein geprueftes Response-Schema");
-    expect(result.httpStatus).toBe(200);
+    const result = await adapter.fetchMarkets([REAL_BASE_MINT]);
+    expect(result.kind).toBe("OK");
+    if (result.kind !== "OK") return;
+
+    const m = result.markets[0];
+    expect(m).toBeDefined();
+    if (m === undefined) return;
+
+    // Die Marktidentitaet — ohne sie ist keine Auswahl unter mehreren Pools
+    // moeglich und keine Auswahl aufzeichenbar.
+    expect(m.pairAddress).toBe("58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2");
+    expect(m.dexId).toBe("raydium");
+    expect(m.chainId).toBe("solana");
+    expect(m.baseMint).toBe(REAL_BASE_MINT);
+    expect(m.quoteMint).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
   });
 
-  it("meldet den Vertrag als unverifiziert", () => {
+  it("wandelt die Zeichenketten-Preise in Zahlen", async () => {
+    // `priceUsd` kommt als "100.17". Ein Schema mit `z.number()` haette jede
+    // echte Antwort abgelehnt — und der Fehler haette wie ein Anbieterausfall
+    // ausgesehen.
+    const result = await fetchReal();
+    if (result.kind !== "OK") throw new Error(result.kind);
+    expect(result.markets[0]?.priceUsd).toBe(100.17);
+    expect(result.markets[0]?.priceNative).toBe(100.1749);
+  });
+
+  it("holt die Liquiditaet aus dem verschachtelten Objekt", async () => {
+    const result = await fetchReal();
+    if (result.kind !== "OK") throw new Error(result.kind);
+    expect(result.markets[0]?.liquidityUsd).toBe(14_247_194.46);
+    expect(result.markets[0]?.liquidityBase).toBe(70_907);
+  });
+
+  it("uebernimmt alle vier Zeitfenster", async () => {
+    const result = await fetchReal();
+    if (result.kind !== "OK") throw new Error(result.kind);
+    const m = result.markets[0];
+    expect(m?.volumeUsd.h24).toBe(12_461_528.51);
+    expect(m?.volumeUsd.m5).toBe(20_294.25);
+    expect(m?.txns.h24).toEqual({ buys: 139_017, sells: 128_610 });
+    expect(m?.priceChangePct.m5).toBe(-0.83);
+  });
+
+  it("laesst fdv und marketCap null, weil die Antwort sie nicht enthaelt", () => {
+    // Der wichtigste Befund der Stichprobe. `null` heisst NOT_AVAILABLE.
+    // Aus Preis und geschaetzter Umlaufmenge eine Marktkapitalisierung zu
+    // rechnen waere die Erfindung, die dieses System ausschliesst.
+    expect(DEXSCREENER_REAL_RESPONSE).not.toContain('"marketCap"');
+    expect(DEXSCREENER_REAL_RESPONSE).not.toContain('"fdv"');
+  });
+
+  it("erfindet keinen Beobachtungszeitpunkt", async () => {
+    const result = await fetchReal();
+    if (result.kind !== "OK") throw new Error(result.kind);
+    // DexScreener liefert keinen. Der Empfangszeitpunkt ist kein Ersatz —
+    // er waere Look-Ahead mit Wirkung bis in jeden Backtest.
+    expect(result.markets[0]?.observedAt).toBeNull();
+    // `pairCreatedAt` gehoert zum Paar, nicht zum Preis, und ist echt.
+    expect(result.markets[0]?.pairCreatedAt).toEqual(new Date(1_669_602_450_000));
+  });
+
+  it("meldet den Vertrag als geprueft und nennt den Stand", () => {
     const adapter = new DexScreenerMarketAdapter({ clock: new FixedClock(T0) });
-    expect(adapter.contractVerified).toBe(false);
-    expect(adapter.schemaVersion).toBe("UNVERIFIED");
+    expect(adapter.contractVerified).toBe(true);
+    expect(adapter.schemaVersion).toBe("dexscreener-tokens-v1@2026-09-03");
   });
 
-  it("lehnt auch bei geprueftem Vertrag eine abweichende Antwort ab", async () => {
+  it("lehnt eine Antwort ab, die vom Vertrag abweicht", async () => {
+    // Kein `pairAddress`: ohne Marktidentitaet ist der Datensatz unbrauchbar,
+    // und halb geparst waere er gefaehrlich.
     const adapter = new DexScreenerMarketAdapter({
       clock: new FixedClock(T0),
-      contract: FRAMEWORK_TEST_CONTRACT,
-      fetchImpl: respondWith({ body: '[{"mint":"x"}]' }),
+      fetchImpl: respondWith({ body: '[{"chainId":"solana","dexId":"raydium"}]' }),
     });
-
-    const result = await adapter.fetchMarkets([MINT_A]);
+    const result = await adapter.fetchMarkets([REAL_BASE_MINT]);
     expect(result.kind).toBe("SCHEMA_REJECTED");
     if (result.kind === "SCHEMA_REJECTED") {
-      // Hier weicht die Antwort ab, nicht unser Wissen.
-      expect(result.verified).toBe(false);
-      expect(result.reason).toContain("priceUsd");
+      // Hier weicht der ANBIETER ab, nicht unser Wissen.
+      expect(result.verified).toBe(true);
     }
+  });
+
+  it("lehnt einen Preis ab, der keine Zahl ist", async () => {
+    // `Number("")` ist 0 und `Number("n/a")` ist NaN. Beides waere ohne
+    // Pruefung als Preis durchgegangen, und eine 0 sieht aus wie eine Messung.
+    for (const kaputt of ['""', '"n/a"', '"--"']) {
+      const adapter = new DexScreenerMarketAdapter({
+        clock: new FixedClock(T0),
+        fetchImpl: respondWith({
+          body: `[{"chainId":"solana","dexId":"raydium","pairAddress":"p","baseToken":{"address":"a"},"quoteToken":{"address":"b"},"priceUsd":${kaputt}}]`,
+        }),
+      });
+      const result = await adapter.fetchMarkets([REAL_BASE_MINT]);
+      expect(result.kind).toBe("SCHEMA_REJECTED");
+    }
+  });
+
+  it("nimmt unbekannte Felder hin, statt die Aufnahme anzuhalten", async () => {
+    // DexScreener liefert `url`, `info`, `labels`, `boosts` und erweitert das
+    // jederzeit. Ein strenges Schema haette bei der naechsten Erweiterung die
+    // gesamte Datenaufnahme gestoppt — ein Ausfall aus reiner Formstrenge.
+    const result = await fetchReal();
+    expect(result.kind).toBe("OK");
   });
 
   it("lehnt eine Antwort ab, die kein JSON ist", async () => {
     const adapter = new DexScreenerMarketAdapter({
       clock: new FixedClock(T0),
-      contract: FRAMEWORK_TEST_CONTRACT,
       fetchImpl: respondWith({ body: "<html>Wartung</html>" }),
     });
-    const result = await adapter.fetchMarkets([MINT_A]);
-    expect(result.kind).toBe("SCHEMA_REJECTED");
+    expect((await adapter.fetchMarkets([REAL_BASE_MINT])).kind).toBe("SCHEMA_REJECTED");
   });
 
-  it("liefert nur bei vollstaendig validierter Antwort Werte", async () => {
+  it("liefert bei leerer Antwort keine Maerkte und keinen Fehler", async () => {
+    // Ein Token, zu dem DexScreener kein Paar kennt. Auskunft, kein Ausfall.
     const adapter = new DexScreenerMarketAdapter({
       clock: new FixedClock(T0),
-      contract: FRAMEWORK_TEST_CONTRACT,
-      fetchImpl: respondWith({
-        body: JSON.stringify([
-          {
-            mint: MINT_A,
-            priceUsd: 0.00042,
-            liquidityUsd: 180_000,
-            marketCapUsd: null,
-            volume24hUsd: null,
-            observedAt: null,
-            pairCreatedAt: null,
-          },
-        ]),
-      }),
+      fetchImpl: respondWith({ body: "[]" }),
     });
-
-    const result = await adapter.fetchMarkets([MINT_A]);
+    const result = await adapter.fetchMarkets([REAL_BASE_MINT]);
     expect(result.kind).toBe("OK");
-    if (result.kind !== "OK") return;
-    expect(result.markets[0]?.priceUsd).toBe(0.00042);
-    // Kein erfundener Beobachtungszeitpunkt.
-    expect(result.markets[0]?.observedAt).toBeNull();
+    if (result.kind === "OK") expect(result.markets).toHaveLength(0);
   });
 });
+
+/** Der echte Abruf, wie ihn mehrere Tests brauchen. */
+async function fetchReal() {
+  const adapter = new DexScreenerMarketAdapter({
+    clock: new FixedClock(T0),
+    fetchImpl: respondWith({ body: DEXSCREENER_REAL_RESPONSE }),
+  });
+  return adapter.fetchMarkets([REAL_BASE_MINT]);
+}
 
 describe("Fehlerklassifikation", () => {
   const cases: readonly [number, string][] = [

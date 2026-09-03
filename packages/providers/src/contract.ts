@@ -77,7 +77,15 @@ export function unverifiedContract<T>(input: {
  * `CAPABILITY_READY` werden darf.
  */
 export function zodContract<T>(input: {
-  readonly schema: z.ZodType<T>;
+  /**
+   * Eingang bewusst `unknown`: `validate` bekommt rohes JSON, und ein
+   * Vertrag darf einen `transform`-Schritt enthalten, der die Antwortform des
+   * Anbieters in unsere Form bringt. Mit `z.ZodType<T>` (Eingang = Ausgang)
+   * waere genau das nicht moeglich gewesen, und die Normalisierung haette
+   * ausserhalb der Validierung stattfinden muessen — also an einer Stelle, die
+   * ein nicht validiertes Objekt in der Hand haelt.
+   */
+  readonly schema: z.ZodType<T, z.ZodTypeDef, unknown>;
   readonly schemaVersion: string;
   readonly verified: boolean;
 }): ResponseContract<T> {

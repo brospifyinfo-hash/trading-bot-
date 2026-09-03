@@ -1688,3 +1688,59 @@ Die Schwellen sind Plausibilitätsgrenzen, keine Strategieparameter. Bei
 Memecoins ist das Zehnfache der Liquidität an Tagesumsatz normal; gefangen
 werden soll die Größenordnung darüber. Der Wert ist bewusst hoch und
 ausdrücklich nicht kalibriert.
+
+## 81. Der Vertrag steht — und die echte Antwort hat drei Annahmen widerlegt
+
+Eine echte Antwort von `GET /tokens/v1/solana/{address}`, abgerufen am
+2026-09-03, ersetzt `unverifiedContract` durch ein `zodContract` mit
+`verified: true`. Sie liegt wortgleich in
+`packages/providers/src/dexscreener/__tests__/real-response.ts` — nicht
+gekürzt, nicht begradigt. Eine bereinigte Stichprobe würde ein Antwortformat
+behaupten, das es so nie gab.
+
+**Drei Dinge hätte man geraten, und alle drei falsch:**
+
+| Angenommen | Tatsächlich |
+|---|---|
+| Objekt mit `pairs` darin | **nacktes Array** |
+| `priceUsd` ist eine Zahl | **Zeichenkette** `"100.17"` |
+| `liquidity` ist eine Zahl | **Objekt** `{usd, base, quote}` |
+
+Jede einzelne davon hätte ein Schema mit `z.number()` dazu gebracht, **jede**
+echte Antwort abzulehnen — und der Fehlschlag hätte wie ein Anbieterausfall
+ausgesehen, nicht wie unser Fehler. Das ist der Grund, warum `unverifiedContract`
+existiert.
+
+### Was fehlt, und warum das zählt
+
+**`fdv` und `marketCap` waren nicht in der Antwort** — obwohl beide in der
+Feldliste der Spezifikation V1 stehen. Sie bleiben `null`, und `null` heißt
+NOT_AVAILABLE. Aus Preis und einer geschätzten Umlaufmenge eine
+Marktkapitalisierung zu rechnen wäre genau die Erfindung, die dieses System
+ausschließt.
+
+Das hat eine unmittelbare Folge: `marketCapUsd` steht in `REQUIRED_FOR_ENTRY`.
+Solange DexScreener es nicht liefert, besteht **kein** Token den
+Qualitätsgate. Ob das für Memecoins auch gilt oder eine Eigenheit von Wrapped
+SOL ist, entscheidet eine zweite Stichprobe — nicht eine Annahme.
+
+**Kein Zeitstempel zur Preisangabe.** Bestätigt, was die Provider-Doku
+vorhergesagt hatte. `observedAt` ist deshalb im Typ `DexScreenerMarket` das
+Literal **`null`**, nicht `Date | null`: so kann niemand hier später den
+Empfangszeitpunkt eintragen, ohne den Typ zu ändern und dabei zu merken, was er
+tut. Ein erfundener Beobachtungszeitpunkt wäre Look-Ahead mit Wirkung bis in
+jeden Backtest.
+
+### `zodContract` nimmt jetzt `unknown` als Eingang
+
+Vorher `z.ZodType<T>` — Eingang gleich Ausgang. Damit war kein
+`transform`-Schritt möglich, und die Normalisierung hätte außerhalb der
+Validierung stattfinden müssen: an einer Stelle also, die ein **nicht
+validiertes** Objekt in der Hand hält. Jetzt ist Validierung und
+Normalisierung ein Schritt, und was aus `validate()` herauskommt, kennt
+DexScreener nicht mehr.
+
+### Die Tests laufen gegen die echte Antwort
+
+Das frühere `FRAMEWORK_TEST_CONTRACT` ist entfallen. Ein Test gegen ein
+selbstgebautes Schema beweist, dass unser Schema zu unserem Schema passt.
