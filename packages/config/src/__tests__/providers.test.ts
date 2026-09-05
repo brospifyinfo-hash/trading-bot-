@@ -27,17 +27,31 @@ describe("Provider-Konfiguration", () => {
   it("trennt Konfiguration von vorhandenem Adapter", () => {
     // Ein konfigurierter Anbieter ohne Adapter ist nicht ansprechbar — und der
     // Unterschied gehoert sichtbar, sonst sucht jemand den Fehler bei den
-    // Zugangsdaten.
-    const entries = readProviderConfig({ DEXSCREENER_BASE_URL: "https://example.invalid" });
-    const dex = entries.find((e) => e.id === "dexscreener")!;
-    expect(dex.configured).toBe(true);
-    expect(dex.adapterImplemented).toBe(false);
+    // Zugangsdaten. Helius steht hier fuer diesen Fall: konfiguriert, aber
+    // ohne geprueftes Response-Schema.
+    const entries = readProviderConfig({
+      HELIUS_BASE_URL: "https://example.invalid",
+      HELIUS_API_KEY: "irrelevant",
+    });
+    const helius = entries.find((e) => e.id === "helius")!;
+    expect(helius.configured).toBe(true);
+    expect(helius.adapterImplemented).toBe(false);
   });
 
-  it("fuehrt Jupiter als einzigen geprueften Adapter", () => {
+  it("fuehrt genau die Anbieter mit gepruefter Antwortform", () => {
+    // Diese Liste ist absichtlich hart: sie waechst nur, wenn ein
+    // Response-Vertrag tatsaechlich gegen eine Primaerquelle geprueft wurde.
+    //
+    // - jupiter: gegen die herstellereigene OpenAPI-Spezifikation, 2026-08-30
+    // - dexscreener: gegen eine echte API-Antwort, 2026-09-03 (siehe
+    //   packages/providers/src/dexscreener/__tests__/real-response.ts)
+    //
+    // Wer hier einen Anbieter ergaenzt, ohne dass sein Schema aus einer
+    // Primaerquelle stammt, hebelt die wichtigste Regel des Provider-Layers
+    // aus — und dieser Test ist die Stelle, an der das auffaellt.
     const entries = readProviderConfig(empty);
     const implemented = entries.filter((e) => e.adapterImplemented).map((e) => e.id);
-    expect(implemented).toEqual(["jupiter"]);
+    expect(implemented.sort()).toEqual(["dexscreener", "jupiter"]);
   });
 
   it("enthaelt keine Endpunktpfade", () => {

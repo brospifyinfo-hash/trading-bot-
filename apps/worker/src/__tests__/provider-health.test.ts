@@ -33,12 +33,16 @@ describe("Provider-Statusbericht", () => {
   it("unterscheidet konfiguriert-ohne-Adapter von nicht konfiguriert", () => {
     // Sonst sucht jemand den Fehler bei den Zugangsdaten, obwohl das
     // Adapter-Modul fehlt.
+    // Helius steht fuer diesen Fall: konfiguriert, aber ohne geprueftes
+    // Response-Schema. DexScreener taugt seit dem 2026-09-03 nicht mehr als
+    // Beispiel — sein Vertrag ist gegen eine echte Antwort geprueft.
     const reports = buildStatusReports({
       ...BASE,
-      DEXSCREENER_BASE_URL: "https://example.invalid",
+      HELIUS_BASE_URL: "https://example.invalid",
+      HELIUS_API_KEY: "irrelevant",
     });
-    const dex = reports.find((r) => r.providerId === "dexscreener")!;
-    expect(dex.detail).toMatch(/kein geprueftes Adapter-Modul/);
+    const helius = reports.find((r) => r.providerId === "helius")!;
+    expect(helius.detail).toMatch(/kein geprueftes Adapter-Modul/);
   });
 
   it("behauptet fuer keinen Anbieter einen Erfolg", () => {

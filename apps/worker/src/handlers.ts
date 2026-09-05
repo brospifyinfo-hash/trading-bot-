@@ -7,6 +7,7 @@ import {
   type Database,
 } from "@sae/db";
 import type { Logger } from "@sae/observability";
+import type { ProviderStatus } from "@sae/providers";
 import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
 import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
@@ -34,8 +35,18 @@ export interface HandlerDeps {
   readonly db: Database;
   readonly logger: Logger;
   readonly env: NodeJS.ProcessEnv;
-  /** Geprüfte Adapter. Heute leer — ein Anbieter ohne Adapter kommt nicht in die Kette. */
+  /** Geprüfte Adapter. Ein Anbieter ohne Adapter kommt nicht in die Kette. */
   readonly adapters?: ReadonlyMap<KnownProviderId, MarketDataAdapter>;
+  /**
+   * Der gemessene Zustand je Anbieter.
+   *
+   * Fehlt die Funktion, gilt jeder Anbieter als `UNAVAILABLE`. Das ist
+   * absichtlich die pessimistische Vorgabe: ohne Messung ist nichts bekannt,
+   * und ein unbekannter Zustand darf keinen Abruf tragen. Der Consumer laedt
+   * die Messreihe je Auftrag frisch aus der Datenbank — der Zustand kommt vom
+   * provider-health-Dienst, nicht aus dem Speicher dieses Prozesses.
+   */
+  readonly statusOf?: (id: KnownProviderId) => ProviderStatus;
 }
 
 /** Ergebnis eines Auftrags, der auf Daten wartet statt welche zu erfinden. */
@@ -46,6 +57,18 @@ export interface WaitingResult {
 
 function waitingForData(reason: string): WaitingResult {
   return { status: "NO_SOURCE", reason };
+}
+
+/**
+ * Der Anbieterzustand, den die Kette benutzen soll.
+ *
+ * Eine Funktion statt einer Methode je Handler-Klasse: die Vorgabe ist ein
+ * Sicherheitsverhalten und darf nicht davon abhaengen, welche Klasse gerade
+ * fragt. Ohne uebergebene Messung ist die Antwort `UNAVAILABLE` — ohne Messung
+ * ist nichts bekannt, und ein unbekannter Zustand darf keinen Abruf tragen.
+ */
+function statusOfFrom(deps: HandlerDeps): (id: KnownProviderId) => ProviderStatus {
+  return deps.statusOf ?? ((): ProviderStatus => "UNAVAILABLE");
 }
 
 class ProviderHealthHandler implements JobHandler {
@@ -107,7 +130,7 @@ class MarketDataHandler implements JobHandler {
       const chain = buildMarketDataChain({
         env: loadEnv(providerEnvSchema, this.deps.env),
         adapters: this.deps.adapters ?? new Map(),
-        statusOf: () => "UNAVAILABLE",
+        statusOf: statusOfFrom(this.deps),
       });
       this.deps.logger.debug(
         { kind: job.kind, note: chain.note },
@@ -125,7 +148,7 @@ class MarketDataHandler implements JobHandler {
         // Ohne Messung gilt ein Anbieter als nicht erreichbar. Ein
         // optimistischer Startwert wuerde die Kette Anbieter fragen lassen,
         // die nachweislich nicht antworten.
-        statusOf: () => "UNAVAILABLE",
+        statusOf: statusOfFrom(this.deps),
         env: this.deps.env,
         // Fuer eine Einstiegsentscheidung reicht DEGRADED nicht.
         allowDegraded: false,
@@ -171,8 +194,7 @@ class MarketRefreshHandler implements JobHandler {
       env: this.deps.env,
       clock: systemClock,
       adapters: this.deps.adapters ?? new Map(),
-      // Ohne Messung gilt ein Anbieter als nicht erreichbar.
-      statusOf: () => "UNAVAILABLE",
+      statusOf: statusOfFrom(this.deps),
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       maxTokens: MAX_TOKENS_TRACKED,
     });

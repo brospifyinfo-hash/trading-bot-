@@ -66,7 +66,11 @@ export function readProviderConfig(env: ProviderEnv): readonly ProviderConfigEnt
       requiresApiKey: false,
       apiKeyPresent: true,
       configured: env.DEXSCREENER_BASE_URL !== undefined,
-      adapterImplemented: false,
+      // Seit 2026-09-03 geprueft: Response-Vertrag aus einer echten Antwort
+      // abgeleitet (zodContract mit verified: true), Adapter an die Kette
+      // angeschlossen. Siehe docs/providers/dexscreener.md und
+      // apps/worker/src/pipeline/market-adapters.ts.
+      adapterImplemented: true,
     },
     {
       id: "birdeye",

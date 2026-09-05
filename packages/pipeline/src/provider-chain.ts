@@ -36,8 +36,15 @@ import {
 export interface MarketDataAdapter {
   readonly providerId: ProviderId;
   readonly capabilities: readonly ProviderCapability[];
-  /** `null` = der Anbieter kennt den Token nicht. Kein Ersatzwert. */
-  fetchMarket(mint: string): Promise<{ value: MarketFields; observedAt: Date } | null>;
+  /**
+   * `null` = der Anbieter kennt den Token nicht. Kein Ersatzwert.
+   *
+   * `observedAt` ist der Zeitstempel des ANBIETERS und darf `null` sein.
+   * DexScreener liefert nachweislich keinen; der Abrufzeitpunkt gehoert
+   * ausdruecklich NICHT hier eingesetzt, sondern wird eine Ebene hoeher in
+   * `sourced()` als Wissenszeitpunkt vergeben — mit `freshnessSeconds: null`.
+   */
+  fetchMarket(mint: string): Promise<{ value: MarketFields; observedAt: Date | null } | null>;
 }
 
 export interface MarketFields {

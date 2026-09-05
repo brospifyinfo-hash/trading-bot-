@@ -15,11 +15,37 @@ anderen Code ausführt als der, den die Tests prüfen, ist kein geprüfter Worke
 | Repository | `brospifyinfo-hash/trading-bot-` |
 | Branch | `main` |
 | Root Directory | **leer lassen** (Repository-Wurzel) |
-| Config-as-code Path | `railway/scheduler.json` · `railway/provider-health.json` · `railway/consumer.json` |
+| Config-as-code Path | **nicht mehr benutzbar** — siehe unten |
 | Dienst-Typ | **kein** Web-Service, keine öffentliche Domain |
 
-Alles Übrige — Builder, Dockerfile-Pfad, Start Command, Restart Policy,
-Healthcheck — steht in der jeweiligen JSON-Datei und muss nicht geklickt werden.
+### Config as Code ist abgekündigt
+
+Railway hat Config as Code abgekündigt: bestehende `railway.json`-Dateien
+laufen noch bis **2026-12-01**, und **Dienste in neuen Projekten können seit
+2026-08-28 nicht mehr opt-in**. Die Oberfläche nimmt den Pfad als Änderung an,
+der Server wendet ihn nicht mehr an.
+
+Die Dateien unter `railway/` bleiben trotzdem hier: sie sind die versionierte
+Aufzeichnung dessen, was eingestellt sein soll. Gesetzt werden die Werte
+derzeit von Hand:
+
+| Bereich | Feld | Wert |
+|---|---|---|
+| Build | Builder | Dockerfile |
+| Build | Dockerfile Path | `Dockerfile.worker` |
+| Build | Watch Patterns | **leer** — der Worker hängt an allen `packages/*`; ein Muster wie `/apps/worker/**` würde Änderungen an den Paketen verschlucken und stillschweigend alten Code weiterlaufen lassen |
+| Deploy | Start Command | **leer** — kommt aus dem `CMD` des Dockerfiles |
+| Deploy | Replicas | `1` (Consumer: 1..n) |
+| Deploy | Restart Policy | On Failure, Max Retries `10` |
+| Deploy | Healthcheck Path | `/ready` |
+| Deploy | Healthcheck Timeout | `30` — gemessener Cold Start: 5 s |
+| Networking | Public Domain | keine |
+
+Der Nachfolger heißt Infrastructure as Code (`.railway/railway.ts`); die CLI
+bringt mit `railway config migrate` ein Werkzeug mit, das aus den vorhandenen
+`railway/*.json` die neue Datei erzeugt. Solange das nicht geschehen ist,
+liegen diese Einstellungen in Railway statt in git — ein bewusster Rückschritt,
+aber besser als eine Konfigurationsdatei, die stillschweigend ignoriert wird.
 
 ## Die eine Variable, die die Dienste unterscheidet
 
