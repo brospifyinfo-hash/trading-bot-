@@ -1744,3 +1744,68 @@ DexScreener nicht mehr.
 
 Das frühere `FRAMEWORK_TEST_CONTRACT` ist entfallen. Ein Test gegen ein
 selbstgebautes Schema beweist, dass unser Schema zu unserem Schema passt.
+
+## 82. „Alter unbekannt" ist jetzt ein Zustand, keine Null
+
+DexScreener liefert nachweislich **keinen Beobachtungszeitpunkt** zur
+Preisangabe — geprüft an einer echten Antwort (§81). Der Einstiegs-Gate prüft
+aber Datenalter. Damit gab es genau drei Möglichkeiten, und zwei davon waren
+falsch.
+
+Die falsche Bequeme stand bereits im Code. In `smoke/pipeline.ts`:
+
+```ts
+observedAt: market.observedAt ?? systemClock.now(),
+tier: market.observedAt === null ? "SECONDARY" : "PRIMARY",
+freshnessSeconds: 0,   // ← "eine bewusste Einstufung, keine Erfindung"
+```
+
+Der Kommentar war gut gemeint und trotzdem unwahr. **Eine 0 ist keine
+Einstufung, sie ist eine Messung, die nie stattgefunden hat** — und der Gate
+hätte sie geglaubt, weil 0 < 120.
+
+### Zwei Zeitstempel, die man nicht verwechseln darf
+
+| | Bedeutung | Bei DexScreener |
+|---|---|---|
+| `observedAt` | wann **wir** es wussten — der PIT-Stempel | Abrufzeitpunkt |
+| `freshnessSeconds` | wie alt es beim Abruf **war** | **`null`** |
+
+Der Abrufzeitpunkt als PIT-Stempel ist korrekt und erzeugt kein Look-Ahead: wir
+wussten es dann, und vorher nachweislich nicht. Es ist nur eine *schwächere*
+Aussage. Was daraus nicht folgt, ist eine Aussage über das Alter — und genau
+die wurde vorher mitgeliefert.
+
+`sourced()` nimmt deshalb jetzt `providerObservedAt: Date | null` als
+**Pflichtfeld**. Wer eine Quelle anbindet, muss sagen, ob sie ein Datenalter
+mitliefert. Ein weglassbares Feld wäre ein stiller Weg zurück zur 0.
+
+### Die Historie darf mehr sehen als die Entscheidung
+
+Dieselbe Unterscheidung wie `allowDegraded` in der Anbieterkette:
+
+- **`decideIngest`** nimmt Daten ohne Datenalter auf. Ohne das gäbe es nie eine
+  Zeitreihe, und der Snapshot trägt ohnehin einen korrekten PIT-Stempel.
+- **`snapshotSupportsEntry`** lehnt sie ab: *„Anbieter liefert kein Datenalter.
+  Unbekannt ist nicht frisch."*
+- **`assessMarketData`** kennt dafür das eigene Urteil `UNKNOWN_AGE` — getrennt
+  von `STALE`, weil „zu alt" und „Alter unbekannt" zwei verschiedene Befunde
+  mit zwei verschiedenen Gegenmaßnahmen sind.
+- **`selectMarket`** trägt `requireProviderTimestamp`, Vorgabe `true`. Wer die
+  Historie füllt, schaltet es ausdrücklich ab — nicht umgekehrt.
+
+`combineSources` gibt `effectiveFreshnessSeconds: null` zurück, sobald **ein**
+Beitragender kein Alter mitliefert. `Math.max` mit einem `null` darin hätte
+stillschweigend 0 ergeben — ein Datensatz, dessen eine Hälfte beliebig alt sein
+könnte, ist nicht so frisch wie seine jüngere Hälfte.
+
+### Was das praktisch heißt
+
+**DexScreener baut Historie auf und erzeugt keine Einstiegsentscheidung.** Das
+ist kein Mangel der Implementierung, sondern eine Eigenschaft der Quelle.
+Paper Trading bleibt damit bei null Opportunities, bis eine Quelle mit
+verifizierbarem Zeitstempel dazukommt — ein Solana-RPC liefert mit
+`context.slot` genau das, und zwar kostenlos.
+
+Der Snapshot-Pfad im Smoke-Test wählt seinen Markt jetzt außerdem über
+`selectMarket` statt über `markets[0]`.

@@ -130,6 +130,8 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
 
 export type QualityVerdict =
   | { readonly kind: "PASS" }
+  /** Die Quelle liefert kein Datenalter. Unbekannt ist nicht frisch. */
+  | { readonly kind: "UNKNOWN_AGE" }
   /** Ein Pflichtfeld fehlt — wir wissen es nicht. */
   | { readonly kind: "INCOMPLETE"; readonly missing: readonly MarketDataField[] }
   /** Alles da, aber der Markt traegt keine Position. */
@@ -142,7 +144,14 @@ export type QualityVerdict =
 export interface QualityInput {
   readonly fields: MarketDataFields;
   readonly tier: SourceTier;
-  readonly freshnessSeconds: number;
+  /**
+   * `null`, wenn die Quelle keinen Beobachtungszeitpunkt liefert.
+   *
+   * Ein eigener Zweig und kein Ersatzwert: DexScreener liefert nachweislich
+   * keinen, und eine 0 an dieser Stelle waere eine bestandene Alterspruefung
+   * ohne Alter.
+   */
+  readonly freshnessSeconds: number | null;
   readonly thresholds?: QualityThresholds;
 }
 
@@ -162,6 +171,9 @@ export function assessMarketData(input: QualityInput): QualityVerdict {
     return { kind: "UNTRUSTED_SOURCE", tier: input.tier };
   }
 
+  if (input.freshnessSeconds === null) {
+    return { kind: "UNKNOWN_AGE" };
+  }
   if (input.freshnessSeconds > t.maxAgeSeconds) {
     return { kind: "STALE", ageSeconds: input.freshnessSeconds };
   }
@@ -233,6 +245,8 @@ export function explainVerdict(verdict: QualityVerdict): string {
       return `${verdict.field} unter der Grenze: ${verdict.reason}. Gemessen, nicht unbekannt.`;
     case "STALE":
       return `Daten ${verdict.ageSeconds.toFixed(0)} s alt.`;
+    case "UNKNOWN_AGE":
+      return "Quelle liefert kein Datenalter. Unbekannt ist nicht frisch — fuer die Historie reicht das, fuer einen Einstieg nicht.";
     case "UNTRUSTED_SOURCE":
       return `Quelle im Tier ${verdict.tier} traegt keine Einstiegsentscheidung.`;
     case "IMPLAUSIBLE":

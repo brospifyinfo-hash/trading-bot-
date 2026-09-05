@@ -134,6 +134,21 @@ export interface MarketSelectionSettings {
   readonly oneSidedFlowMinVolumeUsd: number;
   /** Anteil einer Seite, ab dem der Fluss als einseitig gilt. */
   readonly oneSidedFlowThreshold: number;
+  /**
+   * Ob ein Beobachtungszeitpunkt des Anbieters Pflicht ist.
+   *
+   * Fuer eine **Einstiegsentscheidung**: ja. Ohne Zeitstempel ist das Alter
+   * unbekannt, und unbekannt ist nicht frisch.
+   *
+   * Fuer den **Aufbau der Historie**: nein. Dort traegt der Snapshot ohnehin
+   * unseren eigenen Point-in-Time-Stempel — wir wussten es beim Abruf, und
+   * vorher nachweislich nicht. Das ist eine schwaechere, aber wahre Aussage,
+   * und sie reicht, um eine Zeitreihe aufzubauen.
+   *
+   * Dieselbe Unterscheidung wie `allowDegraded` in der Anbieterkette: die
+   * Historie darf mehr sehen als die Entscheidung.
+   */
+  readonly requireProviderTimestamp: boolean;
 }
 
 /**
@@ -150,6 +165,9 @@ export const DEFAULT_MARKET_SELECTION: Omit<MarketSelectionSettings, "allowedQuo
   maxTurnoverRatio: 50,
   oneSidedFlowMinVolumeUsd: 10_000,
   oneSidedFlowThreshold: 0.98,
+  // Vorgabe ist die strenge Variante. Wer die Historie fuellt, schaltet sie
+  // ausdruecklich ab — nicht umgekehrt.
+  requireProviderTimestamp: true,
 };
 
 export interface MarketSelectionInput {
@@ -240,13 +258,17 @@ export function selectMarket(input: MarketSelectionInput): MarketSelection {
     // 2. Frische vor allen Zahlen: eine veraltete Beobachtung ist keine
     //    schlechte Kennzahl, sondern keine Kennzahl.
     if (c.observedAt === null) {
-      reject(c, "STALE", "Anbieter liefert keinen Beobachtungszeitpunkt.");
-      continue;
-    }
-    const ageSeconds = (now.getTime() - c.observedAt.getTime()) / 1_000;
-    if (ageSeconds > settings.maxAgeSeconds) {
-      reject(c, "STALE", `Beobachtung ${ageSeconds.toFixed(0)} s alt.`);
-      continue;
+      if (settings.requireProviderTimestamp) {
+        reject(c, "STALE", "Anbieter liefert keinen Beobachtungszeitpunkt — Alter unbekannt.");
+        continue;
+      }
+      // Historienpfad: kein Alter, aber auch keine Behauptung darueber.
+    } else {
+      const ageSeconds = (now.getTime() - c.observedAt.getTime()) / 1_000;
+      if (ageSeconds > settings.maxAgeSeconds) {
+        reject(c, "STALE", `Beobachtung ${ageSeconds.toFixed(0)} s alt.`);
+        continue;
+      }
     }
 
     // 3. Vorhandensein vor Groesse. Fehlend und zu klein sind zwei Befunde.

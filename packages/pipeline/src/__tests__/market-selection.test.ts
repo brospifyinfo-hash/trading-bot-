@@ -165,6 +165,31 @@ describe("Ausschluesse — jeder mit eigenem Grund", () => {
     expect(s.rejected[0]?.rejection).toBe("STALE");
   });
 
+  it("laesst denselben Pool fuer die Historie zu", () => {
+    // Die Historie darf mehr sehen als die Entscheidung: der Snapshot traegt
+    // ohnehin unseren eigenen PIT-Stempel. Das ist eine schwaechere, aber
+    // wahre Aussage — und ohne sie gaebe es nie eine Zeitreihe.
+    const s = selectMarket({
+      mint: TOKEN,
+      candidates: [pool({ observedAt: null })],
+      now: NOW,
+      settings: { ...settings, requireProviderTimestamp: false },
+    });
+    expect(s.chosen).not.toBeNull();
+  });
+
+  it("prueft das Alter auch im Historienpfad, wenn ein Zeitstempel da ist", () => {
+    // „Kein Zeitstempel" abzuschalten heisst nicht, einen vorhandenen zu
+    // ignorieren.
+    const s = selectMarket({
+      mint: TOKEN,
+      candidates: [pool({ observedAt: new Date(NOW.getTime() - 900_000) })],
+      now: NOW,
+      settings: { ...settings, requireProviderTimestamp: false },
+    });
+    expect(s.rejected[0]?.rejection).toBe("STALE");
+  });
+
   it("weist zu junge Pools ab und unbekanntes Alter ebenso", () => {
     const jung = waehle([pool({ pairCreatedAt: new Date(NOW.getTime() - 60_000) })]);
     const unbekannt = waehle([pool({ pairCreatedAt: null })]);

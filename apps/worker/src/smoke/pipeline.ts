@@ -29,7 +29,12 @@ import {
   schema,
   type Database,
 } from "@sae/db";
-import { DexScreenerMarketAdapter } from "@sae/providers";
+import { DexScreenerMarketAdapter, type DexScreenerMarket } from "@sae/providers";
+import {
+  DEFAULT_MARKET_SELECTION,
+  selectMarket,
+  type MarketCandidate,
+} from "@sae/pipeline";
 
 export type StageOutcome = "PASS" | "FAIL" | "BLOCKED" | "SKIPPED";
 
@@ -137,12 +142,30 @@ export async function runPipelineSmokeTest(input: {
   });
   if (status?.productionVerified !== true) return results;
 
-  /* ------------------------------------------------ 4. Snapshot */
-  const market = fetched.markets[0];
-  if (market === undefined) {
-    push({ stage: "4. MARKET SNAPSHOT", outcome: "FAIL", detail: "Keine Marktdaten im Ergebnis." });
-    return results;
-  }
+  /* ------------------------------------------------ 4. Marktauswahl */
+  // Frueher stand hier `fetched.markets[0]` — der erste Pool, den die Antwort
+  // lieferte. Genau die Falle: ein Token hat mehrere Pools mit verschiedener
+  // Liquiditaet, und die Reihenfolge der Antwort ist keine Rangfolge.
+  const selection = selectMarket({
+    mint: input.mint as never,
+    candidates: fetched.markets.map(toCandidate),
+    now: systemClock.now(),
+    settings: {
+      ...DEFAULT_MARKET_SELECTION,
+      allowedQuoteMints: ALLOWED_QUOTE_MINTS as never,
+      // Historienpfad: DexScreener liefert keinen Anbieterzeitpunkt, und fuer
+      // den Aufbau der Zeitreihe reicht unser eigener PIT-Stempel.
+      requireProviderTimestamp: false,
+    },
+  });
+
+  push({
+    stage: "4. MARKET SELECTION",
+    outcome: selection.chosen === null ? "FAIL" : "PASS",
+    detail: selection.reason,
+  });
+  const market = selection.chosen;
+  if (market === null) return results;
 
   const [token] = await input.db
     .select({ id: schema.tokens.id })
@@ -157,6 +180,16 @@ export async function runPipelineSmokeTest(input: {
     return results;
   }
 
+  if (market.priceUsd === null) {
+    push({
+      stage: "5. MARKET SNAPSHOT",
+      outcome: "FAIL",
+      detail: "Gewaehlter Markt ohne Preis. Fehlend ist nicht null.",
+    });
+    return results;
+  }
+
+  const fetchedAt = systemClock.now();
   const ingested = await new SnapshotRepository(input.db).ingest({
     tokenId: token.id as never,
     clock: systemClock,
@@ -164,21 +197,26 @@ export async function runPipelineSmokeTest(input: {
       value: {
         priceUsd: market.priceUsd,
         liquidityUsd: market.liquidityUsd,
-        marketCapUsd: market.marketCapUsd,
+        marketCapUsd: null,
         volume24hUsd: market.volume24hUsd,
         holders: null,
       },
-      // Ohne Anbieterzeitpunkt gilt der Abruf als Beobachtung. Das ist eine
-      // bewusste Einstufung, keine Erfindung: der Tier faellt entsprechend.
-      observedAt: market.observedAt ?? systemClock.now(),
-      fetchedAt: systemClock.now(),
+      // Ohne Anbieterzeitpunkt ist der Abruf unser Wissenszeitpunkt: wir
+      // wussten es jetzt und vorher nachweislich nicht. Als PIT-Stempel ist
+      // das korrekt.
+      observedAt: fetchedAt,
+      fetchedAt,
       providerId: PROVIDER as never,
-      tier: market.observedAt === null ? "SECONDARY" : "PRIMARY",
-      freshnessSeconds: 0,
+      tier: "SECONDARY",
+      // NICHT 0. Hier stand frueher eine 0 mit dem Kommentar „keine
+      // Erfindung" — sie war genau das: eine behauptete Frische, die nie
+      // gemessen wurde. `null` heisst unbekannt, und der Einstiegs-Gate
+      // lehnt darauf ab, statt es zu glauben.
+      freshnessSeconds: null,
     },
   });
   push({
-    stage: "4. MARKET SNAPSHOT",
+    stage: "5. MARKET SNAPSHOT",
     outcome: ingested.kind === "REJECTED" ? "FAIL" : "PASS",
     detail:
       ingested.kind === "REJECTED"
@@ -246,4 +284,34 @@ async function main(): Promise<void> {
 
 if (process.argv[1]?.endsWith("pipeline.ts") === true) {
   void main();
+}
+
+/**
+ * Quote-Assets, gegen die ein USD-Preis ueberhaupt verankert ist.
+ *
+ * Ein Memecoin-gegen-Memecoin-Pool hat keinen belastbaren Dollarwert: beide
+ * Seiten bewegen sich. Fuer die Historie waere das noch interessant, fuer eine
+ * Auswahl als Leitmarkt nicht.
+ */
+const ALLOWED_QUOTE_MINTS: readonly string[] = [
+  "So11111111111111111111111111111111111111112", // Wrapped SOL
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+];
+
+/** Vom Anbietervokabular in unseres. */
+function toCandidate(m: DexScreenerMarket): MarketCandidate {
+  return {
+    poolAddress: m.pairAddress as never,
+    dex: m.dexId,
+    baseMint: m.baseMint as never,
+    quoteMint: m.quoteMint as never,
+    priceUsd: m.priceUsd,
+    liquidityUsd: m.liquidityUsd,
+    volume24hUsd: m.volumeUsd.h24,
+    buyCount24h: m.txns.h24?.buys ?? null,
+    sellCount24h: m.txns.h24?.sells ?? null,
+    pairCreatedAt: m.pairCreatedAt,
+    observedAt: m.observedAt,
+  };
 }

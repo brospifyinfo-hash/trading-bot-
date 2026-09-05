@@ -34,7 +34,14 @@ export interface MarketObservation {
 export interface SnapshotProvenance {
   readonly providerId: ProviderId;
   readonly tier: SourceTier;
-  readonly freshnessSeconds: number;
+  /**
+   * Alter der Daten beim Abruf — `null`, wenn der Anbieter keines liefert.
+   *
+   * Fuer die HISTORIE ist `null` in Ordnung: der Snapshot traegt trotzdem
+   * einen korrekten Point-in-Time-Stempel (wann WIR es wussten). Fuer eine
+   * EINSTIEGSENTSCHEIDUNG ist es das nicht — siehe `snapshotSupportsEntry`.
+   */
+  readonly freshnessSeconds: number | null;
   /** Weitere Anbieter, falls der Datensatz zusammengesetzt ist. */
   readonly contributors: readonly { providerId: ProviderId; tier: SourceTier }[];
 }
@@ -198,6 +205,16 @@ export function snapshotSupportsEntry(
 ): { readonly allowed: boolean; readonly reason: string } {
   if (provenance.tier === "FALLBACK") {
     return { allowed: false, reason: "Fallback-Daten tragen keine Einstiegsentscheidung." };
+  }
+  if (provenance.freshnessSeconds === null) {
+    // Der Fall, den DexScreener erzwingt: die Quelle liefert keinen
+    // Beobachtungszeitpunkt, also ist das Alter unbekannt. Unbekannt ist
+    // nicht frisch. Hier 0 anzunehmen hiesse, die Pruefung abzuschaffen und
+    // sie gleichzeitig bestanden zu melden.
+    return {
+      allowed: false,
+      reason: "Anbieter liefert kein Datenalter. Unbekannt ist nicht frisch.",
+    };
   }
   if (provenance.freshnessSeconds > settings.maxAgeSeconds) {
     return {

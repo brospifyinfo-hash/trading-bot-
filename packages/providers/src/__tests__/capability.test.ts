@@ -99,7 +99,7 @@ describe("Herkunft und Qualitaet", () => {
       value: 42,
       providerId: providerId("p1"),
       tier: "PRIMARY",
-      observedAt: new Date(T0.getTime() - 45_000),
+      providerObservedAt: new Date(T0.getTime() - 45_000),
       fetchedAt: T0,
     });
     expect(s.freshnessSeconds).toBe(45);
@@ -113,14 +113,14 @@ describe("Herkunft und Qualitaet", () => {
         value: 1,
         providerId: providerId("primary"),
         tier: "PRIMARY",
-        observedAt: new Date(T0.getTime() - 5_000),
+        providerObservedAt: new Date(T0.getTime() - 5_000),
         fetchedAt: T0,
       }),
       sourced({
         value: 2,
         providerId: providerId("fallback"),
         tier: "FALLBACK",
-        observedAt: new Date(T0.getTime() - 120_000),
+        providerObservedAt: new Date(T0.getTime() - 120_000),
         fetchedAt: T0,
       }),
     ]);

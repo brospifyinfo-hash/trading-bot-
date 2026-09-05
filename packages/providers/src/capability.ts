@@ -205,33 +205,63 @@ export interface Sourced<T> {
   readonly value: T;
   readonly providerId: ProviderId;
   readonly tier: SourceTier;
-  /** Zeitstempel der Beobachtung beim Anbieter, wenn er einen liefert. */
+  /**
+   * Der Zeitpunkt, zu dem WIR den Zustand kannten — der Point-in-Time-Stempel.
+   *
+   * Liefert der Anbieter einen eigenen Beobachtungszeitpunkt, steht der hier.
+   * Liefert er keinen, steht hier der Abrufzeitpunkt: wir wussten es dann, und
+   * frueher nachweislich nicht. Als PIT-Stempel ist das korrekt und erzeugt
+   * kein Look-Ahead — es ist nur eine schwaechere Aussage.
+   */
   readonly observedAt: Date;
   /** Wann wir sie geholt haben. */
   readonly fetchedAt: Date;
-  readonly freshnessSeconds: number;
+  /**
+   * Wie alt die Daten beim Abruf waren — oder `null`, wenn niemand es weiss.
+   *
+   * `null` heisst UNBEKANNT und ausdruecklich nicht 0. Das ist der Grund,
+   * warum dieses Feld nullable ist: DexScreener liefert nachweislich keinen
+   * Zeitstempel zur Preisangabe (geprueft an einer echten Antwort, siehe
+   * `dexscreener/schema.ts`). Hier 0 einzutragen waere die bequemste und
+   * teuerste Luege des Systems — sie behauptet Frische, die nie gemessen
+   * wurde, und der Einstiegs-Gate wuerde sie glauben.
+   *
+   * Wer eine Einstiegsentscheidung darauf stuetzen will, braucht eine Zahl.
+   * `null` traegt sie nicht.
+   */
+  readonly freshnessSeconds: number | null;
 }
 
 export function sourced<T>(input: {
   readonly value: T;
   readonly providerId: ProviderId;
   readonly tier: SourceTier;
-  readonly observedAt: Date;
+  /**
+   * Der Zeitstempel des ANBIETERS. `null`, wenn er keinen liefert.
+   *
+   * Pflichtfeld und ausdruecklich nicht optional: wer eine Quelle anbindet,
+   * muss sagen, ob sie ein Datenalter mitliefert. Ein weglassbares Feld waere
+   * hier ein stiller Weg zu `freshnessSeconds: 0`.
+   */
+  readonly providerObservedAt: Date | null;
   readonly fetchedAt: Date;
 }): Sourced<T> {
+  const { providerObservedAt, ...rest } = input;
   return {
-    ...input,
-    freshnessSeconds: Math.max(
-      0,
-      (input.fetchedAt.getTime() - input.observedAt.getTime()) / 1_000,
-    ),
+    ...rest,
+    observedAt: providerObservedAt ?? input.fetchedAt,
+    freshnessSeconds:
+      providerObservedAt === null
+        ? null
+        : Math.max(0, (input.fetchedAt.getTime() - providerObservedAt.getTime()) / 1_000),
   };
 }
 
 export interface Contributor {
   readonly providerId: ProviderId;
   readonly tier: SourceTier;
-  readonly freshnessSeconds: number;
+  /** `null`, wenn dieser Beitraeger kein Datenalter mitliefert. */
+  readonly freshnessSeconds: number | null;
 }
 
 /**
@@ -251,7 +281,8 @@ export interface MultiSourced<T> {
   readonly value: T;
   readonly contributors: readonly Contributor[];
   readonly effectiveTier: SourceTier;
-  readonly effectiveFreshnessSeconds: number;
+  /** `null`, sobald auch nur ein Beitraeger kein Datenalter mitliefert. */
+  readonly effectiveFreshnessSeconds: number | null;
 }
 
 export function combineSources<T>(
@@ -273,7 +304,13 @@ export function combineSources<T>(
       (worst, c) => worseTier(worst, c.tier),
       "PRIMARY",
     ),
-    effectiveFreshnessSeconds: Math.max(...contributors.map((c) => c.freshnessSeconds)),
+    // Das schlechteste Alter zaehlt — und „unbekannt" ist schlechter als jede
+    // Zahl. Ein Datensatz, dessen eine Haelfte beliebig alt sein koennte, ist
+    // nicht so frisch wie seine juengere Haelfte. `Math.max` mit einem `null`
+    // darin haette hier stillschweigend 0 ergeben.
+    effectiveFreshnessSeconds: contributors.some((c) => c.freshnessSeconds === null)
+      ? null
+      : Math.max(...contributors.map((c) => c.freshnessSeconds ?? 0)),
   };
 }
 
@@ -310,7 +347,12 @@ export type ChainResult<T> =
  */
 export async function resolveFromChain<P, T>(input: {
   readonly members: readonly ChainMember<P>[];
-  readonly fetch: (provider: P) => Promise<{ value: T; observedAt: Date } | null>;
+  /**
+   * `observedAt` ist der Zeitstempel des ANBIETERS und darf `null` sein —
+   * nicht jede Quelle liefert einen. Der Abrufzeitpunkt wird NICHT hier
+   * eingesetzt; das entscheidet `sourced()` an einer Stelle statt an jeder.
+   */
+  readonly fetch: (provider: P) => Promise<{ value: T; observedAt: Date | null } | null>;
   readonly clock: Clock;
   /** Ob auch DEGRADED-Anbieter gefragt werden duerfen. */
   readonly allowDegraded?: boolean;
@@ -354,7 +396,7 @@ export async function resolveFromChain<P, T>(input: {
           value: result.value,
           providerId: member.providerId,
           tier: member.tier,
-          observedAt: result.observedAt,
+          providerObservedAt: result.observedAt,
           fetchedAt: input.clock.now(),
         }),
         attempts,

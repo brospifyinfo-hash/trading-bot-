@@ -34,7 +34,7 @@ function observation(
     value: { ...market, ...overrides.value },
     providerId: providerId(overrides.provider ?? "dexscreener"),
     tier: overrides.tier ?? "PRIMARY",
-    observedAt: new Date(T0.getTime() - age * 1_000),
+    providerObservedAt: new Date(T0.getTime() - age * 1_000),
     fetchedAt: T0,
   });
 }
@@ -78,7 +78,7 @@ describe("Aufnahme von Marktdaten", () => {
       value: market,
       providerId: providerId("p"),
       tier: "PRIMARY",
-      observedAt: new Date(T0.getTime() + 60_000),
+      providerObservedAt: new Date(T0.getTime() + 60_000),
       fetchedAt: T0,
     });
     const decision = await decideIngest({
@@ -96,7 +96,7 @@ describe("Aufnahme von Marktdaten", () => {
       value: market,
       providerId: providerId("p"),
       tier: "PRIMARY",
-      observedAt: new Date(T0.getTime() + 2_000),
+      providerObservedAt: new Date(T0.getTime() + 2_000),
       fetchedAt: T0,
     });
     const decision = await decideIngest({
