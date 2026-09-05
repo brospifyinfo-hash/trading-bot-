@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { summarizeFleet } from "@sae/providers";
+import { summarizeFleet, type ProviderStatusReport } from "@sae/providers";
 
-import { buildStatusReports } from "../roles/provider-health";
+import { buildStatusReports, sampleProviderHealth } from "../roles/provider-health";
 
 /**
  * Was der Worker meldet, wenn nichts konfiguriert ist.
@@ -60,5 +60,102 @@ describe("Provider-Statusbericht", () => {
     const jupiter = reports.find((r) => r.providerId === "jupiter")!;
     expect(jupiter.capabilities).toContain("ROUTE_QUOTE");
     expect(jupiter.kind).toBe("router");
+  });
+});
+
+describe("Der Zustand kommt jetzt aus einer echten Abfrage", () => {
+  /**
+   * Bis zu dieser Aenderung meldete der Dienst fuer einen konfigurierten
+   * Anbieter mit Adapter immer `UNAVAILABLE` — „noch nicht abgefragt". Da
+   * `statusAllowsUse` nur CONNECTED und DEGRADED durchlaesst, haette die Kette
+   * DexScreener nie gefragt, egal wie gesund er war.
+   */
+
+  const CONFIGURED = { DEXSCREENER_BASE_URL: "https://api.example.invalid" };
+
+  /** Ein Speicher, der nur mitschreibt. */
+  function fakeStore() {
+    const written: ProviderStatusReport[][] = [];
+    return {
+      written,
+      store: {
+        record: async (reports: readonly ProviderStatusReport[]) => {
+          written.push([...reports]);
+          return reports.length;
+        },
+      } as never,
+    };
+  }
+
+  async function messen(
+    respond: { status?: number; body?: string } | { throws: Error },
+  ): Promise<ProviderStatusReport> {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      if ("throws" in respond) throw respond.throws;
+      const status = respond.status ?? 200;
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        text: async () => respond.body ?? "[]",
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const { written, store } = fakeStore();
+    try {
+      await sampleProviderHealth({ env: CONFIGURED, store, at: new Date("2026-09-05T12:00:00Z") });
+    } finally {
+      globalThis.fetch = original;
+    }
+    return written[0]!.find((r) => String(r.providerId) === "dexscreener")!;
+  }
+
+  it("meldet CONNECTED bei einer lesbaren Antwort", async () => {
+    const r = await messen({ body: "[]" });
+    expect(r.status).toBe("CONNECTED");
+    expect(r.lastSuccessAt).not.toBeNull();
+    expect(r.lastFailureAt).toBeNull();
+    expect(r.latencyMsP95).not.toBeNull();
+  });
+
+  it("meldet BLOCKED, wenn jemand uns nicht durchlaesst", async () => {
+    const r = await messen({ status: 403, body: "nope" });
+    expect(r.status).toBe("BLOCKED");
+    expect(r.lastSuccessAt).toBeNull();
+    expect(r.lastFailureReason).toContain("BLOCKED");
+  });
+
+  it("meldet DEGRADED bei Drosselung — die kommt wieder", async () => {
+    expect((await messen({ status: 429, body: "slow down" })).status).toBe("DEGRADED");
+  });
+
+  it("meldet UNAVAILABLE bei einem Serverfehler", async () => {
+    expect((await messen({ status: 503, body: "down" })).status).toBe("UNAVAILABLE");
+  });
+
+  it("meldet UNAVAILABLE bei einer unlesbaren Antwort", async () => {
+    // Erreichbar und unbrauchbar. DEGRADED waere hier die Falle: die Kette
+    // wuerde ihn weiter fragen, und jede Antwort waere wieder unlesbar.
+    const r = await messen({ body: '[{"chainId":"solana"}]' });
+    expect(r.status).toBe("UNAVAILABLE");
+    expect(r.detail).toContain("nicht lesbar");
+  });
+
+  it("fragt einen nicht konfigurierten Anbieter gar nicht erst", async () => {
+    const { written, store } = fakeStore();
+    const original = globalThis.fetch;
+    let gefragt = false;
+    globalThis.fetch = (async () => {
+      gefragt = true;
+      return { ok: true, status: 200, text: async () => "[]" } as unknown as Response;
+    }) as unknown as typeof fetch;
+    try {
+      await sampleProviderHealth({ env: {}, store });
+    } finally {
+      globalThis.fetch = original;
+    }
+    expect(gefragt).toBe(false);
+    const dex = written[0]!.find((r) => String(r.providerId) === "dexscreener")!;
+    expect(dex.status).toBe("NOT_CONFIGURED");
   });
 });
