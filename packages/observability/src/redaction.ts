@@ -19,6 +19,13 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   "notionalMinor", "currency", "amountRaw", "priceUsd", "liquidityUsd",
   "slippageBps", "priceImpactBps", "feeBps", "costsMinor", "pnlMinor",
   "count", "durationMs", "queue", "jobId", "role", "version", "url", "method", "statusCode",
+  // Betriebszustand des Workers. Booleans und Zaehler ohne Geheimnisgehalt —
+  // sie standen nur nicht auf der Liste, und die Allowlist schweigt im Zweifel.
+  // Das ist richtig so, macht aber genau die Meldungen unlesbar, die man beim
+  // ersten Start braucht: "marketDataUsable: [redacted]" beantwortet die Frage
+  // nicht, fuer die sie geloggt wurde.
+  "marketDataUsable", "snapshotCount", "phase", "canPaperTrade", "liveTradingEnabled",
+  "enqueued", "skipped", "ingested", "noSource", "rejected", "completed",
 ]);
 
 export const REDACTED = "[redacted]";

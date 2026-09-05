@@ -99,4 +99,26 @@ describe("Allowlist", () => {
       expect(LOG_ALLOWLIST.has(name)).toBe(false);
     }
   });
+
+  it("laesst den Betriebszustand des Workers durch", () => {
+    // Anlass: der erste echte Railway-Start meldete
+    // "Scheduler gestartet ... marketDataUsable: [redacted]". Eine geschwaerzte
+    // Antwort auf genau die Frage, fuer die die Zeile geloggt wird, ist
+    // schlimmer als keine Zeile — man haelt sie fuer eine Sicherheitsmassnahme
+    // und sucht den Fehler woanders.
+    const zustand = {
+      marketDataUsable: false,
+      snapshotCount: 0,
+      phase: "WAITING_FOR_MARKET_DATA",
+      canPaperTrade: false,
+      liveTradingEnabled: false,
+    };
+    expect(redact(zustand)).toEqual(zustand);
+  });
+
+  it("schwaerzt weiterhin alles, was nicht ausdruecklich erlaubt ist", () => {
+    // Die Erweiterung darf die Richtung der Liste nicht umkehren.
+    const out = redact({ marketDataUsable: true, connectionString: "postgres://u:p@h/db" });
+    expect(out).toEqual({ marketDataUsable: true, connectionString: REDACTED });
+  });
 });
