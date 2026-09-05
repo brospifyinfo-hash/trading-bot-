@@ -25,7 +25,6 @@ networks:
 
 volumes:
   pgdata:
-  redisdata:
 
 secrets:
   postgres_password:
@@ -42,13 +41,22 @@ secrets:
 x-worker-base: &worker-base
   build:
     context: ..
-    dockerfile: docker/Dockerfile.worker
+    # Dasselbe Dockerfile wie auf Railway. Es gab hier lange ein zweites unter
+    # docker/Dockerfile.worker — mit einer gefilterten Installation, die sieben
+    # tote Symlinks nach packages/ hinterliess und deren Runtime-Stufe
+    # node_modules ohne die Pakete kopierte. Der Build lief durch, der
+    # Container waere beim Start gescheitert. Zwei Dockerfiles fuer denselben
+    # Prozess driften auseinander; eines, das auch in Produktion laeuft, ist
+    # geprueft.
+    dockerfile: Dockerfile.worker
   restart: unless-stopped
   env_file: ../.env
   networks: [data, egress]
   depends_on:
+    # Kein Redis mehr: die dauerhafte Queue liegt in PostgreSQL (Entscheidung
+    # 43 und 77). Der Dienst stand hier noch, obwohl keine Zeile Code ihn
+    # gelesen hat — er wurde gestartet, geprueft und ignoriert.
     postgres: { condition: service_healthy }
-    redis: { condition: service_healthy }
   # Laufende Transaktionsbestaetigungen duerfen zu Ende laufen.
   stop_grace_period: 45s
 
@@ -71,22 +79,17 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    # AOF: ein Queue-Verlust ist ein verlorener Trade, kein Cache-Miss.
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
-    volumes: [redisdata:/data]
-    networks: [data]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   migrate:
-    build: { context: .., dockerfile: docker/Dockerfile.worker }
-    command: ["node", "scripts/migrate.js"]
+    build: { context: .., dockerfile: Dockerfile.worker }
+    # Vorher: `node scripts/migrate.js` — eine Datei, die es nicht gibt. Der
+    # Schritt scheiterte, und weil `web` auf ihn wartet, startete der ganze
+    # Stack nicht.
+    #
+    # Jetzt derselbe Weg wie in .github/workflows/db-migrate.yml: drizzle-kit
+    # fuehrt das Journal mit. Der Umweg ueber scripts/migrate.sh waere hier
+    # falsch — der spielt rohe SQL-Dateien per psql ein, ohne das Journal zu
+    # aktualisieren, und danach haelt Drizzle alles fuer nicht angewendet.
+    command: ["pnpm", "--filter", "@sae/db", "exec", "drizzle-kit", "migrate"]
     env_file: ../.env
     networks: [data]
     depends_on:
