@@ -22,6 +22,7 @@
 
 /* eslint-disable no-console -- Kommandozeilenwerkzeug: die Ausgabe ist das Ergebnis. */
 import { createDatabase, type Database } from "@sae/db";
+import { EXPECTED_MIGRATIONS } from "@sae/db/migrations-meta";
 import { sql } from "drizzle-orm";
 
 export type CheckOutcome = "PASS" | "FAIL" | "WARN" | "SKIPPED";
@@ -98,7 +99,12 @@ const REQUIRED_CONSTRAINTS: readonly { readonly table: string; readonly name: st
   },
 ];
 
-const EXPECTED_MIGRATIONS = 10;
+// EXPECTED_MIGRATIONS kommt aus dem Drizzle-Journal, nicht aus einer hier
+// gepflegten Zahl. Sie stand als `10` in dieser Datei und war seit der elften
+// Migration falsch: der Test meldete dann ausgerechnet nach einer
+// ERFOLGREICHEN Migration "11 statt 10 — die Datenbank ist neuer als dieser
+// Code". Eine Zahl, die man von Hand nachziehen muss, wird irgendwann nicht
+// nachgezogen.
 
 export async function runInfrastructureChecks(input: {
   readonly db: Database;

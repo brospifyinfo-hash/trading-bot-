@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing/index.ts"
+    "./testing": "./src/testing/index.ts",
+    "./migrations-meta": "./src/migrations-meta.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

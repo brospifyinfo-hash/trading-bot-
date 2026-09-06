@@ -82,9 +82,10 @@ jobs:
             echo "## Datenbank-Migration"
             echo ""
             if [ "${{ job.status }}" = "success" ]; then
-              echo "Durchgelaufen. Erwartet waren 10 Migrationen, 61 Tabellen"
-              echo "und 7 scharfe Sicherheits-Constraints — die Ausgabe des"
-              echo "Schritts \"Ergebnis pruefen\" zeigt, was tatsaechlich da ist."
+              echo "Durchgelaufen. Erwartet werden alle Migrationen aus dem"
+              echo "Drizzle-Journal, 61 Tabellen und 7 scharfe"
+              echo "Sicherheits-Constraints — die Ausgabe des Schritts"
+              echo "\"Ergebnis pruefen\" zeigt, was tatsaechlich da ist."
               echo ""
               echo "Die Vercel-Seite sollte jetzt WAITING FOR LIVE MARKET DATA zeigen."
             else

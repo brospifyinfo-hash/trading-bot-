@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { EXPECTED_MIGRATIONS, migrationTags } from "../migrations-meta";
+
 /**
  * Der Migrationsordner und das Journal muessen deckungsgleich sein.
  *
@@ -79,5 +81,23 @@ describe("Reihenfolge im Journal", () => {
   it("nennt jeden Tag genau einmal", () => {
     const tags = journal().entries.map((e) => e.tag);
     expect(new Set(tags).size).toBe(tags.length);
+  });
+});
+
+describe("Die abgeleitete Migrationszahl", () => {
+  it("stimmt mit dem Journal ueberein", () => {
+    // Sie stand einmal als `10` im Infrastruktur-Smoke-Test und war seit der
+    // elften Migration falsch. Jetzt kommt sie aus derselben Datei, die auch
+    // Drizzle liest — es gibt keine zweite Zahl mehr, die driften koennte.
+    expect(EXPECTED_MIGRATIONS).toBe(journal().entries.length);
+    expect(migrationTags()).toEqual(sqlFiles());
+  });
+
+  it("liefert die Kennungen in Anwendungsreihenfolge", () => {
+    const tags = migrationTags();
+    expect(tags[0]).toBe("0000_init");
+    // Eine unsortierte Liste waere hier unauffaellig und in der Anwendung
+    // fatal: Migrationen sind aufeinander aufgebaut.
+    expect([...tags].sort()).toEqual([...tags]);
   });
 });
