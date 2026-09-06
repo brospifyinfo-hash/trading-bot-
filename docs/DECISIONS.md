@@ -1966,3 +1966,69 @@ Entscheidung 78 fehlt und Drizzle nach Journal-Index nummeriert. Funktional
 egal (Drizzle sortiert nach Journal), für einen Menschen aber genau die Frage,
 die in Entscheidung 78 schon zweimal Zeit gekostet hat. Deshalb umbenannt, Tag
 im Journal mitgezogen.
+
+## 86. Die Discovery-Quelle — das eine fehlende Interface
+
+Sieb, Deduplizierung, Bewertung und Entscheidung waren seit Phase 1 gebaut und
+getestet. Es kam nur nie etwas an: `DiscoveryRunInput.sources` blieb leer, weil
+niemand `DiscoverySource` implementiert hatte. **Ein Kriterium ist ein Sieb, und
+ein Sieb braucht jemanden, der Sand hineinschüttet.**
+
+Drei Endpunkte geprüft (echte Antworten vom 2026-09-06):
+
+| Endpunkt | Wurzel | Marktdaten | Taugt als Quelle |
+|---|---|---|---|
+| `/token-profiles/latest/v1` | nacktes Array | **keine** | ja, mit Anreicherung |
+| `/token-boosts/latest/v1` | nacktes Array | keine | nein — bezahlte Bewerbung |
+| `/latest/dex/search?q=` | `{schemaVersion, pairs}` | vollständig | nein — braucht Suchbegriff |
+
+Gewählt: **token-profiles**, in zwei Aufrufen.
+
+1. Der Strom liefert **Adressen** — Kette, Adresse, Bild, Marketingtext. Kein
+   Preis, keine Liquidität, kein Alter.
+2. Die Marktdaten kommen aus dem bereits geprüften
+   `/tokens/v1/solana/{adressen}`, in Bündeln zu 30.
+
+Der erste Aufruf allein wäre wertlos und gefährlich zugleich: **ein Bot, der nur
+Schritt 1 kennt, handelt Werbetexte.**
+
+`token-boosts` wurde bewusst verworfen. „Boost" heißt, jemand hat für Sichtbarkeit
+bezahlt. Das als Signal zu lesen wäre adverse Selektion mit zusätzlichen Schritten.
+
+### Zwei Befunde, die frühere Schlüsse korrigieren
+
+**`marketCap` und `fdv` existieren.** Ihr Fehlen in der Wrapped-SOL-Stichprobe
+(§81) war ein Sonderfall dieses Tokens, keine Eigenschaft der API.
+`REQUIRED_FOR_ENTRY` bleibt unverändert.
+
+**Weiterhin kein Beobachtungszeitpunkt**, in keinem der drei Formate. Zum
+dritten Mal bestätigt.
+
+### `since` wird nicht als Filter benutzt
+
+Der Strom trägt keinen Zeitstempel je Eintrag. Nach `since` zu filtern hieße,
+eine Zeitangabe zu erfinden, die es nicht gibt. Die Deduplizierung der Engine
+erledigt, was `since` erledigen sollte — sie kennt bereits gesehene Adressen.
+
+### Der Ausfall ist ein eigener Zustand
+
+Antwortet der Strom nicht, liefert die Quelle `Missing` mit Grund aus dem Kern
+(`PARSE_FAILED`, `PROVIDER_RATE_LIMITED`, `PROVIDER_DOWN`) — **nicht** eine
+leere Liste. Die Engine kann ihn dann als ausgefallene Quelle benennen, statt
+die Abdeckung stillschweigend für vollständig zu halten.
+
+### Was die Stichprobe über die Notwendigkeit des Siebs sagt
+
+In der Suchantwort standen mehrere Token namens „Solana"/„SOL" mit
+**2,1 Mrd. USD gemeldeter Liquidität und 17 USD Tagesumsatz**. Das ist keine
+dünne Datenlage, das ist eine Attrappe. Solche Einträge kommen durch die
+Discovery durch — und fallen im Vorsieb und in `selectMarket`
+(`TURNOVER_IMPLAUSIBLE`, `LIQUIDITY_TOO_LOW`).
+
+### Die eigene Lint-Regel hat mitgelesen
+
+Der erste Entwurf der Anreicherung verglich Pools mit
+`(previous ?? 0) >= (candidate ?? 0)`. Damit hätte ein Pool mit **unbekannter**
+Liquidität gegen jeden bekannten verloren, als wäre sein Wert 0.
+`sae/no-numeric-fallback` hat es abgefangen. Derselbe Fehler wie überall sonst,
+nur an einer unscheinbaren Stelle — und genau dafür gibt es die Regel.

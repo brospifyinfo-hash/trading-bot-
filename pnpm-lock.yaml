@@ -93,6 +93,9 @@ importers:
       '@sae/decision':
         specifier: workspace:*
         version: link:../../packages/decision
+      '@sae/discovery':
+        specifier: workspace:*
+        version: link:../../packages/discovery
       '@sae/observability':
         specifier: workspace:*
         version: link:../../packages/observability

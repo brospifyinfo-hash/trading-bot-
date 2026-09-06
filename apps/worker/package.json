@@ -16,6 +16,7 @@
     "@sae/core": "workspace:*",
     "@sae/db": "workspace:*",
     "@sae/decision": "workspace:*",
+    "@sae/discovery": "workspace:*",
     "@sae/observability": "workspace:*",
     "@sae/pipeline": "workspace:*",
     "@sae/providers": "workspace:*",

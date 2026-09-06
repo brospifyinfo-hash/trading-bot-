@@ -11,5 +11,7 @@ export * from "./jupiter/schema";
 export * from "./jupiter/provider";
 export * from "./contract";
 export * from "./dexscreener/schema";
+export * from "./dexscreener/profiles-schema";
+export * from "./dexscreener/profiles";
 export * from "./dexscreener/normalize";
 export * from "./dexscreener/provider";
