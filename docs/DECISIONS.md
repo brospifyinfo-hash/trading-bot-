@@ -2457,3 +2457,50 @@ Erfolgsmeldung enthält.
 Es lockert nichts. Die Entscheidung, ob ein weiterer Anker zugelassen wird,
 bleibt eine bewusste Änderung an `USD_ANCHOR_QUOTE_MINTS` — mit der Begründung
 in dieser Datei. Ein Messwert ist keine Erlaubnis.
+
+## §93 — Die Messung ist eindeutig: der Filter bleibt, wie er ist
+
+Antwort auf die offene Frage aus §92:
+
+```
+processed: 25   ingested: 7   noSource: 18
+noSourceReasons: UNUSABLE_QUOTE=7 LIQUIDITY_TOO_LOW=5 NO_LIQUIDITY_REP…
+unusableQuotes:  ANTHROPIC=1 ARB=1 BRK.Bx=1 HOODx=1 NVDAx=1 PLTRx=1 ZE…
+```
+
+**Jede Gegenwährung kommt genau einmal vor.** Von den beiden Welten aus §92 ist
+es damit belegt die zweite: sieben Pools gegen sieben verschiedene
+Gegenseiten, kein wiederkehrender Anker, den wir übersehen hätten.
+
+**Entscheidung: `USD_ANCHOR_QUOTE_MINTS` bleibt unverändert.** Ein Eintrag
+mehr würde hier genau einen Pool zusätzlich zulassen und dafür die Zusicherung
+aufgeben, dass jeder Preis an einem stabilen Anker hängt.
+
+### Was in den Namen steckt
+
+`NVDAx`, `PLTRx`, `HOODx`, `BRK.Bx` sind tokenisierte Aktien. Ein Memecoin,
+dessen einziger Pool gegen eine tokenisierte NVIDIA-Aktie handelt, hat keinen
+USD-Preis — er hat einen NVIDIA-Preis, multipliziert mit dem, was der Markt
+gerade für die Tokenisierung hält. Genau dafür gibt es die Ankerliste, und
+genau diesen Fall hätte eine Lockerung hereingelassen.
+
+Damit ist auch die Reihe der Vermutungen abgeschlossen, die diese Untersuchung
+begleitet hat: `TURNOVER_IMPLAUSIBLE` (§90, falsch), „ein fehlender Anker"
+(§92, falsch). Beide Male hätte die Schätzung zu einer Änderung geführt, die
+die Messung nicht trägt.
+
+### Der eigentliche Engpass steht daneben
+
+Die Filter arbeiten korrekt. Was die Ausbeute begrenzt, ist die **Quelle**:
+
+```
+Discovery: seen: 9   fresh: 0   duplicates: 9
+```
+
+`/token-profiles/latest/v1` liefert neun bis dreizehn Solana-Einträge, fast
+immer dieselben, und darunter tokenisierte Aktien und Fremdketten-Token statt
+frischer Memecoin-Starts. Von 25 beobachteten Token tragen 7 verwertbare
+Marktdaten — nicht weil zu streng gefiltert wird, sondern weil oben zu wenig
+und zu wahllos hineinkommt.
+
+Das ist der nächste Hebel, und er liegt nicht bei den Schwellenwerten.
