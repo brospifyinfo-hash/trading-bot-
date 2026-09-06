@@ -2504,3 +2504,65 @@ Marktdaten — nicht weil zu streng gefiltert wird, sondern weil oben zu wenig
 und zu wahllos hineinkommt.
 
 Das ist der nächste Hebel, und er liegt nicht bei den Schwellenwerten.
+
+## §94 — Korrektur: ein RPC-Zugriff schließt EINE Lücke, nicht zwei
+
+Ich hatte dem Betreiber gesagt, ein Solana-RPC-Zugriff räume beide offenen
+Lücken ab — das unbekannte Datenalter (§89) und die fehlende
+Autoritätsprüfung (§87). **Das war falsch, und zwar in der gefährlichen
+Richtung.**
+
+Ein RPC-Aufruf sagt, was **jetzt** on-chain steht. Er sagt nichts darüber, wann
+DexScreener seinen Preis gemessen hat. Diesen Zeitstempel an fremde Marktdaten
+zu heften wäre exakt die Erfindung, die §89 aus der Frische-Berechnung entfernt
+hat — nur mit mehr Aufwand und einem seriöseren Anstrich.
+
+Sauber trennen:
+
+| Lücke | Wodurch sie schließt |
+|---|---|
+| Mint-/Freeze-Authority unbekannt | **Ein** `getAccountInfo` auf den Mint. Wir lesen selbst, der Wert trägt unseren eigenen Slot. |
+| Datenalter der Marktdaten unbekannt | Entweder ein Anbieter, der seine Messzeit mitliefert — oder wir lesen die **Pool-Reserven selbst** und rechnen den Preis daraus. |
+
+Das Zweite ist ein eigenes, deutlich größeres Stück (Kontenlayouts je DEX) und
+ausdrücklich nicht Teil dieses Commits.
+
+### Der Adapter ist fertig, der Vertrag ist es nicht
+
+`SolanaMintAdapter` liest den Mint-Account vollständig: Anfrage, Zeitlimit,
+Fehlerklassifikation, Latenzmessung. Sein Vertrag ist `unverifiedContract()`,
+weil aus dieser Arbeitsumgebung **kein** Solana-RPC erreichbar ist — drei
+Endpunkte getestet, alle gesperrt. Jede Antwort wird mit `SCHEMA_UNVERIFIED`
+abgelehnt.
+
+Das ist kein halber Zustand, sondern der vorgesehene: der Adapter läuft
+messbar, behauptet aber nichts. Der Weg zum scharfen Modul ist der
+dokumentierte Einzeiler — `unverifiedContract()` gegen
+`zodContract({verified: true})` — sobald eine echte Antwort vorliegt.
+
+Im Betrieb ändert sich dadurch **nichts**: `checkAuthorities` liefert weiter
+`Missing`, `cheapScreen` lehnt bei Unbekanntem weiter nicht ab, und
+`withoutAuthorityCheck` zählt weiter mit.
+
+### Drei Fallstricke, die im Code stehen
+
+1. **Ein JSON-RPC-Fehler kommt mit HTTP 200.** Wer nur `response.ok` prüft,
+   hält „Account not found" für einen Erfolg und liest `result` von
+   `undefined`. Der Fehlerast wird deshalb vor der Vertragsprüfung behandelt.
+2. **Ein Token-Account sieht aus wie ein Mint.** Gleiche äußere Form, andere
+   Bedeutung. `parsed.type === "mint"` und die Programm-Adresse (Token oder
+   Token-2022) sind beide Pflicht — ihn als Mint zu lesen ergäbe Autoritäten,
+   die es nicht gibt.
+3. **`supply` ist Text, nicht Zahl.** u64 passt nicht verlustfrei in eine
+   JSON-Zahl. Er wird als Text geführt.
+
+`encoding: "jsonParsed"` statt base64 ist bewusst gewählt: base64 hieße, das
+Mint-Layout selbst aus Bytes zu lesen, und ein Versatzfehler dabei ergäbe eine
+falsche Autorität — also eine falsche Sicherheitsaussage, die teuerste Sorte
+Fehler an dieser Stelle.
+
+### `timedOut` statt Textraten
+
+`FailureClass` kennt keinen Timeout, und aus der Fehlermeldung darauf zu
+schließen wäre Textvergleich über Laufzeitgrenzen hinweg. Der Adapter hält den
+`AbortController` selbst — er weiß es sicher und sagt es als eigenes Feld.

@@ -13,6 +13,7 @@ import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
 import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
+import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
 import { resolveMarketInput } from "./pipeline/market-input";
 import { refreshMarketData } from "./pipeline/market-refresh";
@@ -218,6 +219,14 @@ class DiscoverTokensHandler implements JobHandler {
       clock: systemClock,
       env: this.deps.env,
       statusOf: statusOfFrom(this.deps),
+      // Die Autoritaetspruefung. Solange ihr Vertrag ungeprueft ist, fuehrt
+      // sie die Anfrage aus und lehnt die Antwort ab — der Lauf zaehlt die
+      // Luecke dann weiter unter `withoutAuthorityCheck`. Das ist der
+      // gewuenschte Zwischenzustand: messbar, aber ohne Behauptung.
+      checkAuthorities: buildAuthorityReader({
+        clock: systemClock,
+        rpcUrl: this.deps.env["SOLANA_RPC_URL"],
+      }),
     });
   }
 }
