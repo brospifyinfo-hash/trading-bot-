@@ -6,3 +6,4 @@ export * from "./job-queue";
 export * from "./snapshots";
 export * from "./decisions";
 export * from "./watchlist";
+export * from "./discovery";

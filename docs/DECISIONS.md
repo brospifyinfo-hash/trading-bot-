@@ -2032,3 +2032,106 @@ Der erste Entwurf der Anreicherung verglich Pools mit
 Liquidität gegen jeden bekannten verloren, als wäre sein Wert 0.
 `sae/no-numeric-fallback` hat es abgefangen. Derselbe Fehler wie überall sonst,
 nur an einer unscheinbaren Stelle — und genau dafür gibt es die Regel.
+
+## §87 — Die Discovery ist verdrahtet: der Bot findet jetzt selbst Token
+
+Bis hierher war die Kette an ihrem **Anfang** unterbrochen, und zwar an einer
+unauffälligen Stelle. Quelle, Vorsieb, Deduplizierung und Zustandspflege
+existierten einzeln und getestet — nur rief sie niemand zusammen auf:
+
+```
+DISCOVER_TOKENS: market("Token-Entdeckung"),
+```
+
+Der Auftrag lief in denselben generischen Handler wie jede andere
+Marktdatenarbeit. Der suchte einen Mint im Auftrag, fand keinen — der
+Discovery-Auftrag trägt keinen, er ist der, der Mints **erzeugt** — und meldete
+`NO_SOURCE`. Korrekt und nutzlos zugleich. Dahinter stand die Folgekette:
+`tokens` blieb leer, `refreshMarketData` meldete dauerhaft `NO_TOKENS`, keine
+Snapshots, keine Historie, keine Features, kein Paper Trading.
+
+### Der Weg, den ein Token jetzt nimmt
+
+```
+scheduler → Takt FAST_DISCOVERY (30 s) → Auftrag DISCOVER_TOKENS
+          → job_queue → consumer → runTokenDiscovery
+          → DexScreener token-profiles + tokens/v1 → cheapScreen → tokens
+```
+
+Bewusst **über die Queue** und nicht als eigener Dienst. Die Rolle
+`WORKER_ROLE=discovery` bleibt leer und sagt das beim Start auch. Liefe die
+Discovery zusätzlich dort, gäbe es zwei Takte für dieselbe Arbeit: doppelte
+Anbieteranfragen, und zwei Prozesse, die gleichzeitig dieselben Zeilen anlegen
+wollen. Der Unique-Index auf `mint` fängt das ab — die Anfragen wären dann aber
+schon verbraucht.
+
+### Die Zeile entsteht vor dem Sieb, nicht danach
+
+`TokenSeenStore.add` schreibt in `tokens`, **bevor** `cheapScreen` urteilt. Das
+ist Absicht: was das System gesehen hat, soll es auch dann noch wissen, wenn es
+den Token gleich darauf verwirft — sonst fände es ihn beim nächsten Takt erneut,
+fragte erneut Marktdaten ab und verwürfe erneut. Der Zustand der Zeile sagt
+anschließend, was das Sieb entschieden hat:
+
+| Ergebnis | Zustand | Warum nicht anders |
+|---|---|---|
+| durch das Vorsieb | `SCREENING` | **nicht** `CANDIDATE` — das Vorsieb bewertet ausdrücklich nicht. Ein Token, das es passiert, ist nur nicht offensichtlich ungeeignet. |
+| vorerst gescheitert | `WATCHLIST` | Diese Gruppe ist später die Kontrollgruppe. Ohne sie beruht jede Faktoranalyse ausschließlich auf dem, was wir gehandelt haben. |
+| endgültig gescheitert | `REJECTED` | Bliebe die Zeile auf `DISCOVERED`, sähe sie aus wie ein Token, den noch niemand geprüft hat. |
+
+Das Zustandsschreiben greift nur bei `state = 'DISCOVERED'`. Ein Watchlist-Token,
+der schon `SCORED` ist und den die Discovery ein zweites Mal meldet, darf nicht
+auf `SCREENING` zurückfallen — er würde die Kette von vorn durchlaufen und dabei
+seine Bewertung verlieren.
+
+### Die Lücke, die dieser Lauf offenlegt
+
+`cheapScreen` prüft Mint- und Freeze-Authority. Beide stehen im Mint-Account
+on-chain, und dafür gibt es **kein geprüftes Lesemodul**. Sie sind also
+UNBEKANNT — und `cheapScreen` lehnt bei Unbekanntem nicht ab:
+
+```ts
+if (isPresent(input.mintAuthorityActive) && input.mintAuthorityActive.value)
+```
+
+**Das ist eine echte Abschwächung des Siebs.** Ein Token mit aktiver
+Mint-Authority — also beliebig nachprägbar — kommt hier durch. Das wird nicht
+weggeschrieben, sondern gezählt (`withoutAuthorityCheck`) und einmal je Lauf als
+Warnung geloggt.
+
+Was ihn **nicht** durchlässt, ist die Einstiegsentscheidung: `securityScore`
+gibt ohne Mint-Authority, Freeze-Authority und Top-10-Anteil `notComputable`
+zurück, die Datenvollständigkeit fällt unter `minDataCompleteness`, und das harte
+Gate lehnt mit `DATA_INCOMPLETE` ab. Die Sicherheit hängt also nicht am Vorsieb.
+`DiscoveryRunDeps.checkAuthorities` ist die ausgewiesene Naht, an der das
+RPC-Lesemodul später hängt.
+
+Der Fehlgrund ist `NOT_YET_COLLECTED` und ausdrücklich **nicht**
+`NOT_SUPPORTED_BY_PROVIDER`: die Angabe ist abrufbar, sie wurde nur nicht
+abgerufen. Der Unterschied entscheidet später, ob jemand nach einem anderen
+Anbieter sucht oder das fehlende Modul baut.
+
+### Zwei Folgen, die man leicht übersieht
+
+**Die Tokenauswahl von `market-refresh` musste gefiltert werden.** Solange die
+Tabelle klein war, war ein ungefiltertes `SELECT … LIMIT 500` unschädlich. Mit
+laufender Discovery ist es das nicht mehr: jeder Durchlauf legt Zeilen an, die
+das Vorsieb im selben Durchlauf verworfen hat. Sie weiter abzufragen kostet
+Anbieterbudget für Tokens, gegen die sich das System bereits entschieden hat.
+`selectTrackedTokens` schließt gesperrte und `REJECTED`-Tokens aus und ordnet
+nach `first_seen_at DESC` — ohne Ordnung entscheidet PostgreSQL, welche Zeilen
+der Deckel abschneidet, und das untergräbt den Wiederaufnahme-Checkpoint.
+`WATCHLIST` bleibt ausdrücklich drin.
+
+**Die Log-Allowlist hatte eine Lücke, und zwar eine ältere.** `added` und `known`
+aus der Watchlist (§86) standen nie darauf; die Startmeldung lautete
+entsprechend `Watchlist angewendet added: [redacted]`. Gefunden nicht durch
+Hinsehen, sondern mit einem Skript, das alle `logger.*({…})`-Aufrufe gegen die
+Liste hält. Dritter Durchgang, dritte Lücke — deshalb diesmal maschinell.
+
+### Was der Lauf ausdrücklich nicht tut
+
+Er schreibt Zeilen in `tokens` und sonst nichts. Keine Handelsentscheidung,
+keine Gelegenheit, keine Position. Eine Discovery-Quelle sagt „diesen Token gibt
+es und er ist mir aufgefallen", nicht „er ist gut" — die Vermischung beider
+Rollen ist der Grund, warum viele Bots handeln, was gerade auf einer Liste steht.

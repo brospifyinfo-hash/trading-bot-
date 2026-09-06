@@ -3,7 +3,7 @@ import type { KnownProviderId } from "@sae/config";
 import {
   PostgresCheckpointStore,
   SnapshotRepository,
-  schema,
+  selectTrackedTokens,
   type Database,
   type IngestResult,
 } from "@sae/db";
@@ -66,10 +66,12 @@ export async function refreshMarketData(
   jobKey: string,
   deps: MarketRefreshDeps,
 ): Promise<MarketRefreshResult> {
-  const rows = await deps.db
-    .select({ id: schema.tokens.id, mint: schema.tokens.mint })
-    .from(schema.tokens)
-    .limit(deps.maxTokens);
+  // Gefiltert und geordnet, seit die Discovery Zeilen anlegt: gesperrte und
+  // vom Vorsieb verworfene Tokens weiter abzufragen kostet Anbieterbudget fuer
+  // Tokens, gegen die sich das System bereits entschieden hat. Die Auswahl
+  // steht in `selectTrackedTokens` und damit dort, wo auch der Rest der
+  // Drizzle-Abfragen liegt.
+  const rows = await selectTrackedTokens(deps.db, deps.maxTokens);
 
   if (rows.length === 0) {
     // Kein Token bekannt. Das ist heute der Regelfall: die Discovery, die

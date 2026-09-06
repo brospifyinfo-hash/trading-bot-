@@ -21,7 +21,7 @@ DISCOVERY → ENRICHMENT → FEATURES → SCORING → DECISION → OPPORTUNITY
 | **scheduler** | IMPLEMENTED | Takte, DB-Marktdatenlage | Aufträge | `job_queue` | Producer | — | nein | Fenster im `dedupe_key` | keiner | keine |
 | **consumer** | IMPLEMENTED | `job_queue` | Handler-Ergebnis | `job_queue`, `job_queue_history` | Consumer | Backoff, Dead Letter | nein | `FOR UPDATE SKIP LOCKED` + Lease | keiner | keine |
 | **market-refresh** *(Handler)* | IMPLEMENTED | Tokenliste | Snapshots | `token_snapshots`, `job_checkpoints` | `REFRESH_MARKET_DATA` | über Consumer | **ja** | `UNIQUE (ingest_key)` | **Marktdaten** | Tokens |
-| **discovery** | READY — WAITING FOR DATA | Anbieter-Listen | neue Tokens | `tokens` | `DISCOVER_TOKENS` | über Consumer | ja (vorbereitet) | `UNIQUE (mint)` | **TOKEN_DISCOVERY** | — |
+| **discovery** *(Handler)* | IMPLEMENTED | DexScreener `token-profiles` + `tokens/v1` | neue Tokens mit Zustand | `tokens` | `DISCOVER_TOKENS` | über Consumer | nein | `UNIQUE (mint)` | **TOKEN_DISCOVERY** | — |
 | **enrichment** | BLOCKED | Tokens | Sicherheit, Holder | `token_security`, `token_wallet_metrics` | — | — | — | — | **RugCheck, Helius** | Tokens |
 | **scoring** | READY — WAITING FOR DATA | Feature-Vektor | `ScoringResult` | `scores` | `SCORE_TOKEN` | über Consumer | nein | Snapshot-Hash | keiner | **Snapshot-Historie** |
 | **decision** | READY — WAITING FOR DATA | Score, Risiko, EV | `Decision` | `opportunities`, `feature_snapshots` | `EVALUATE_OPPORTUNITY` | über Consumer | nein | `UNIQUE (token, stream, decided_at)` | keiner | **Features** |
@@ -61,5 +61,16 @@ Sobald **eine** Marktdatenquelle antwortet, in dieser Reihenfolge:
    Live-Einstieg neben dem Fixture-Einstieg.
 4. `paper` öffnet Positionen, `alerts` verschickt Manual-Gelegenheiten.
 
-`discovery` kann parallel dazu laufen, sobald ein Anbieter mit
-`TOKEN_DISCOVERY` erreichbar ist.
+`discovery` läuft seither als Auftrag `DISCOVER_TOKENS` im `consumer` und ist
+damit Schritt 0 dieser Kette: ohne Token in `tokens` meldete `market-refresh`
+dauerhaft `NO_TOKENS`. Die gleichnamige **Rolle** `WORKER_ROLE=discovery` bleibt
+absichtlich leer — zwei Takte für dieselbe Arbeit wären doppelte
+Anbieteranfragen.
+
+Eine Lücke bleibt offen und ist im Lauf gezählt: Mint- und Freeze-Authority
+stehen im Mint-Account on-chain, und dafür gibt es kein geprüftes Lesemodul.
+`cheapScreen` lehnt bei **unbekannten** Autoritäten nicht ab — ein Token mit
+aktiver Mint-Authority kommt also durch das Vorsieb. Die Einstiegsentscheidung
+fängt es ab (`securityScore` → `notComputable` → `dataCompleteness` unter
+`minDataCompleteness` → `DATA_INCOMPLETE`), aber das Feld
+`withoutAuthorityCheck` im Log sagt, wie oft das passiert.

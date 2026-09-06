@@ -39,6 +39,14 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // bewusst und sichtbar.
   "adapters", "attempted", "attempts", "cadence", "dead", "marketDataConnected",
   "measured", "note", "processed", "queued", "running", "summary", "waiting", "written",
+  // Dritter Durchgang, mit einem Skript statt mit dem Auge: `added` und `known`
+  // aus der Watchlist standen seit ihrer Einfuehrung nicht auf der Liste, und
+  // die Startmeldung lautete entsprechend "Watchlist angewendet added:
+  // [redacted]". Dazu die Felder des Discovery-Laufs. Zaehler und Kennungen,
+  // kein Geheimnisgehalt.
+  "added", "known",
+  "seen", "fresh", "candidates", "watchlist", "duplicates", "failedSources",
+  "withoutAuthorityCheck",
 ]);
 
 export const REDACTED = "[redacted]";

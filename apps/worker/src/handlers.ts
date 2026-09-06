@@ -13,6 +13,7 @@ import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
 import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
+import { runTokenDiscovery } from "./pipeline/discovery-run";
 import { resolveMarketInput } from "./pipeline/market-input";
 import { refreshMarketData } from "./pipeline/market-refresh";
 import { sampleProviderHealth } from "./roles/provider-health";
@@ -180,6 +181,34 @@ class MarketDataHandler implements JobHandler {
 }
 
 /**
+ * Token-Entdeckung.
+ *
+ * Der erste Handler, der keinen Mint im Auftrag braucht — er ist der, der
+ * Mints erzeugt. Bis hierher lief `DISCOVER_TOKENS` in `MarketDataHandler`,
+ * fand dort erwartungsgemaess keinen Token im Auftrag und meldete
+ * `NO_SOURCE`. Die Kette war damit an ihrem Anfang unterbrochen: ohne Token
+ * in der Tabelle meldete `refreshMarketData` dauerhaft `NO_TOKENS`, und alles
+ * dahinter blieb leer.
+ *
+ * Der Lauf schreibt Zeilen in `tokens` und sonst nichts. Er trifft keine
+ * Handelsentscheidung, legt keine Gelegenheit an und eroeffnet keine Position.
+ */
+class DiscoverTokensHandler implements JobHandler {
+  constructor(private readonly deps: HandlerDeps) {}
+
+  async handle(job: ClaimedJob): Promise<unknown> {
+    void job;
+    return runTokenDiscovery({
+      db: this.deps.db,
+      logger: this.deps.logger,
+      clock: systemClock,
+      env: this.deps.env,
+      statusOf: statusOfFrom(this.deps),
+    });
+  }
+}
+
+/**
  * Marktdaten auffrischen — mit Wiederaufnahme.
  *
  * Der einzige Handler mit Checkpoint. Er braucht ihn, weil er eine Liste
@@ -219,7 +248,7 @@ export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
     SAMPLE_PROVIDER_HEALTH: new ProviderHealthHandler(deps),
     EXPIRE_OPPORTUNITIES: new ExpireOpportunitiesHandler(deps),
     REFRESH_MARKET_DATA: new MarketRefreshHandler(deps),
-    DISCOVER_TOKENS: market("Token-Entdeckung"),
+    DISCOVER_TOKENS: new DiscoverTokensHandler(deps),
     SCORE_TOKEN: market("Bewertung"),
     EVALUATE_OPPORTUNITY: market("Gelegenheitspruefung"),
     MONITOR_PAPER_POSITION: market("Positionsueberwachung"),

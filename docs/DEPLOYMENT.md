@@ -55,7 +55,8 @@ Ein Image, die Rolle kommt aus `WORKER_ROLE`.
 | `provider-health` | misst im Minutentakt jeden Anbieter, schreibt `provider_status_samples` | **ja** — das ist der Takt, mit dem das System von selbst anläuft |
 | `scheduler` | reiht fällige Aufträge in `job_queue` ein | ja (reiht dann nur datenunabhängige Takte ein) |
 | `consumer` | zieht Aufträge, führt sie aus, entscheidet über Wiederholung und Dead Letter | ja |
-| `discovery`, `enrichment`, `scoring`, `decision`, `execution`, `positions`, `paper`, `reconciler`, `alerts` | **Platzhalter**, bis eine Marktdatenquelle erreichbar ist | — |
+| `discovery` | leer — die Token-Entdeckung läuft als Auftrag `DISCOVER_TOKENS` im `consumer`, nicht als eigener Dienst | — |
+| `enrichment`, `scoring`, `decision`, `execution`, `positions`, `paper`, `reconciler`, `alerts` | **Platzhalter**, bis eine Marktdatenquelle erreichbar ist | — |
 
 Mindestbetrieb: **eine** Instanz `scheduler`, **eine** `provider-health`, **eine
 oder mehrere** `consumer`. Mehrere Consumer sind unbedenklich: die Aufträge
