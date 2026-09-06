@@ -37,7 +37,8 @@ export interface MarketRefreshDeps {
   readonly statusOf: (id: KnownProviderId) => ProviderStatus;
   /** Obergrenze je Lauf. Schuetzt das Rate-Limit-Budget. */
   readonly maxUnitsPerRun: number;
-  readonly maxTokens: number;
+  readonly maxTokens: number;  /** Optional: Ablage fuer die Ablehnungsgruende der Marktauswahl. */
+  readonly rejections?: { drain(): { reasons: Readonly<Record<string, number>>; tokens: number } };
 }
 
 export interface MarketRefreshResult {
@@ -167,8 +168,20 @@ export async function refreshMarketData(
   // gehoert daneben. Ohne Tokens bleibt es leise: eine Zeile alle 20 Sekunden,
   // die „nichts zu tun" sagt, verdeckt die, die etwas sagt.
   const level = run.processed > 0 ? "info" : "debug";
+  // Die Gruende der Marktauswahl, sofern der Aufrufer eine Ablage gestellt
+  // hat. Ohne sie sagt `noSource: 9` nur, DASS neun Token nichts geliefert
+  // haben — die interessante Haelfte der Auskunft fehlte.
+  const why = deps.rejections?.drain();
   deps.logger[level](
-    { jobKey, processed: run.processed, skipped: run.skipped, ingested, noSource, rejected },
+    {
+      jobKey,
+      processed: run.processed,
+      skipped: run.skipped,
+      ingested,
+      noSource,
+      rejected,
+      ...(why !== undefined && why.tokens > 0 ? { noSourceReasons: why.reasons } : {}),
+    },
     "Marktdaten aufgefrischt",
   );
 

@@ -2292,3 +2292,61 @@ ist der eigentliche Befund: die Grenze lud dazu ein. Sie tut es nicht mehr.
 Betrieb damit unsichtbar — ausgerechnet die Meldung, an der man abliest, ob
 Snapshots entstehen. Sie steht jetzt auf `info`, sobald der Lauf Tokens
 angefasst hat, und bleibt sonst leise.
+
+## §90 — `noSource: 9` sagt DASS, nicht WARUM
+
+Der erste Auffrischungslauf mit echten Tokens meldete:
+
+```
+Marktdaten aufgefrischt   processed: 11  ingested: 2  noSource: 9
+```
+
+Neun von elf Token lieferten keine Marktdaten — und das Log verschwieg, warum.
+Dabei ist der Grund im System vorhanden und präzise: `selectMarket` gibt zu
+jedem verworfenen Pool eine `MarketRejection` zurück (`POOL_TOO_YOUNG`,
+`TURNOVER_IMPLAUSIBLE`, `UNUSABLE_QUOTE`, `LIQUIDITY_TOO_LOW`, …).
+
+Er wurde an **drei** Stellen hintereinander weggeworfen:
+
+1. Der Adapter kann nur `null` zurückgeben — `MarketDataAdapter.fetchMarket`
+   hat keinen Platz für eine Begründung.
+2. Die Kette macht daraus `NO_DATA`.
+3. `refreshMarketData` zählt `noSource += 1`.
+
+Ohne diese Auskunft ist die wichtigste Betriebsfrage nicht beantwortbar:
+**Ist 2 von 11 das gewollte Verhalten eines strengen Filters — oder ein
+Fehler?** Beides sieht im Log identisch aus, und die Antwort entscheidet, ob
+der Bot je handeln kann.
+
+### Warum keine Vertragsänderung
+
+`MarketDataAdapter` gilt für **alle** Anbieter. Eine Auswahlbegründung ist eine
+Eigenheit genau eines von ihnen; sie in den gemeinsamen Vertrag zu heben würde
+jeden künftigen Adapter zwingen, ein Feld zu füllen, das ihn nichts angeht.
+
+Statt dessen eine **Ablage, die der Aufrufer besitzt**: der Consumer legt sie
+an, gibt sie dem Adapterbau mit, und `refreshMarketData` leert sie nach jedem
+Lauf in eine Log-Zeile. Der Adapter trägt ein, wenn er nichts wählen konnte.
+Fehlt die Ablage, fällt nur die Begründung weg — nichts am Verhalten.
+
+Kein gemeinsam genutzter Zustand über Prozessgrenzen: die Aufträge laufen im
+Consumer-Zyklus nacheinander (`for (const job of claimed)`), es kann sich also
+nichts vermischen. Das Leeren beim Auslesen ist getestet — ohne es summierte
+sich der Zähler über alle Läufe auf und jede Zeile meldete die Gründe von
+gestern mit.
+
+### „Kein Pool" ist nicht „abgelehnter Pool"
+
+Meldet DexScreener zu einem Token gar keinen Pool, steht `NO_POOL_REPORTED`
+statt einer Ablehnung. Beides als „kein Markt" zu zählen wäre richtig, aber
+nicht auskunftsfähig: das eine heißt „unser Filter war streng", das andere
+„der Anbieter kennt den Token nicht".
+
+### Was die Zahlen noch nicht sagen
+
+Zum Zeitpunkt dieses Commits ist **nicht bekannt**, welche Gründe die neun
+Ablehnungen tragen. Die Vermutung liegt bei `POOL_TOO_YOUNG` (die Auswahl
+verlangt 15 Minuten, das Vorsieb der Discovery nur 5) und
+`TURNOVER_IMPLAUSIBLE` (Volumen über dem 50-fachen der Liquidität — bei
+frischen Memecoins keine Seltenheit). Das ist eine Hypothese und steht hier
+ausdrücklich als solche. Der nächste Lauf beantwortet es mit Zahlen.

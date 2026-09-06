@@ -49,6 +49,16 @@ export interface HandlerDeps {
    * provider-health-Dienst, nicht aus dem Speicher dieses Prozesses.
    */
   readonly statusOf?: (id: KnownProviderId) => ProviderStatus;
+  /**
+   * Ablage fuer die Ablehnungsgruende der Marktauswahl.
+   *
+   * Sie gehoert dem Prozess, der die Adapter baut (der Consumer), weil genau
+   * der sie beim Bauen mitgibt. Fehlt sie, faellt nur die Begruendung im Log
+   * weg — nichts am Verhalten.
+   */
+  readonly rejections?: {
+    drain(): { reasons: Readonly<Record<string, number>>; tokens: number };
+  };
 }
 
 /** Ergebnis eines Auftrags, der auf Daten wartet statt welche zu erfinden. */
@@ -226,6 +236,7 @@ class MarketRefreshHandler implements JobHandler {
       clock: systemClock,
       adapters: this.deps.adapters ?? new Map(),
       statusOf: statusOfFrom(this.deps),
+      ...(this.deps.rejections !== undefined ? { rejections: this.deps.rejections } : {}),
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       maxTokens: MAX_TOKENS_TRACKED,
     });

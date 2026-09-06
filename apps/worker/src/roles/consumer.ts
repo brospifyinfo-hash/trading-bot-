@@ -6,7 +6,7 @@ import type { ProviderStatus } from "@sae/providers";
 
 import { JobConsumer } from "../consumer";
 import { buildHandlers } from "../handlers";
-import { buildMarketAdapters } from "../pipeline/market-adapters";
+import { buildMarketAdapters, createRejectionTally } from "../pipeline/market-adapters";
 import type { RoleContext, RoleHandler } from "../role";
 
 /**
@@ -45,9 +45,15 @@ export const consumerRole: RoleHandler = {
     // Die Adapter, mit denen die Kette ueberhaupt jemanden fragen kann. Bis
     // hierher war diese Abbildung immer leer, und jeder Abruf endete mit
     // NO_SOURCE — korrekt und nutzlos zugleich.
+    // Eine Ablage, zwei Nutzer: der Adapter traegt ein, der Auffrischungslauf
+    // leert und protokolliert. Sie liegt hier, weil hier die Adapter gebaut
+    // werden — und die Auftraege laufen im Zyklus nacheinander, es kann sich
+    // also nichts vermischen.
+    const rejections = createRejectionTally();
     const adapters = buildMarketAdapters({
       env: loadEnv(providerEnvSchema, process.env),
       clock: systemClock,
+      rejections,
     });
 
     // Der Anbieterzustand kommt aus den PERSISTIERTEN Messungen des
@@ -73,6 +79,7 @@ export const consumerRole: RoleHandler = {
         logger: ctx.logger,
         env: process.env,
         adapters,
+        rejections,
         // Ohne Messung: UNAVAILABLE. Ohne Messung ist nichts bekannt, und ein
         // unbekannter Zustand darf keinen Abruf tragen.
         statusOf: (id: KnownProviderId): ProviderStatus => known.get(id) ?? "UNAVAILABLE",

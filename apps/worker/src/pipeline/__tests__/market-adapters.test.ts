@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Clock } from "@sae/core";
 
-import { buildMarketAdapters, USD_ANCHOR_QUOTE_MINTS } from "../market-adapters";
+import {
+  buildMarketAdapters,
+  createRejectionTally,
+  USD_ANCHOR_QUOTE_MINTS,
+} from "../market-adapters";
 
 /**
  * Die Brücke vom Anbieter in die Kette.
@@ -163,5 +167,76 @@ describe("Quote-Anker", () => {
   it("fuehrt SOL, USDC und USDT", () => {
     expect(USD_ANCHOR_QUOTE_MINTS).toHaveLength(3);
     expect(USD_ANCHOR_QUOTE_MINTS).toContain(USDC);
+  });
+});
+
+describe("Warum kein Markt gewaehlt wurde", () => {
+  /**
+   * `fetchMarket` kann nur `null` sagen. Der Grund — den `selectMarket` genau
+   * kennt — endete damit an dieser Stelle, und im Betrieb blieb die Auskunft
+   * „noSource: 9": neun Token ohne Daten, ohne ein Wort dazu, warum. Die
+   * Ablage traegt ihn heraus, ohne den Adapter-Vertrag zu aendern.
+   */
+  function mitAblage(body: string) {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      ({ ok: true, status: 200, text: async () => body }) as unknown as Response) as typeof fetch;
+    const rejections = createRejectionTally();
+    const adapters = buildMarketAdapters({
+      env: { DEXSCREENER_BASE_URL: "https://api.example.invalid" },
+      clock: fixedClock,
+      rejections,
+    });
+    return {
+      adapter: adapters.get("dexscreener")!,
+      rejections,
+      restore: () => {
+        globalThis.fetch = original;
+      },
+    };
+  }
+
+  it("nennt den Ausschlussgrund, statt ihn zu verschlucken", async () => {
+    // Ein Pool, der zu jung ist: die Auswahl verlangt 15 Minuten, dieser ist
+    // eine Minute alt. Genau der Fall, der bei frischen Memecoins haeufig ist.
+    const jung = JSON.stringify([
+      pair({ pairCreatedAt: T0.getTime() - 60 * 1_000 }),
+    ]);
+    const { adapter, rejections, restore } = mitAblage(jung);
+    try {
+      expect(await adapter.fetchMarket(MEME)).toBeNull();
+    } finally {
+      restore();
+    }
+
+    const counts = rejections.drain();
+    expect(counts.tokens).toBe(1);
+    expect(counts.reasons["POOL_TOO_YOUNG"]).toBe(1);
+  });
+
+  it("meldet auch den Fall, dass der Anbieter gar keinen Pool kennt", async () => {
+    const { adapter, rejections, restore } = mitAblage("[]");
+    try {
+      expect(await adapter.fetchMarket(MEME)).toBeNull();
+    } finally {
+      restore();
+    }
+    const counts = rejections.drain();
+    // Kein Pool ist etwas anderes als ein abgelehnter Pool. Beides als
+    // „kein Markt" zu zaehlen waere richtig, aber nicht auskunftsfaehig.
+    expect(counts.reasons["NO_POOL_REPORTED"]).toBe(1);
+  });
+
+  it("leert sich beim Auslesen", async () => {
+    const { adapter, rejections, restore } = mitAblage("[]");
+    try {
+      await adapter.fetchMarket(MEME);
+    } finally {
+      restore();
+    }
+    expect(rejections.drain().tokens).toBe(1);
+    // Sonst summierte sich der Zaehler ueber alle Laeufe hinweg auf und das
+    // Log meldete jedes Mal die Gruende von gestern mit.
+    expect(rejections.drain().tokens).toBe(0);
   });
 });

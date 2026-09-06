@@ -44,9 +44,62 @@ export const USD_ANCHOR_QUOTE_MINTS: readonly string[] = [
   "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
 ];
 
+/**
+ * Zaehlt, warum ein Token keinen brauchbaren Markt hatte.
+ *
+ * Ohne sie endet jede Ablehnung als `noSource: 9` — eine Zahl, die sagt, DASS
+ * neun Token nichts geliefert haben, und verschweigt, WARUM. `selectMarket`
+ * kennt den Grund genau (`POOL_TOO_YOUNG`, `TURNOVER_IMPLAUSIBLE`,
+ * `UNUSABLE_QUOTE`, …); er wurde bisher an drei Stellen hintereinander
+ * weggeworfen, weil der Adapter nur `null` zurueckgeben kann.
+ *
+ * Die Ablage gehoert dem Aufrufer und wird nach jedem Lauf geleert. Absichtlich
+ * kein zweiter Rueckgabewert an `MarketDataAdapter.fetchMarket`: dessen
+ * Vertrag gilt fuer alle Anbieter, und eine Auswahlbegruendung ist eine
+ * Eigenheit dieses einen.
+ */
+export interface RejectionTally {
+  /** Ein Token ohne waehlbaren Markt, mit den Gruenden seiner Pools. */
+  record(mint: string, reasons: readonly string[]): void;
+}
+
+export interface RejectionCounts {
+  /** Grund -> wie oft. Ein Token kann mehrere Pools mit je eigenem Grund haben. */
+  readonly reasons: Readonly<Record<string, number>>;
+  /** Wie viele Token ueberhaupt ohne Markt blieben. */
+  readonly tokens: number;
+}
+
+export function createRejectionTally(): RejectionTally & { drain(): RejectionCounts } {
+  let reasons: Record<string, number> = {};
+  let tokens = 0;
+  return {
+    record(_mint: string, list: readonly string[]): void {
+      tokens += 1;
+      for (const r of list) {
+        // Ausgeschrieben statt `(reasons[r] ?? 0) + 1`: `sae/no-numeric-fallback`
+        // schlaegt dort an, und zwar zu Recht — die Regel kann einen Zaehler
+        // nicht von einem ersetzten Messwert unterscheiden. Sie deshalb
+        // stillzulegen waere der falsche Weg; zwei Zeilen sind billiger als
+        // eine abgestumpfte Regel.
+        const bisher = reasons[r];
+        reasons[r] = bisher === undefined ? 1 : bisher + 1;
+      }
+    },
+    drain(): RejectionCounts {
+      const out = { reasons, tokens };
+      reasons = {};
+      tokens = 0;
+      return out;
+    },
+  };
+}
+
 export interface MarketAdapterDeps {
   readonly env: ProviderEnv;
   readonly clock: Clock;
+  /** Optional: sammelt die Ablehnungsgruende der Marktauswahl. */
+  readonly rejections?: RejectionTally;
 }
 
 /**
@@ -121,7 +174,17 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
       });
 
       const chosen = selection.chosen;
-      if (chosen === null) return null;
+      if (chosen === null) {
+        // Kein waehlbarer Markt. Der Grund steht in `selection.rejected` und
+        // waere hier sonst zu Ende — `fetchMarket` kann nur `null` sagen.
+        deps.rejections?.record(
+          wanted,
+          selection.rejected.length > 0
+            ? selection.rejected.map((r) => r.rejection)
+            : ["NO_POOL_REPORTED"],
+        );
+        return null;
+      }
 
       // Ohne Preis kein Marktwert. `MarketFields.priceUsd` ist bewusst nicht
       // nullable — ein Datensatz ohne Preis ist kein Marktdatensatz.
