@@ -2,7 +2,7 @@ import { providerId, systemClock } from "@sae/core";
 import { loadEnv, providerEnvSchema, readProviderConfig, type KnownProviderId } from "@sae/config";
 import { summarizeFleet, type ProviderStatus, type ProviderStatusReport } from "@sae/providers";
 import { DexScreenerMarketAdapter } from "@sae/providers";
-import { createDatabase, ProviderHealthStore } from "@sae/db";
+import { createDatabase, ProviderHealthStore, ProviderReadinessStore } from "@sae/db";
 
 import type { RoleContext, RoleHandler } from "../role";
 
@@ -62,6 +62,8 @@ async function probeDexScreener(baseUrl: string | undefined): Promise<{
   readonly detail: string;
   readonly latencyMs: number;
   readonly ok: boolean;
+  /** Fuer die Bereitschaftstabelle. `null`, wenn die Anfrage nie ankam. */
+  readonly httpStatus: number | null;
 }> {
   const adapter = new DexScreenerMarketAdapter({
     clock: systemClock,
@@ -76,6 +78,7 @@ async function probeDexScreener(baseUrl: string | undefined): Promise<{
         detail: `${String(outcome.markets.length)} Datensatz/-saetze, Schema ${adapter.schemaVersion}.`,
         latencyMs: outcome.latencyMs,
         ok: true,
+        httpStatus: outcome.httpStatus,
       };
     case "NO_DATA":
       return {
@@ -83,6 +86,7 @@ async function probeDexScreener(baseUrl: string | undefined): Promise<{
         detail: "Geantwortet, kennt die Sondenadresse aber nicht.",
         latencyMs: outcome.latencyMs,
         ok: true,
+        httpStatus: outcome.httpStatus,
       };
     case "SCHEMA_REJECTED":
       return {
@@ -90,6 +94,7 @@ async function probeDexScreener(baseUrl: string | undefined): Promise<{
         detail: `Antwort nicht lesbar: ${outcome.reason}`,
         latencyMs: outcome.latencyMs,
         ok: false,
+        httpStatus: outcome.httpStatus,
       };
     case "FAILED":
       return {
@@ -102,6 +107,7 @@ async function probeDexScreener(baseUrl: string | undefined): Promise<{
         detail: `${outcome.failure}: ${outcome.reason}`,
         latencyMs: outcome.latencyMs,
         ok: false,
+        httpStatus: outcome.httpStatus,
       };
   }
 }
@@ -161,6 +167,21 @@ export function buildStatusReports(env: NodeJS.ProcessEnv): readonly ProviderSta
 export async function sampleProviderHealth(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly store: ProviderHealthStore;
+  /**
+   * Die Bereitschaftstabelle — optional, weil Tests sie nicht brauchen.
+   *
+   * Ohne sie sagt das System zwei verschiedene Dinge ueber sich selbst. Genau
+   * das war der Fall: `/api/diagnostics/providers` meldete
+   * `dexscreener: CONNECTED` UND `headline: "NO PROVIDER CONFIGURED"` in
+   * derselben Antwort. Die Messreihe lag in `provider_status_samples`, die
+   * Ueberschrift kam aus `provider_capability_status` — und in die schrieben
+   * bis hierher nur die Smoke-Test-Skripte, die niemand ausfuehrt.
+   *
+   * Eine Messung, die zwei Tabellen kennt und nur eine fuellt, laesst die
+   * andere veralten. Beim naechsten Blick aufs Dashboard sucht dann jemand
+   * einen Konfigurationsfehler, den es nicht gibt.
+   */
+  readonly readiness?: ProviderReadinessStore;
   readonly at?: Date;
 }): Promise<{ readonly written: number; readonly marketDataConnected: boolean; readonly summary: string }> {
   const at = input.at ?? systemClock.now();
@@ -172,6 +193,10 @@ export async function sampleProviderHealth(input: {
   // erzeugen, der wie ein Anbieterproblem aussieht.
   const base = buildStatusReports(input.env);
 
+  // HTTP-Status je Anbieter, damit die Bereitschaftstabelle unten denselben
+  // Lauf verbucht und nicht ein zweites Mal anfragt.
+  const probeStatus = new Map<KnownProviderId, number>();
+
   const reports = await Promise.all(
     base.map(async (report): Promise<ProviderStatusReport> => {
       const id = String(report.providerId) as KnownProviderId;
@@ -182,6 +207,7 @@ export async function sampleProviderHealth(input: {
       if (probe === undefined || report.status === "NOT_CONFIGURED") return report;
 
       const result = await probe(baseUrlOf(providerEnv, id));
+      if (result.httpStatus !== null) probeStatus.set(id, result.httpStatus);
       return {
         ...report,
         status: result.status,
@@ -200,6 +226,37 @@ export async function sampleProviderHealth(input: {
 
   const fleet = summarizeFleet(reports);
   const written = await input.store.record(reports, at);
+
+  // Dieselbe Messung auch in die Bereitschaftstabelle. Ein echter Abruf gegen
+  // einen geprueften Vertrag IST der Nachweis, den `productionVerified`
+  // behauptet — es gibt keinen Grund, dafuer auf ein Skript zu warten, das von
+  // Hand gestartet werden muss.
+  if (input.readiness !== undefined) {
+    for (const report of reports) {
+      const id = String(report.providerId) as KnownProviderId;
+      const probe = PROBES[id];
+      if (probe === undefined || report.status === "NOT_CONFIGURED") continue;
+      const httpStatus = probeStatus.get(id);
+      if (httpStatus === undefined) continue;
+
+      await input.readiness.declare({
+        providerId: id,
+        capability: "TOKEN_MARKET",
+        implementationConfidence: "SCHEMA_VERIFIED",
+      });
+      await input.readiness.recordSmokeTest({
+        providerId: id,
+        capability: "TOKEN_MARKET",
+        at,
+        httpStatus,
+        detail: report.detail ?? "",
+        // Der Vertrag stammt aus einer echten Antwort. Ohne ihn waere hier
+        // `false` richtig und der Anbieter bliebe unterhalb CAPABILITY_READY.
+        schemaVerified: true,
+      });
+    }
+  }
+
   return { written, marketDataConnected: fleet.anyMarketDataConnected, summary: fleet.summary };
 }
 
@@ -224,10 +281,12 @@ export const providerHealthRole: RoleHandler = {
       // Dashboards nicht. Ohne Datenbank hat dieser Takt keinen Zweck.
       throw new Error("provider-health benoetigt DATABASE_URL");
     }
-    const store = new ProviderHealthStore(createDatabase(url));
+    const db = createDatabase(url);
+    const store = new ProviderHealthStore(db);
+    const readiness = new ProviderReadinessStore(db);
 
     const runOnce = async (): Promise<void> => {
-      const result = await sampleProviderHealth({ env: process.env, store });
+      const result = await sampleProviderHealth({ env: process.env, store, readiness });
       ctx.logger.info(
         {
           role: "provider-health",

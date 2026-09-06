@@ -141,6 +141,55 @@ describe("Der Zustand kommt jetzt aus einer echten Abfrage", () => {
     expect(r.detail).toContain("nicht lesbar");
   });
 
+  it("traegt einen erfolgreichen Abruf auch in die Bereitschaftstabelle ein", async () => {
+    // Anlass: /api/diagnostics/providers meldete in DERSELBEN Antwort
+    // `dexscreener: CONNECTED` und `headline: "NO PROVIDER CONFIGURED"`.
+    // Die Messreihe lag in provider_status_samples, die Ueberschrift kam aus
+    // provider_capability_status — und dort schrieben nur die
+    // Smoke-Test-Skripte, die niemand ausfuehrt.
+    const declared: unknown[] = [];
+    const smoke: { httpStatus: number; schemaVerified: boolean }[] = [];
+    const readiness = {
+      declare: async (i: unknown) => {
+        declared.push(i);
+      },
+      recordSmokeTest: async (i: { httpStatus: number; schemaVerified: boolean }) => {
+        smoke.push(i);
+        return null;
+      },
+    } as never;
+
+    const { store } = fakeStore();
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      ({ ok: true, status: 200, text: async () => "[]" }) as unknown as Response) as never;
+    try {
+      await sampleProviderHealth({ env: CONFIGURED, store, readiness });
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    expect(declared).toHaveLength(1);
+    expect(smoke).toHaveLength(1);
+    expect(smoke[0]?.httpStatus).toBe(200);
+    // Der Vertrag stammt aus einer echten Antwort — ohne ihn bliebe der
+    // Anbieter unterhalb CAPABILITY_READY.
+    expect(smoke[0]?.schemaVerified).toBe(true);
+  });
+
+  it("traegt fuer einen nicht konfigurierten Anbieter nichts ein", async () => {
+    const declared: unknown[] = [];
+    const readiness = {
+      declare: async (i: unknown) => {
+        declared.push(i);
+      },
+      recordSmokeTest: async () => null,
+    } as never;
+    const { store } = fakeStore();
+    await sampleProviderHealth({ env: {}, store, readiness });
+    expect(declared).toHaveLength(0);
+  });
+
   it("fragt einen nicht konfigurierten Anbieter gar nicht erst", async () => {
     const { written, store } = fakeStore();
     const original = globalThis.fetch;

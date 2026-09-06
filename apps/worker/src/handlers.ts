@@ -3,6 +3,7 @@ import {
   JobQueueRepository,
   OpportunityRepository,
   ProviderHealthStore,
+  ProviderReadinessStore,
   type ClaimedJob,
   type Database,
 } from "@sae/db";
@@ -79,6 +80,7 @@ class ProviderHealthHandler implements JobHandler {
     const result = await sampleProviderHealth({
       env: this.deps.env,
       store: new ProviderHealthStore(this.deps.db),
+      readiness: new ProviderReadinessStore(this.deps.db),
       at: systemClock.now(),
     });
     return {

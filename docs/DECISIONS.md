@@ -1859,3 +1859,49 @@ Der Dienst existierte nicht mehr, das Kommando wäre sofort gescheitert — und
 mit ihm das einzige Skript, das die README als lokalen Einstieg nennt. Ein
 Aufräumen, das die Aufrufer nicht mitzieht, verschiebt den Fehler nur an eine
 Stelle, an der ihn niemand sucht.
+
+## 84. Das System sagte zwei Dinge über sich selbst
+
+Der erste echte Lauf des `provider-health`-Dienstes auf Railway lieferte über
+`/api/diagnostics/providers` in **derselben Antwort**:
+
+```json
+"headline": "NO PROVIDER CONFIGURED",
+"anyProductionVerified": false,
+"healthSamples": [{ "providerId": "dexscreener", "status": "CONNECTED",
+                    "latencyMsP95": 12, "lastSuccessAt": "..." }]
+```
+
+Der Anbieter war nachweislich verbunden — 12 ms Latenz, echter Erfolg — und
+die Überschrift meldete, es sei keiner konfiguriert.
+
+**Zwei Tabellen, zwei Wahrheiten:**
+
+| Aussage | Tabelle | Wer schrieb sie |
+|---|---|---|
+| `CONNECTED` | `provider_status_samples` | der `provider-health`-Dienst |
+| `NO PROVIDER CONFIGURED` | `provider_capability_status` | **nur die Smoke-Test-Skripte** |
+
+Die Skripte werden von Hand gestartet. Also nie. Die Bereitschaftstabelle blieb
+leer, während die Messreihe im Minutentakt volllief.
+
+Das ist die gefährlichere Sorte Fehler: nichts stürzt ab, nichts ist rot, und
+wer aufs Dashboard sieht, sucht einen Konfigurationsfehler, den es nicht gibt.
+
+### Die Messung füllt jetzt beide
+
+`sampleProviderHealth` nimmt optional einen `ProviderReadinessStore` und trägt
+einen erfolgreichen Abruf dort ebenfalls ein — `declare` legt die Zeile an,
+`recordSmokeTest` verbucht den Lauf.
+
+`schemaVerified: true` ist dabei keine Bequemlichkeit: der Vertrag stammt seit
+dem 2026-09-03 aus einer echten Antwort. Ohne ihn wäre `false` richtig und der
+Anbieter bliebe unterhalb `CAPABILITY_READY`.
+
+**Ein echter Abruf gegen einen geprüften Vertrag IST der Nachweis, den
+`productionVerified` behauptet.** Es gibt keinen Grund, dafür auf ein Skript zu
+warten, das jemand von Hand starten muss — und der Zustand, der dabei entsteht,
+ist derselbe.
+
+Der Parameter ist optional, damit Tests ohne Datenbank auskommen. Beide echten
+Aufrufer — die Rolle und der Job-Handler — übergeben ihn.
