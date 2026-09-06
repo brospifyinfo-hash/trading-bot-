@@ -2199,3 +2199,96 @@ der Rückzug hätte nur den nächsten Durchlauf verschoben.
 Ein Statement, ein Durchlauf: aus 9424 offenen Aufträgen werden etwa neun — je
 Auftragsart der neueste. Keine Anbieteranfrage dafür, kein Dead Letter, und die
 9415 zurückgezogenen bleiben mit Begründung nachlesbar.
+
+## §89 — Der Torwächter war richtig gebaut. Er bekam nur nie ein `null` zu sehen.
+
+Gefunden beim Nachsehen, warum im Log des ersten laufenden Consumers keine
+Zeile zu den Marktdaten stand. Der Fehler daneben war der ernstere.
+
+`market-refresh.ts` berechnete die Frische eines Snapshots so:
+
+```ts
+freshnessSeconds:
+  (input.provenance.sourceTimestamp.getTime() -
+   input.provenance.dataTimestamp.getTime()) / 1_000,
+```
+
+Beide Werte sind im Live-Pfad **unsere eigene Uhr**. `dataTimestamp` ist
+`Sourced.observedAt` — und das ist ausdrücklich „UNSERE Kenntniszeit", nicht
+der Messzeitpunkt des Anbieters. `sourceTimestamp` ist `clock.now()` im selben
+Abruf. Die Differenz war deshalb immer ~0.
+
+**Jeder Snapshot von DexScreener wurde als „null Sekunden alt" gespeichert.**
+Für eine Quelle, die überhaupt keinen Zeitstempel liefert.
+
+### Warum das die gefährlichste Stelle war
+
+Der Torwächter `snapshotSupportsEntry` ist seit jeher richtig gebaut und trägt
+den Kommentar:
+
+> „Der Fall, den DexScreener erzwingt: die Quelle liefert keinen
+> Beobachtungszeitpunkt, also ist das Alter unbekannt. Unbekannt ist nicht
+> frisch. **Hier 0 anzunehmen hiesse, die Pruefung abzuschaffen und sie
+> gleichzeitig bestanden zu melden.**"
+
+Genau das ist passiert — nur nicht im Torwächter, sondern zwei Schichten davor.
+Er prüfte korrekt auf `null`, bekam aber immer eine 0.
+
+Damit war die Freshness-Prüfung für Einstiegsentscheidungen **faktisch
+abgeschaltet**, und zwar unsichtbar: kein Fehler, kein Log, kein Test schlug an.
+Die Ablehnung, mit der ich gerechnet hatte („kein Paper Trading, weil
+UNKNOWN_AGE"), wäre nie gekommen.
+
+### Warum keine Lint-Regel das fangen konnte
+
+`sae/no-numeric-fallback` sucht `?? 0`. Hier stand kein Ersatzwert, sondern eine
+Subtraktion zweier Daten — syntaktisch unauffällig. Der Fehler saß nicht im
+Ausdruck, sondern in der **Bedeutung der beiden Operanden**, und die stand nur
+im Kommentar an `Sourced.observedAt`.
+
+Die Lehre ist nicht „mehr Regeln", sondern: an einer Grenze, die einen Wert
+nicht durchreicht, wird er irgendwann neu erfunden. `MarketInputResult` trug
+`sourceTimestamp` und `dataTimestamp`, aber nicht das echte `freshnessSeconds`
+aus `Sourced`. Wer es brauchte, musste es sich bauen.
+
+### Die Korrektur
+
+`MarketInputResult` trägt jetzt `freshnessSeconds: number | null` und reicht
+den Wert **unverändert** aus `Sourced` durch. `market-refresh` rechnet nicht
+mehr, sondern übernimmt.
+
+Beim Test-Fixture bleibt die Differenz stehen und ist dort auch richtig: `asOf`
+ist ein angegebener Datenzeitpunkt und nicht unsere Abrufzeit.
+
+Festgenagelt in `freshness-honesty.test.ts`, drei Zusicherungen: die Kette
+meldet `null`, der Torwächter lehnt bei `null` ab und würde bei `0` freigeben,
+und in der Spalte `source_freshness_seconds` steht `NULL`. Gegengeprüft — mit
+der alten Zeile schlägt der dritte Test mit `expected +0 to be null` fehl.
+
+### Was in der Datenbank steht
+
+Alle Snapshots, die zwischen dem Start des ersten Consumers und diesem Commit
+geschrieben wurden, tragen `source_freshness_seconds = 0`. Das sind echte
+Marktdaten mit einer erfundenen Altersangabe. Sie zu korrigieren ist ein
+`UPDATE … SET source_freshness_seconds = NULL` auf genau diese Zeilen — eine
+Entscheidung des Betreibers, keine, die dieser Commit trifft.
+
+### Dieselbe Zeile stand zweimal da
+
+Nach dem Fund in `market-refresh` habe ich nach dem Muster gesucht statt es
+für einen Einzelfall zu halten. `opportunity-pipeline.ts` rechnete genauso —
+und dort wiegt es schwerer: der Wert geht direkt in `planBranches` und damit in
+die Entscheidung, ob eine Position eröffnet wird.
+
+Beide Stellen reichen jetzt durch. Eine Suche nach `sourceTimestamp.getTime() -`
+findet keine weitere.
+
+Dass beide Stellen unabhängig voneinander dieselbe falsche Rechnung erfanden,
+ist der eigentliche Befund: die Grenze lud dazu ein. Sie tut es nicht mehr.
+
+### Nebenbefund: die Zeile stand auf `debug`
+
+`„Marktdaten aufgefrischt"` wurde mit `logger.debug` geschrieben und war im
+Betrieb damit unsichtbar — ausgerechnet die Meldung, an der man abliest, ob
+Snapshots entstehen. Sie steht jetzt auf `info`, sobald der Lauf Tokens
+angefasst hat, und bleibt sonst leise.

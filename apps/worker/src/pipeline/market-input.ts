@@ -68,6 +68,19 @@ export type MarketInputResult =
       readonly kind: "OK";
       readonly market: MarketFields | null;
       readonly provenance: Omit<DataProvenance, "decisionTimestamp">;
+      /**
+       * Das ECHTE Datenalter des Anbieters — `null`, wenn er keines liefert.
+       *
+       * Steht hier getrennt, weil `DataProvenance` es nicht traegt: dort gibt
+       * es nur `sourceTimestamp` und `dataTimestamp`, und beide sind im
+       * Live-Pfad UNSERE Uhr. Wer daraus die Differenz bildet, bekommt fuer
+       * jeden Anbieter ohne Zeitstempel eine Null — also „taufrisch" fuer
+       * genau die Daten, deren Alter niemand kennt.
+       *
+       * Der Wert kommt unveraendert aus `Sourced.freshnessSeconds` und wird
+       * nirgends errechnet.
+       */
+      readonly freshnessSeconds: number | null;
       /** Nur beim Fixture gesetzt — der Live-Pfad baut die Features selbst. */
       readonly features: FeatureVector | null;
     }
@@ -95,6 +108,10 @@ export async function resolveMarketInput(
       kind: "OK",
       market: null,
       features: request.features,
+      // Beim Fixture ist die Differenz eine echte Aussage: `asOf` ist ein
+      // angegebener Datenzeitpunkt und nicht unsere Abrufzeit.
+      freshnessSeconds:
+        (request.suppliedAt.getTime() - request.features.asOf.getTime()) / 1_000,
       provenance: {
         sourceType: "TEST_FIXTURE",
         // Das Praefix ist nicht Kosmetik: eine CHECK-Constraint in der
@@ -138,11 +155,16 @@ export async function resolveMarketInput(
     kind: "OK",
     market: result.data.value,
     features: null,
+    // Unveraendert aus der Kette. Bei DexScreener ist das `null`.
+    freshnessSeconds: result.data.freshnessSeconds,
     provenance: {
       sourceType: "LIVE",
       sourceProvider: String(result.data.providerId),
       sourceTier: result.data.tier,
       sourceTimestamp: clock.now(),
+      // ACHTUNG beim Lesen: `observedAt` ist UNSERE Kenntniszeit, nicht die
+      // Messzeit des Anbieters. Die Differenz zu `sourceTimestamp` ist
+      // deshalb keine Frische, sondern die Dauer des eigenen Abrufs.
       dataTimestamp: result.data.observedAt,
       dataQuality: 0,
     },

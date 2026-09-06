@@ -136,10 +136,20 @@ export async function refreshMarketData(
           fetchedAt: input.provenance.sourceTimestamp,
           providerId: input.provenance.sourceProvider as never,
           tier: input.provenance.sourceTier ?? "FALLBACK",
-          freshnessSeconds:
-            (input.provenance.sourceTimestamp.getTime() -
-              input.provenance.dataTimestamp.getTime()) /
-            1_000,
+          // Das echte Datenalter, unveraendert aus der Kette — bei
+          // DexScreener `null`.
+          //
+          // Hier stand die Differenz `sourceTimestamp - dataTimestamp`. Beide
+          // sind im Live-Pfad UNSERE Uhr (`dataTimestamp` ist
+          // `Sourced.observedAt`, also unsere Kenntniszeit), und sie werden
+          // im selben Abruf gesetzt. Die Differenz war deshalb immer ~0 —
+          // jeder Snapshot einer Quelle ohne Zeitstempel wurde als
+          // „null Sekunden alt" gespeichert. Genau davor warnt der Kommentar
+          // in `snapshotSupportsEntry`: „Hier 0 anzunehmen hiesse, die
+          // Pruefung abzuschaffen und sie gleichzeitig bestanden zu melden."
+          // Der Gate hat richtig geprueft, er bekam nur nie ein `null` zu
+          // sehen.
+          freshnessSeconds: input.freshnessSeconds,
         },
       });
 
@@ -149,8 +159,16 @@ export async function refreshMarketData(
     },
   });
 
-  deps.logger.debug(
-    { jobKey, processed: run.processed, skipped: run.skipped, ingested, noSource },
+  // `info`, sobald der Lauf tatsaechlich Tokens angefasst hat, sonst `debug`.
+  //
+  // Vorher stand die Zeile immer auf `debug` und war im Betrieb damit
+  // unsichtbar — ausgerechnet die Meldung, an der man ablesen kann, ob
+  // Snapshots entstehen. Die Discovery meldet sich auf `info`, dieser Schritt
+  // gehoert daneben. Ohne Tokens bleibt es leise: eine Zeile alle 20 Sekunden,
+  // die „nichts zu tun" sagt, verdeckt die, die etwas sagt.
+  const level = run.processed > 0 ? "info" : "debug";
+  deps.logger[level](
+    { jobKey, processed: run.processed, skipped: run.skipped, ingested, noSource, rejected },
     "Marktdaten aufgefrischt",
   );
 

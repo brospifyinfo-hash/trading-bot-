@@ -215,10 +215,13 @@ export async function runOpportunityPipeline(
         : {
             providerId: input.provenance.sourceProvider as never,
             tier: input.provenance.sourceTier,
-            freshnessSeconds:
-              (input.provenance.sourceTimestamp.getTime() -
-                input.provenance.dataTimestamp.getTime()) /
-              1_000,
+            // Unveraendert aus der Kette. Hier stand dieselbe Subtraktion wie
+            // in `market-refresh` — und hier wog sie schwerer: dieser Wert
+            // geht direkt in `planBranches` und damit in die Entscheidung, ob
+            // eine Position eroeffnet wird. Beide Operanden sind im Live-Pfad
+            // unsere eigene Uhr, die Differenz war immer ~0, und damit galt
+            // eine Quelle ohne jeden Zeitstempel als taufrisch.
+            freshnessSeconds: input.freshnessSeconds,
             contributors: [],
           },
     dataQuality,
