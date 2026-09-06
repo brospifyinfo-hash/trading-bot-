@@ -65,6 +65,12 @@ export interface EnqueueInput {
   readonly maxAttempts?: number;
 }
 
+/** Was im `result` eines zurueckgezogenen Auftrags steht. */
+const SUPERSEDED_RESULT = {
+  status: "SUPERSEDED",
+  reason: "Ein neuerer Auftrag derselben Art mit derselben Nutzlast lag in der Queue.",
+} as const;
+
 export class JobQueueRepository {
   constructor(private readonly db: Database) {}
 
@@ -322,6 +328,98 @@ export class JobQueueRepository {
       .where(inArray(jobQueue.id, expired))
       .returning({ id: jobQueue.id });
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * Ueberholte Takte zurueckziehen.
+   *
+   * Periodische Auftraege sind Momentaufnahmen: „hol die aktuellen Marktdaten",
+   * „such neue Tokens", „miss die Anbieter". Liegen davon fuenf gleiche in der
+   * Queue, weil laengere Zeit niemand abgearbeitet hat, dann ist der aelteste
+   * NICHT vier Arbeitsschritte wert — er wuerde exakt dieselbe Arbeit tun wie
+   * der neueste, nur vier Mal zusaetzlich und auf Kosten des Anbieterbudgets.
+   *
+   * Der Anlass war ein gemessener: 9424 offene Auftraege, angesammelt in rund
+   * neun Stunden, in denen der Scheduler einreihte und kein Consumer lief.
+   * Haette der erste Consumer die einfach abgearbeitet, waeren daraus rund
+   * zweitausend DexScreener-Anfragen in wenigen Minuten geworden — direkt in
+   * die Drosselung, und der erste echte Lauf des Systems haette wie ein Defekt
+   * ausgesehen.
+   *
+   * Die Regel ist bewusst nicht „aelter als X Minuten": eine Zeitschwelle
+   * muesste je Takt anders sein (zehn Sekunden bis sechs Stunden) und waere
+   * damit eine zweite Stelle, an der Taktintervalle gepflegt werden. Statt
+   * dessen die Aussage, um die es tatsaechlich geht: **existiert ein neuerer
+   * Auftrag derselben Art mit derselben Nutzlast, ist der aeltere ueberholt.**
+   * Genau einer je (Art, Nutzlast) bleibt stehen, und zwar der neueste.
+   *
+   * Die Nutzlast gehoert in den Vergleich: bei tokenbezogenen Auftraegen
+   * (`SCORE_TOKEN` mit einem Mint) waeren sonst verschiedene Tokens
+   * „dieselbe Arbeit". `jsonb` vergleicht schluesselordnungsunabhaengig.
+   *
+   * Zustand `DONE` und nicht `DEAD`: hier ist nichts fehlgeschlagen. Das Dead
+   * Letter mit tausenden Nicht-Fehlern zu fuellen wuerde die echten darin
+   * unsichtbar machen. Das `result` sagt, was passiert ist — verschwinden tut
+   * der Auftrag nicht.
+   */
+  async retireSuperseded(at: Date, limit = 2_000): Promise<number> {
+    return this.db.transaction(async (tx) => {
+      const veraltet = tx
+        .select({ id: jobQueue.id })
+        .from(jobQueue)
+        .where(
+          and(
+            eq(jobQueue.state, "QUEUED"),
+            sql`exists (
+              select 1 from job_queue as neuer
+              where neuer.state = 'QUEUED'
+                and neuer.kind = ${jobQueue.kind}
+                and neuer.payload = ${jobQueue.payload}
+                and (neuer.enqueued_at, neuer.id) > (${jobQueue.enqueuedAt}, ${jobQueue.id})
+            )`,
+          ),
+        )
+        .orderBy(asc(jobQueue.enqueuedAt))
+        .limit(limit)
+        .for("update", { skipLocked: true });
+
+      const rows = await tx
+        .update(jobQueue)
+        .set({
+          state: "DONE",
+          finishedAt: at,
+          leaseUntil: null,
+          result: SUPERSEDED_RESULT,
+        })
+        // Der Zustand steht ein zweites Mal in der Bedingung: zwischen Auswahl
+        // und Update kann ein anderer Worker denselben Auftrag beansprucht
+        // haben. `skipLocked` macht das unwahrscheinlich, nicht unmoeglich.
+        .where(and(inArray(jobQueue.id, veraltet), eq(jobQueue.state, "QUEUED")))
+        .returning({
+          dedupeKey: jobQueue.dedupeKey,
+          kind: jobQueue.kind,
+          attempts: jobQueue.attempts,
+        });
+
+      if (rows.length > 0) {
+        // Auch der zurueckgezogene Takt gehoert in die Historie: sein
+        // Fensterschluessel darf nicht erneut eingereiht werden.
+        await tx
+          .insert(jobQueueHistory)
+          .values(
+            rows.map((r) => ({
+              dedupeKey: r.dedupeKey,
+              kind: r.kind,
+              state: "DONE" as const,
+              attempts: r.attempts,
+              finishedAt: at,
+            })),
+          )
+          .onConflictDoNothing();
+      }
+
+      return rows.length;
+    });
   }
 
   /** Verlaengert die Frist eines laufenden Auftrags (Heartbeat). */

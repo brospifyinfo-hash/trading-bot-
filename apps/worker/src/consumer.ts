@@ -47,6 +47,8 @@ export interface ConsumerCycle {
   readonly retried: number;
   readonly dead: number;
   readonly reclaimed: number;
+  /** Ueberholte Takte, die zurueckgezogen statt ausgefuehrt wurden. */
+  readonly superseded: number;
   readonly unhandled: number;
 }
 
@@ -87,6 +89,17 @@ export class JobConsumer {
       this.#o.logger.warn(
         { count: reclaimed.length },
         "Auftraege mit abgelaufener Frist zurueckgegeben",
+      );
+    }
+
+    // Vor dem Ziehen und nicht danach: sonst arbeitet dieser Durchlauf
+    // ausgerechnet die aeltesten und damit ueberholten Auftraege ab. Sie
+    // stehen in der Reihenfolge ganz vorn.
+    const superseded = await this.#o.queue.retireSuperseded(now);
+    if (superseded > 0) {
+      this.#o.logger.info(
+        { superseded },
+        "Ueberholte Takte zurueckgezogen — ein neuerer Auftrag derselben Art lag vor",
       );
     }
 
@@ -158,7 +171,15 @@ export class JobConsumer {
       }
     }
 
-    return { claimed: claimed.length, done, retried, dead, reclaimed: reclaimed.length, unhandled };
+    return {
+      claimed: claimed.length,
+      done,
+      retried,
+      dead,
+      reclaimed: reclaimed.length,
+      superseded,
+      unhandled,
+    };
   }
 
   start(intervalMs = 1_000): void {

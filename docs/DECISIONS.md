@@ -2135,3 +2135,67 @@ Er schreibt Zeilen in `tokens` und sonst nichts. Keine Handelsentscheidung,
 keine Gelegenheit, keine Position. Eine Discovery-Quelle sagt „diesen Token gibt
 es und er ist mir aufgefallen", nicht „er ist gut" — die Vermischung beider
 Rollen ist der Grund, warum viele Bots handeln, was gerade auf einer Liste steht.
+
+## §88 — 9424 offene Aufträge: warum der erste Consumer sie nicht abarbeiten darf
+
+Der Infrastruktur-Check nach der Migration meldete beiläufig: **Queue 9424 offen
+/ 0 Dead Letter.** Das ist kein Fehler, sondern die Buchführung von rund neun
+Stunden, in denen der Scheduler einreihte und kein Consumer lief — der
+`consumer`-Dienst existiert auf Railway noch nicht.
+
+Rechnet man die Takte zusammen (10 s bis 6 h, in Summe ~1100 Aufträge je
+Stunde), passt die Zahl auf die Stunde genau. Darunter rund **1030
+`DISCOVER_TOKENS`**.
+
+### Warum das ein Problem ist
+
+Seit §87 macht jeder dieser Aufträge zwei echte DexScreener-Anfragen. Der erste
+Consumer hätte sie **älteste zuerst** abgearbeitet — `claim` ordnet nach
+`priority, run_after` — und dabei in wenigen Minuten rund **zweitausend
+Anfragen** abgesetzt. DexScreener drosselt bei deutlich weniger. Der erste echte
+Lauf des Systems hätte wie ein Defekt ausgesehen.
+
+Schlimmer als die Drosselung ist aber, was diese Aufträge überhaupt getan
+hätten: **nichts Neues.** Ein Discovery-Takt für das Zeitfenster „gestern 14:30"
+holt keine Daten von gestern. Er holt die von jetzt — genau wie die 1029 anderen
+direkt davor und danach.
+
+### Die Regel
+
+Periodische Aufträge sind Momentaufnahmen. Liegen fünf gleiche offen, ist der
+älteste nicht vier Arbeitsschritte wert.
+
+> **Existiert ein neuerer offener Auftrag derselben Art mit derselben Nutzlast,
+> ist der ältere überholt.** Genau einer je (Art, Nutzlast) bleibt stehen — der
+> neueste.
+
+Ausdrücklich **keine** Zeitschwelle. Eine müsste je Takt anders sein (zehn
+Sekunden bis sechs Stunden) und wäre damit eine zweite Stelle, an der
+Taktintervalle gepflegt werden — und die erste, die beim nächsten neuen Takt
+vergessen wird.
+
+Die **Nutzlast** gehört in den Vergleich: bei tokenbezogenen Aufträgen
+(`SCORE_TOKEN` mit einem Mint) wären sonst zwei verschiedene Tokens „dieselbe
+Arbeit", und einer fiele still weg. `jsonb` vergleicht
+schlüsselordnungsunabhängig.
+
+`retireSuperseded` läuft im Consumer-Zyklus **vor** dem Ziehen. Danach wäre es
+sinnlos: der Zyklus hätte sich gerade die ältesten und damit überholten
+Aufträge geholt.
+
+### `DONE`, nicht `DEAD`
+
+Hier ist nichts fehlgeschlagen. Das Dead Letter mit tausenden Nicht-Fehlern zu
+füllen würde die echten darin unsichtbar machen — und das Dead Letter ist die
+Stelle, an der man nachsieht, wenn etwas kaputt ist.
+
+Verschwinden tut trotzdem nichts: der Zustand ist `DONE`, im `result` steht
+`{"status":"SUPERSEDED"}` mit Begründung, und der Fensterschlüssel wandert in
+`job_queue_history` — sonst könnte derselbe Takt erneut eingereiht werden und
+der Rückzug hätte nur den nächsten Durchlauf verschoben.
+
+### Was beim ersten Start passiert
+
+Ein Statement, ein Durchlauf: aus 9424 offenen Aufträgen werden etwa neun — je
+Auftragsart der neueste. Keine Anbieteranfrage dafür, kein Dead Letter, und die
+9415 zurückgezogenen bleiben mit Begründung nachlesbar.
