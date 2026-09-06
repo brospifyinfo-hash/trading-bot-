@@ -26,6 +26,19 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // nicht, fuer die sie geloggt wurde.
   "marketDataUsable", "snapshotCount", "phase", "canPaperTrade", "liveTradingEnabled",
   "enqueued", "skipped", "ingested", "noSource", "rejected", "completed",
+  // Zweiter Durchgang, diesmal systematisch: alle Felder, die die Worker-Rollen
+  // tatsaechlich loggen. Der erste Durchgang hatte nur `marketDataUsable`
+  // aufgenommen, und beim naechsten echten Start stand dann
+  // "marketDataConnected: [redacted]" im Log — dieselbe Luecke, eine Zeile
+  // weiter. Ermittelt durch Absuchen aller `logger.*({...})`-Aufrufe in
+  // apps/worker und packages.
+  //
+  // Ausdruecklich NICHT dabei: `message`. Es stammt aus Fehlermeldungen, und
+  // die tragen bei Datenbankfehlern die Verbindungszeichenfolge. Wer eine
+  // Fehlermeldung braucht, benutzt `err`/`error` — dort ist die Behandlung
+  // bewusst und sichtbar.
+  "adapters", "attempted", "attempts", "cadence", "dead", "marketDataConnected",
+  "measured", "note", "processed", "queued", "running", "summary", "waiting", "written",
 ]);
 
 export const REDACTED = "[redacted]";

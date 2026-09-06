@@ -116,6 +116,27 @@ describe("Allowlist", () => {
     expect(redact(zustand)).toEqual(zustand);
   });
 
+  it("laesst die Messung des provider-health-Dienstes durch", () => {
+    // Anlass: der erste echte Lauf auf Railway meldete
+    // "Provider-Status gemessen ... marketDataConnected: [redacted]
+    //  summary: [redacted]". Die Zeile beantwortet damit genau die Frage
+    // nicht, fuer die sie existiert.
+    const messung = {
+      written: 5,
+      marketDataConnected: true,
+      summary: "1 von 1 Marktdatenquellen verbunden.",
+    };
+    expect(redact(messung)).toEqual(messung);
+  });
+
+  it("schwaerzt eine Fehlermeldung weiterhin", () => {
+    // `message` steht bewusst NICHT auf der Liste: Fehlermeldungen aus dem
+    // Datenbanktreiber tragen die Verbindungszeichenfolge.
+    expect(LOG_ALLOWLIST.has("message")).toBe(false);
+    const out = redact({ message: "connect ECONNREFUSED postgres://u:p@host/db" });
+    expect(out).toEqual({ message: REDACTED });
+  });
+
   it("schwaerzt weiterhin alles, was nicht ausdruecklich erlaubt ist", () => {
     // Die Erweiterung darf die Richtung der Liste nicht umkehren.
     const out = redact({ marketDataUsable: true, connectionString: "postgres://u:p@h/db" });
