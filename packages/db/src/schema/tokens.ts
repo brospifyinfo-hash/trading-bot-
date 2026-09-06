@@ -22,7 +22,21 @@ export const tokens = pgTable(
     mint: text("mint").notNull().unique(),
     symbol: text("symbol"),
     name: text("name"),
-    decimals: smallint("decimals").notNull(),
+    /**
+     * Dezimalstellen des Mints — `null`, solange sie nicht on-chain gelesen
+     * wurden.
+     *
+     * War `NOT NULL`, und das war unhaltbar: ein Token kommt ueber eine
+     * Watchlist oder die Discovery ins System, und beide kennen die
+     * Dezimalstellen nicht. Sie stehen im Mint-Account, nicht in einer
+     * Marktdaten-Antwort. Der Zwang zu einem Wert haette bedeutet, einen zu
+     * erfinden — und eine erfundene Dezimalstelle ist im Ausfuehrungspfad ein
+     * Betragsfehler um Zehnerpotenzen.
+     *
+     * `null` heisst hier UNBEKANNT. Kein Code liest die Spalte heute; wer sie
+     * spaeter liest, muss den Fall behandeln.
+     */
+    decimals: smallint("decimals"),
     state: text("state", {
       enum: [
         "DISCOVERED",

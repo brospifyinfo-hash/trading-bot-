@@ -1905,3 +1905,64 @@ ist derselbe.
 
 Der Parameter ist optional, damit Tests ohne Datenbank auskommen. Beide echten
 Aufrufer — die Rolle und der Job-Handler — übergeben ihn.
+
+## 85. Watchlist ist Konfiguration, nicht Discovery
+
+Der `provider-health`-Dienst erreichte DexScreener nachweislich — und die
+Marktdaten-Aufnahme hätte trotzdem dauerhaft `NO_TOKENS` gemeldet. Die
+`tokens`-Tabelle war leer, weil die `discovery`-Rolle ein ausdrücklicher
+Platzhalter ist:
+
+```
+"Rolle gestartet (Phase-1-Platzhalter, keine Logik)"
+```
+
+**Ein Bot, der korrekt nichts tut, ist von einem kaputten schwer zu
+unterscheiden.** Und ohne einen einzigen Snapshot bleibt alles dahinter leer:
+Historie, Features, Paper, Forschung.
+
+Die Watchlist schließt diese Lücke, ohne die Discovery vorwegzunehmen. Der
+Unterschied ist inhaltlich:
+
+| | |
+|---|---|
+| **Discovery** | findet Token, die niemand kannte — braucht eine Quelle, die es noch nicht gibt |
+| **Watchlist** | eine Entscheidung, die jemand getroffen und aufgeschrieben hat |
+
+`WATCHLIST_MINTS` ist deshalb eine Umgebungsvariable und kein Provider. Sie
+wird beim Start des Schedulers angewendet — dort, weil sie keine Discovery ist
+und weil sie so ohne einen vierten Dienst wirksam wird.
+
+### Nichts wird behauptet
+
+Die Token bekommen `state = DISCOVERED`, `discovery_source = WATCHLIST` und
+sonst nichts: kein Symbol, kein Preis, keine Bewertung. Ob sie handelbar sind,
+entscheidet dieselbe Kette wie für jeden anderen Token.
+
+Ein bereits bekannter Token wird nicht zurückgesetzt (`onConflictDoNothing` auf
+`mint`) — findet die Discovery ihn später selbst, behält er seine Herkunft.
+
+Ungültige Adressen werden **gemeldet, nicht geschluckt**: ein Tippfehler soll
+beim Start auffallen und nicht dadurch, dass ein Token nie Daten bekommt.
+
+### `tokens.decimals` musste nullable werden
+
+Die Spalte war `NOT NULL` ohne Vorgabewert. Weder Watchlist noch Discovery
+kennen die Dezimalstellen — sie stehen im Mint-Account on-chain, nicht in einer
+Marktdaten-Antwort oder einer Konfiguration.
+
+Der Zwang zu einem Wert hätte bedeutet, einen zu erfinden. **Eine erfundene
+Dezimalstelle ist im Ausführungspfad ein Betragsfehler um Zehnerpotenzen** —
+die teuerste Sorte stiller Fehler in diesem System. `null` heißt hier
+UNBEKANNT, und keine Zeile Code liest die Spalte heute.
+
+Migration `0011_tokens_decimals_nullable.sql`, verifiziert gegen echtes
+PostgreSQL 16: 11 Migrationen von Null angewendet, 61 Tabellen, ein Token ohne
+Dezimalstellen einfügbar.
+
+Drizzle hätte die Datei `0010_chief_the_stranger.sql` genannt — numerisch
+kollidierend mit `0010_decisions_observations.sql`, weil `0001` seit
+Entscheidung 78 fehlt und Drizzle nach Journal-Index nummeriert. Funktional
+egal (Drizzle sortiert nach Journal), für einen Menschen aber genau die Frage,
+die in Entscheidung 78 schon zweimal Zeit gekostet hat. Deshalb umbenannt, Tag
+im Journal mitgezogen.

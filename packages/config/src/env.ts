@@ -54,6 +54,18 @@ export const baseEnvSchema = z.object({
 
 export const workerEnvSchema = baseEnvSchema.extend({
   WORKER_ROLE: z.enum(WORKER_ROLES),
+  /**
+   * Ausdruecklich benannte Token, kommagetrennt.
+   *
+   * Die Watchlist ist Konfiguration, nicht Discovery: jemand hat entschieden,
+   * diese Adressen zu beobachten. Ohne einen einzigen Token in der Datenbank
+   * meldet die Marktdaten-Aufnahme dauerhaft NO_TOKENS, und die ganze Kette
+   * dahinter bleibt leer — ein Bot, der korrekt nichts tut, ist von einem
+   * kaputten schwer zu unterscheiden.
+   *
+   * Optional. Fehlt sie, bleibt es beim bisherigen Verhalten.
+   */
+  WATCHLIST_MINTS: z.string().optional(),
   SOLANA_RPC_URL: nonEmpty.url(),
   SOLANA_RPC_FALLBACK_URL: nonEmpty.url().optional(),
   /**

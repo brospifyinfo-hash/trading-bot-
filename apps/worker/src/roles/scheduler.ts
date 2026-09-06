@@ -9,7 +9,9 @@ import {
   type CadenceState,
   type JobDispatcher,
 } from "@sae/pipeline";
-import { createDatabase, PostgresDispatcher, ProviderHealthStore } from "@sae/db";
+import { createDatabase, PostgresDispatcher, ProviderHealthStore,
+  ensureWatchlistTokens,
+} from "@sae/db";
 import { summarizeFleet } from "@sae/providers";
 
 import type { RoleContext, RoleHandler } from "../role";
@@ -130,6 +132,34 @@ export const schedulerRole: RoleHandler = {
     const db = createDatabase(url);
     const dispatcher: JobDispatcher = new PostgresDispatcher(db);
     const health = new ProviderHealthStore(db);
+
+    /**
+     * Die Watchlist anwenden, bevor der erste Takt laeuft.
+     *
+     * Sie steht hier und nicht in der discovery-Rolle, weil sie keine
+     * Discovery ist: Discovery findet Token, die niemand kannte; die Watchlist
+     * ist eine Entscheidung, die jemand getroffen und aufgeschrieben hat. Sie
+     * am Anfang des Takts anzuwenden heisst ausserdem, dass sie ohne einen
+     * vierten Dienst wirksam wird.
+     *
+     * Bei jedem Start, nicht nur beim ersten: wer eine Adresse ergaenzt, soll
+     * einen Neustart brauchen und keinen Datenbankzugriff.
+     */
+    const watchlist = await ensureWatchlistTokens({ db, raw: process.env["WATCHLIST_MINTS"] });
+    if (watchlist.rejected.length > 0) {
+      // Ein Tippfehler in einer Adresse soll beim Start auffallen und nicht
+      // dadurch, dass ein Token nie Daten bekommt.
+      ctx.logger.warn(
+        { count: watchlist.rejected.length },
+        "Watchlist-Eintraege sind keine gueltigen Solana-Adressen und wurden uebergangen",
+      );
+    }
+    if (watchlist.added > 0 || watchlist.known > 0) {
+      ctx.logger.info(
+        { added: watchlist.added, known: watchlist.known },
+        "Watchlist angewendet",
+      );
+    }
 
     /**
      * Marktdatenlage aus der Datenbank, nicht aus dem Prozessstart.

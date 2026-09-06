@@ -71,6 +71,13 @@
       "when": 1788262311821,
       "tag": "0010_decisions_observations",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788683535525,
+      "tag": "0011_tokens_decimals_nullable",
+      "breakpoints": true
     }
   ]
 }
