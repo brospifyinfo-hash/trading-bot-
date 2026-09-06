@@ -2409,3 +2409,51 @@ vor. Tatsächlich aufgetreten sind:
 Alle vier sind **gewollte Ausschlüsse**, keine Fehler. Dass die Vermutung
 danebenlag, ist der Beleg dafür, dass die Messung nötig war und nicht die
 Schätzung.
+
+## §92 — `UNUSABLE_QUOTE=10`: der Grund allein entscheidet nichts
+
+Mit den Zahlen aus §91 sieht der erste vollständige Befund so aus:
+
+```
+processed: 25   ingested: 6   noSource: 19
+noSourceReasons: UNUSABLE_QUOTE=10 NO_LIQUIDITY_REPORTED=6 NO_POOL_REPORTED=…
+```
+
+`UNUSABLE_QUOTE` ist der größte Einzelposten. Zuerst geprüft und
+**ausgeschlossen**: vertauschte Handelspaare. `selectMarket` testet
+`WRONG_BASE_TOKEN` **vor** `UNUSABLE_QUOTE`, und `WRONG_BASE_TOKEN` kommt in
+der Auszählung nicht vor. Die zehn Pools handeln also tatsächlich mit unserem
+Token als Basis gegen eine Gegenwährung, die nicht SOL, USDC oder USDT ist.
+
+### Warum das noch keine Antwort ist
+
+Zwei völlig verschiedene Welten erzeugen dieselbe Zahl:
+
+- **Zehn Pools gegen EINE Gegenwährung.** Dann fehlt uns womöglich ein
+  legitimer Anker, und ein einziger Eintrag in `USD_ANCHOR_QUOTE_MINTS` würde
+  die nutzbare Datenmenge deutlich erhöhen.
+- **Zehn Pools gegen ZEHN verschiedene Memecoins.** Dann hat der Filter recht,
+  es gibt nichts zu tun, und jede Lockerung würde Preise hereinlassen, die an
+  der Bewertung der Gegenseite hängen.
+
+Ohne Auszählung sehen beide identisch aus. Also wird ausgezählt, statt geraten
+— dieselbe Lehre wie in §90, wo die Vermutung (`TURNOVER_IMPLAUSIBLE`) sich
+als schlicht falsch herausstellte.
+
+`unusableQuotes` steht jetzt neben `noSourceReasons` und nennt die
+Gegenwährung: das Symbol aus der Anbieterantwort, ersatzweise die Adresse.
+
+### Symbole sind fremder Text
+
+Das Symbol wählt der Token-Ersteller. Ein Zeilenumbruch darin zerlegt eine
+Log-Zeile in zwei, und die zweite sieht aus wie ein eigenständiger Eintrag —
+die billigste Art, eine Aufzeichnung unglaubwürdig zu machen. `safeLabel`
+lässt nur Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich durch und
+kürzt auf 16 Zeichen. Ein Test füttert bewusst ein Symbol, das eine gefälschte
+Erfolgsmeldung enthält.
+
+### Was das Feld NICHT tut
+
+Es lockert nichts. Die Entscheidung, ob ein weiterer Anker zugelassen wird,
+bleibt eine bewusste Änderung an `USD_ANCHOR_QUOTE_MINTS` — mit der Begründung
+in dieser Datei. Ein Messwert ist keine Erlaubnis.

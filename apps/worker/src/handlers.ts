@@ -57,7 +57,11 @@ export interface HandlerDeps {
    * weg — nichts am Verhalten.
    */
   readonly rejections?: {
-    drain(): { reasons: Readonly<Record<string, number>>; tokens: number };
+    drain(): {
+      reasons: Readonly<Record<string, number>>;
+      quotes: Readonly<Record<string, number>>;
+      tokens: number;
+    };
   };
 }
 

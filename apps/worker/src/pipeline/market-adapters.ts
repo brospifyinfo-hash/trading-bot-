@@ -61,19 +61,51 @@ export const USD_ANCHOR_QUOTE_MINTS: readonly string[] = [
 export interface RejectionTally {
   /** Ein Token ohne waehlbaren Markt, mit den Gruenden seiner Pools. */
   record(mint: string, reasons: readonly string[]): void;
+  /**
+   * Bei `UNUSABLE_QUOTE`: wogegen der Pool tatsaechlich handelte.
+   *
+   * Der Grund allein beantwortet die entscheidende Frage nicht. Zehn Pools
+   * gegen **eine** Gegenwaehrung heisst: womoeglich fehlt uns ein legitimer
+   * Anker, und ein Eintrag in `USD_ANCHOR_QUOTE_MINTS` verdreifacht die
+   * nutzbaren Daten. Zehn Pools gegen **zehn verschiedene** Memecoins heisst:
+   * der Filter hat recht und es gibt nichts zu tun. Beides sieht ohne diese
+   * Auszaehlung gleich aus.
+   */
+  recordQuote(label: string): void;
 }
 
 export interface RejectionCounts {
   /** Grund -> wie oft. Ein Token kann mehrere Pools mit je eigenem Grund haben. */
   readonly reasons: Readonly<Record<string, number>>;
+  /** Gegenwaehrung -> wie oft, nur fuer `UNUSABLE_QUOTE`. */
+  readonly quotes: Readonly<Record<string, number>>;
   /** Wie viele Token ueberhaupt ohne Markt blieben. */
   readonly tokens: number;
 }
 
+/**
+ * Macht aus einem Anbieter-Symbol etwas, das gefahrlos ins Log darf.
+ *
+ * Symbole waehlt der Token-Ersteller. Ein Zeilenumbruch darin zerlegt eine
+ * Log-Zeile in zwei, und die zweite sieht aus wie ein eigener Eintrag —
+ * das ist die billigste Art, eine Aufzeichnung unglaubwuerdig zu machen.
+ */
+function safeLabel(raw: string): string {
+  const clean = raw.replace(/[^\p{L}\p{N}._-]/gu, "");
+  if (clean === "") return "?";
+  return clean.length > 16 ? clean.slice(0, 16) : clean;
+}
+
 export function createRejectionTally(): RejectionTally & { drain(): RejectionCounts } {
   let reasons: Record<string, number> = {};
+  let quotes: Record<string, number> = {};
   let tokens = 0;
   return {
+    recordQuote(label: string): void {
+      const key = safeLabel(label);
+      const bisher = quotes[key];
+      quotes[key] = bisher === undefined ? 1 : bisher + 1;
+    },
     record(_mint: string, list: readonly string[]): void {
       tokens += 1;
       for (const r of list) {
@@ -87,8 +119,9 @@ export function createRejectionTally(): RejectionTally & { drain(): RejectionCou
       }
     },
     drain(): RejectionCounts {
-      const out = { reasons, tokens };
+      const out = { reasons, quotes, tokens };
       reasons = {};
+      quotes = {};
       tokens = 0;
       return out;
     },
@@ -183,6 +216,15 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
             ? selection.rejected.map((r) => r.rejection)
             : ["NO_POOL_REPORTED"],
         );
+        // Wogegen gehandelt wurde, wenn die Gegenwaehrung der Ausschlussgrund
+        // war. Das Symbol kommt aus der Anbieterantwort und ist frei
+        // waehlbarer Text — deshalb `safeLabel`. Ohne Symbol die Adresse, die
+        // ist eindeutig und nachschlagbar.
+        for (const r of selection.rejected) {
+          if (r.rejection !== "UNUSABLE_QUOTE") continue;
+          const raw = byPool.get(r.poolAddress);
+          deps.rejections?.recordQuote(raw?.quoteSymbol ?? raw?.quoteMint ?? "?");
+        }
         return null;
       }
 

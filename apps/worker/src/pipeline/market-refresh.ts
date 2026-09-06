@@ -38,7 +38,13 @@ export interface MarketRefreshDeps {
   /** Obergrenze je Lauf. Schuetzt das Rate-Limit-Budget. */
   readonly maxUnitsPerRun: number;
   readonly maxTokens: number;  /** Optional: Ablage fuer die Ablehnungsgruende der Marktauswahl. */
-  readonly rejections?: { drain(): { reasons: Readonly<Record<string, number>>; tokens: number } };
+  readonly rejections?: {
+    drain(): {
+      reasons: Readonly<Record<string, number>>;
+      quotes: Readonly<Record<string, number>>;
+      tokens: number;
+    };
+  };
 }
 
 export interface MarketRefreshResult {
@@ -181,6 +187,11 @@ export async function refreshMarketData(
       noSource,
       rejected,
       ...(why !== undefined && why.tokens > 0 ? { noSourceReasons: tally(why.reasons) } : {}),
+      // Nur wenn es etwas zu sagen gibt: eine leere Zeile jede Minute ist
+      // keine Auskunft, sondern Rauschen.
+      ...(why !== undefined && Object.keys(why.quotes).length > 0
+        ? { unusableQuotes: tally(why.quotes) }
+        : {}),
     },
     "Marktdaten aufgefrischt",
   );

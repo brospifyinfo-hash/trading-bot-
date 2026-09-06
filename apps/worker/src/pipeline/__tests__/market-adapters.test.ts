@@ -240,3 +240,77 @@ describe("Warum kein Markt gewaehlt wurde", () => {
     expect(rejections.drain().tokens).toBe(0);
   });
 });
+
+describe("Wogegen der Pool gehandelt hat", () => {
+  /**
+   * Der Ausschlussgrund allein beantwortet die entscheidende Frage nicht.
+   * Zehn Pools gegen EINE Gegenwaehrung heisst womoeglich: uns fehlt ein
+   * legitimer Anker. Zehn Pools gegen zehn verschiedene Memecoins heisst: der
+   * Filter hat recht. Ohne diese Auszaehlung sieht beides gleich aus.
+   */
+  function mitAblage(body: string) {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      ({ ok: true, status: 200, text: async () => body }) as unknown as Response) as typeof fetch;
+    const rejections = createRejectionTally();
+    const adapters = buildMarketAdapters({
+      env: { DEXSCREENER_BASE_URL: "https://api.example.invalid" },
+      clock: fixedClock,
+      rejections,
+    });
+    return {
+      adapter: adapters.get("dexscreener")!,
+      rejections,
+      restore: () => {
+        globalThis.fetch = original;
+      },
+    };
+  }
+
+  const FREMD = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr";
+
+  it("nennt das Symbol der abgelehnten Gegenwaehrung", async () => {
+    const body = JSON.stringify([
+      pair({ quoteToken: { address: FREMD, symbol: "BONK" } }),
+    ]);
+    const { adapter, rejections, restore } = mitAblage(body);
+    try {
+      expect(await adapter.fetchMarket(MEME)).toBeNull();
+    } finally {
+      restore();
+    }
+    const counts = rejections.drain();
+    expect(counts.reasons["UNUSABLE_QUOTE"]).toBe(1);
+    expect(counts.quotes["BONK"]).toBe(1);
+  });
+
+  it("nimmt die Adresse, wenn kein Symbol dabei ist", async () => {
+    const body = JSON.stringify([pair({ quoteToken: { address: FREMD } })]);
+    const { adapter, rejections, restore } = mitAblage(body);
+    try {
+      await adapter.fetchMarket(MEME);
+    } finally {
+      restore();
+    }
+    // Gekuerzt auf 16 Zeichen, aber eindeutig genug zum Nachschlagen.
+    expect(Object.keys(rejections.drain().quotes)[0]).toBe(FREMD.slice(0, 16));
+  });
+
+  it("laesst ein bosartiges Symbol nicht die Log-Zeile zerlegen", async () => {
+    // Symbole waehlt der Token-Ersteller. Ein Zeilenumbruch darin macht aus
+    // einer Log-Zeile zwei, und die zweite sieht aus wie ein echter Eintrag.
+    const body = JSON.stringify([
+      pair({ quoteToken: { address: FREMD, symbol: 'X\nMarktdaten aufgefrischt ingested="999"' } }),
+    ]);
+    const { adapter, rejections, restore } = mitAblage(body);
+    try {
+      await adapter.fetchMarket(MEME);
+    } finally {
+      restore();
+    }
+    const key = Object.keys(rejections.drain().quotes)[0] ?? "";
+    expect(key).not.toContain("\n");
+    expect(key).not.toContain('"');
+    expect(key).not.toContain(" ");
+  });
+});
