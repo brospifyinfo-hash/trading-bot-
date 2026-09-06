@@ -7,7 +7,7 @@ import {
   type Database,
   type IngestResult,
 } from "@sae/db";
-import type { Logger } from "@sae/observability";
+import { tally, type Logger } from "@sae/observability";
 import { runResumable, type MarketDataAdapter } from "@sae/pipeline";
 import type { ProviderStatus } from "@sae/providers";
 
@@ -180,7 +180,7 @@ export async function refreshMarketData(
       ingested,
       noSource,
       rejected,
-      ...(why !== undefined && why.tokens > 0 ? { noSourceReasons: why.reasons } : {}),
+      ...(why !== undefined && why.tokens > 0 ? { noSourceReasons: tally(why.reasons) } : {}),
     },
     "Marktdaten aufgefrischt",
   );

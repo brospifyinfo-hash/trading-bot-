@@ -49,6 +49,34 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   "withoutAuthorityCheck", "superseded", "noSourceReasons",
 ]);
 
+/**
+ * Eine Haeufigkeitsauszaehlung als EIN Wert statt als Objekt.
+ *
+ * Die Allowlist prueft **jeden** Schluessel, auch die in verschachtelten
+ * Objekten. Bei einem Histogramm sind die Schluessel aber Daten und keine
+ * Feldnamen: `{ POOL_TOO_YOUNG: 4 }` wird zu
+ * `{ POOL_TOO_YOUNG: "[redacted]" }` — die Namen kommen durch, die Zahlen
+ * nicht. Im Betrieb stand deshalb eine Liste von Gruenden ohne jede Angabe,
+ * wie oft welcher zutraf, also genau die Haelfte der Auskunft, um die es
+ * ging.
+ *
+ * Die Gruende einzeln auf die Allowlist zu setzen waere der falsche Weg: es
+ * sind offene Wertemengen (Ablehnungsgruende, Fehlerklassen, Anbieternamen),
+ * und die Liste waere schon beim naechsten neuen Grund wieder unvollstaendig.
+ * Ein String unter einem erlaubten Feldnamen ist die richtige Form.
+ *
+ * Sortiert nach Haeufigkeit, bei Gleichstand alphabetisch — damit dieselbe
+ * Auszaehlung immer gleich aussieht und zwei Zeilen vergleichbar sind.
+ */
+export function tally(counts: Readonly<Record<string, number>>): string {
+  const entries = Object.entries(counts);
+  if (entries.length === 0) return "";
+  return entries
+    .sort((a, b) => (b[1] - a[1] !== 0 ? b[1] - a[1] : a[0].localeCompare(b[0])))
+    .map(([name, count]) => `${name}=${String(count)}`)
+    .join(" ");
+}
+
 export const REDACTED = "[redacted]";
 
 const MAX_DEPTH = 6;

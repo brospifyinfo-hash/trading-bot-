@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LOG_ALLOWLIST, REDACTED, redact } from "../redaction";
+import { LOG_ALLOWLIST, REDACTED, redact, tally } from "../redaction";
 import { createLogger } from "../logger";
 
 /**
@@ -141,5 +141,32 @@ describe("Allowlist", () => {
     // Die Erweiterung darf die Richtung der Liste nicht umkehren.
     const out = redact({ marketDataUsable: true, connectionString: "postgres://u:p@h/db" });
     expect(out).toEqual({ marketDataUsable: true, connectionString: REDACTED });
+  });
+});
+
+describe("Auszaehlungen ueberleben die Allowlist", () => {
+  it("bringt die Zahlen durch, nicht nur die Namen", () => {
+    // Der Fehler, der das noetig machte: die Allowlist prueft JEDEN Schluessel,
+    // auch die in verschachtelten Objekten. Bei einem Histogramm sind die
+    // Schluessel aber Daten. Im Betrieb stand deshalb eine Liste von
+    // Ablehnungsgruenden ohne die Angabe, wie oft welcher zutraf.
+    const alsObjekt = redact({ noSourceReasons: { POOL_TOO_YOUNG: 4 } }) as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(alsObjekt["noSourceReasons"]?.["POOL_TOO_YOUNG"]).toBe(REDACTED);
+
+    const alsWert = redact({ noSourceReasons: tally({ POOL_TOO_YOUNG: 4 }) });
+    expect(alsWert).toEqual({ noSourceReasons: "POOL_TOO_YOUNG=4" });
+  });
+
+  it("sortiert nach Haeufigkeit, bei Gleichstand alphabetisch", () => {
+    // Damit zwei Zeilen vergleichbar sind: dieselbe Auszaehlung muss immer
+    // gleich aussehen.
+    expect(tally({ B: 1, A: 1, C: 9 })).toBe("C=9 A=1 B=1");
+  });
+
+  it("liefert bei nichts auch nichts", () => {
+    expect(tally({})).toBe("");
   });
 });

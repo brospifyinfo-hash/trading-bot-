@@ -2350,3 +2350,62 @@ verlangt 15 Minuten, das Vorsieb der Discovery nur 5) und
 `TURNOVER_IMPLAUSIBLE` (Volumen über dem 50-fachen der Liquidität — bei
 frischen Memecoins keine Seltenheit). Das ist eine Hypothese und steht hier
 ausdrücklich als solche. Der nächste Lauf beantwortet es mit Zahlen.
+
+## §91 — Die Allowlist frisst die Zahlen einer Auszählung
+
+Der erste Lauf mit der neuen Begründung (§90) meldete:
+
+```
+noSourceReasons: NO_LIQUIDITY_REPORTED, POOL_TOO_YOUNG, UNUSABLE_QUOTE,
+                 LIQUIDITY_TOO_LOW, NO_POOL_REPORTED
+```
+
+Fünf Gründe — und **keine einzige Zahl**. Also genau die Hälfte der Auskunft,
+um die es ging: „welcher Grund trifft wie oft zu" bleibt unbeantwortet.
+
+Nachgestellt und bestätigt:
+
+```
+redact({ noSourceReasons: { POOL_TOO_YOUNG: 4 } })
+→ { noSourceReasons: { POOL_TOO_YOUNG: "[redacted]" } }
+```
+
+`redact` prüft **jeden** Schlüssel gegen die Allowlist, auch die in
+verschachtelten Objekten. Das ist richtig so und der Grund, warum die
+Allowlist funktioniert. Nur: bei einem Histogramm sind die Schlüssel **Daten**
+und keine Feldnamen.
+
+### Warum die Gründe nicht auf die Allowlist gehören
+
+Naheliegend wäre, `POOL_TOO_YOUNG` und die anderen aufzunehmen. Das wäre
+falsch: es sind **offene Wertemengen** — Ablehnungsgründe, Fehlerklassen,
+Anbieternamen, Auftragsarten. Die Liste wäre beim nächsten neuen Grund wieder
+unvollständig, und die Lücke fiele wieder erst im Betrieb auf. Das ist
+derselbe Fehler wie in §87, nur eine Ebene tiefer.
+
+Die richtige Form ist ein **String unter einem erlaubten Feldnamen**:
+
+```
+noSourceReasons: "UNUSABLE_QUOTE=7 NO_POOL_REPORTED=4 POOL_TOO_YOUNG=4"
+```
+
+`tally()` in `@sae/observability` macht das, sortiert nach Häufigkeit und bei
+Gleichstand alphabetisch — damit dieselbe Auszählung immer gleich aussieht und
+zwei Zeilen vergleichbar sind. Verwendet an beiden Stellen, die auszählen:
+Marktauffrischung und Discovery-Lauf.
+
+### Was die Gründe schon jetzt sagen
+
+Meine Vermutung aus §90 war **falsch**. `TURNOVER_IMPLAUSIBLE` kommt gar nicht
+vor. Tatsächlich aufgetreten sind:
+
+| Grund | Bedeutung |
+|---|---|
+| `UNUSABLE_QUOTE` | Pool handelt nicht gegen SOL/USDC/USDT — kein verankerter USD-Preis |
+| `POOL_TOO_YOUNG` | Jünger als 15 Minuten |
+| `LIQUIDITY_TOO_LOW` / `NO_LIQUIDITY_REPORTED` | Zu dünn oder ohne Angabe |
+| `NO_POOL_REPORTED` | DexScreener kennt zum Token gar kein Paar |
+
+Alle vier sind **gewollte Ausschlüsse**, keine Fehler. Dass die Vermutung
+danebenlag, ist der Beleg dafür, dass die Messung nötig war und nicht die
+Schätzung.

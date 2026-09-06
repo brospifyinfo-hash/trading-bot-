@@ -20,7 +20,7 @@ import {
   type DiscoverySource,
   type TokenAuthorities,
 } from "@sae/discovery";
-import type { Logger } from "@sae/observability";
+import { tally, type Logger } from "@sae/observability";
 import { statusAllowsUse, type ProviderStatus } from "@sae/providers";
 
 import { dexScreenerProfileDiscovery } from "./discovery-source";
@@ -317,7 +317,9 @@ export async function runTokenDiscovery(deps: DiscoveryRunDeps): Promise<Discove
       rejected: summary.rejected,
       duplicates: summary.duplicates,
       failedSources: summary.failedSources,
-      reasons: summary.reasons,
+      // Als ein Wert, nicht als Objekt: die Allowlist prueft jeden
+      // Schluessel, und Ablehnungsgruende sind Daten, keine Feldnamen.
+      reasons: tally(summary.reasons),
     },
     "Discovery-Lauf abgeschlossen",
   );
