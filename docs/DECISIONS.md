@@ -1809,3 +1809,53 @@ verifizierbarem Zeitstempel dazukommt — ein Solana-RPC liefert mit
 
 Der Snapshot-Pfad im Smoke-Test wählt seinen Markt jetzt außerdem über
 `selectMarket` statt über `markets[0]`.
+
+## 83. Ein Migrationsweg, nicht zwei
+
+`scripts/migrate.sh` spielte die SQL-Dateien in einer Schleife per `psql` ein:
+
+```bash
+for file in packages/db/migrations/*.sql; do
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+done
+```
+
+Das wendet die Migrationen an — und aktualisiert Drizzles Journal
+(`__drizzle_migrations`) nicht. Wer das Skript benutzt hat, hatte danach ein
+migriertes Schema, das `drizzle-kit migrate` für vollständig unmigriert hält.
+Der nächste Lauf in CI oder über den GitHub-Workflow hätte alles erneut
+gefahren.
+
+**Zwei Wege, die dieselbe Datenbank unterschiedlich beurteilen, sind schlimmer
+als ein Weg, der fehlt.** Dasselbe Muster wie die Timescale-Datei in
+Entscheidung 78: eine Datei im Migrationsordner, die nie im Journal stand, hat
+zweimal die Frage ausgelöst, ob das Schema vollständig ist.
+
+Es gibt jetzt genau einen Migrationsweg — `drizzle-kit migrate` —, und alle
+drei Aufrufer benutzen ihn:
+
+| Aufrufer | Zweck |
+|---|---|
+| `scripts/migrate.sh` | lokal, von Hand |
+| `docker/docker-compose.yml` | lokaler Stack |
+| `.github/workflows/db-migrate.yml` | produktiv, mit Bestätigung |
+
+Das Skript prüft zusätzlich auf `-pooler` im Endpunkt — als **Warnung**, nicht
+als Abbruch. Lokal gibt es keinen Pooler, und wer bewusst einen benutzt, soll
+es merken statt blockiert zu werden. Der GitHub-Workflow bricht an derselben
+Stelle hart ab, und das ist dort richtig: produktives DDL über einen
+Transaction-Mode-Pooler ist nicht zuverlässig.
+
+### Ein Folgefehler aus dem eigenen Aufräumen
+
+Beim Entfernen des Redis-Dienstes aus `docker/docker-compose.yml` blieb
+`scripts/dev-up.sh` stehen mit:
+
+```bash
+docker compose ... up -d postgres redis
+```
+
+Der Dienst existierte nicht mehr, das Kommando wäre sofort gescheitert — und
+mit ihm das einzige Skript, das die README als lokalen Einstieg nennt. Ein
+Aufräumen, das die Aufrufer nicht mitzieht, verschiebt den Fehler nur an eine
+Stelle, an der ihn niemand sucht.
