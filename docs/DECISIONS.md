@@ -2732,3 +2732,67 @@ ungeprüft, und `JUPITER_BASE_URL` ist auf keinem Dienst gesetzt. Der
 Rechenweg steht vollständig und ist geprüft; was fehlt, ist der Beleg, dass
 die Anbieter so antworten wie angenommen. Die Sonden aus §95/§96 messen das,
 sobald die Variable gesetzt ist.
+
+## §98 — Alles gebaut, was ohne den Beleg baubar ist
+
+Zwei Arbeiten, für die niemand gebraucht wurde. Der Jupiter-Weg aus §96/§97
+bleibt unverändert; er wird nur zu Ende gebaut.
+
+### Der Quote-Abruf, getrennt vom Ausführungspfad
+
+`JupiterQuoteAdapter` steht neben `JupiterRouterProvider`, nicht in ihm. Der
+Router ist der **Ausführungs**pfad und trägt Health-Tracker, Circuit-Breaker
+und Budget, weil an ihm echte Transaktionen hängen. Hier geht es um eine
+**Messung** — dieselbe Antwort, andere Frage.
+
+Geteilt wird, worauf es ankommt: `quoteResponseSchema`. Zwei Definitionen
+derselben Antwortform laufen irgendwann auseinander, und dann stimmt eine von
+beiden nicht mehr.
+
+### Der Adapter, der `observedAt` endlich füllt
+
+`quoteMarketAdapter` implementiert `MarketDataAdapter` und setzt `observedAt`
+auf den Zeitpunkt, zu dem der **Anbieter** gerechnet hat. Alles dahinter läuft
+unverändert: `sourced()` rechnet daraus `freshnessSeconds`, der Snapshot trägt
+es, der Torwächter prüft es.
+
+Die Abrufe sind **eingespeist** und nicht eingebaut. Damit lässt sich der ganze
+Weg — Quote, Slot, Uhrzeit, Preis, Alter, Torwächter — ohne Netz prüfen, und
+genau dort wohnen die Fehler, die im Betrieb niemand sieht. Der Test führt das
+Ergebnis durch `sourced()` und bekommt `freshnessSeconds: 2`; dieselbe Zahl
+war bisher immer `null` und einmal fälschlich `0` (§89).
+
+Zwei Verweigerungen sind ausdrücklich getestet: **ohne Dezimalstellen** kein
+Preis (eine geratene Dezimalstelle ist ein Betragsfehler um Zehnerpotenzen),
+und **ohne `contextSlot`** kein Ergebnis — die Slot-Uhrzeit wird dann gar
+nicht erst abgefragt, weil ihr Ergebnis feststeht.
+
+Er ersetzt DexScreener **nicht**. Liquidität, Marktkapitalisierung und Volumen
+kommen weiter von dort und werden nur durchgereicht; ein Quote sagt darüber
+nichts. Beigesteuert wird der Preis und dessen Alter.
+
+### Corepack: „behoben" gegen „sieht behoben aus"
+
+Bei jedem Containerstart stand im Log:
+
+```
+! Corepack is about to download …/pnpm-10.33.0.tgz
+```
+
+Der Start hing damit an registry.npmjs.org, obwohl alles Nötige im Image liegt.
+`corepack prepare --activate` im Laufzeit-Abbild legt pnpm hinein — ohne
+Versionsangabe, damit `packageManager` aus der package.json die einzige Stelle
+bleibt, an der die Version steht.
+
+Der Teil, der leicht falsch geht: **dieser Schritt läuft als root, der
+Container läuft als `worker`.** Ohne festes `COREPACK_HOME` landete die Ablage
+in `/root/.cache`, wo `worker` sie nicht findet — und corepack lädt beim Start
+doch wieder. Deshalb `ENV COREPACK_HOME=/opt/corepack` und die Ablage im
+`chown` mit übertragen; corepack schreibt beim Start eine
+`lastKnownGood.json`, und ein Schreibfehler wäre derselbe Startabbruch wie ein
+fehlender Download.
+
+Lokal belegt ist der Mechanismus: `corepack prepare --activate` füllt
+`$COREPACK_HOME/v1/pnpm/10.33.0`. **Nicht** belegt ist der vollständige
+Docker-Bau — dafür gibt es in dieser Umgebung keinen Daemon. Schlägt er fehl,
+behält Railway die laufende Fassung und zeigt den Fehler im Build-Log.

@@ -57,10 +57,39 @@ ENV NODE_ENV=production
 # einzelne Verzeichnisse zu kopieren zerreisst die Verlinkung.
 COPY --from=build /app /app
 
+# pnpm ins Image legen, statt es bei jedem Start zu holen.
+#
+# Ohne diese Zeile laedt corepack die pnpm-Datei bei JEDEM Containerstart neu
+# von registry.npmjs.org — sichtbar als rote Warnzeile im Log:
+#
+#   ! Corepack is about to download .../pnpm-10.33.0.tgz
+#
+# Der Start haengt damit an einem fremden Dienst, obwohl alles Noetige schon
+# im Image liegt. Ist die Registry langsam oder weg, startet der Worker nicht,
+# und der Fehler sieht aus wie ein Anwendungsproblem.
+#
+# `corepack prepare` OHNE Versionsangabe liest `packageManager` aus der
+# package.json im Arbeitsverzeichnis. Das ist Absicht: eine hier eingetragene
+# Version waere eine zweite Stelle, an der die pnpm-Version gepflegt werden
+# muesste, und sie liefe beim naechsten Upgrade still auseinander.
+#
+# COREPACK_HOME muss ein FESTER Pfad sein und nicht die Vorgabe im
+# Heimatverzeichnis: dieser Schritt laeuft als root, der Container laeuft als
+# `worker`. Ohne gemeinsamen Pfad legte root die Ablage nach /root/.cache, wo
+# `worker` sie nicht findet — und corepack laedt beim Start doch wieder.
+# Genau diese Falle macht den Unterschied zwischen "behoben" und "sieht
+# behoben aus".
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack prepare --activate
+
 # Nicht als root laufen: ein Prozess mit Datenbankzugriff braucht keine Rechte
 # am Dateisystem des Containers.
+#
+# Die corepack-Ablage gehoert mit uebertragen: corepack schreibt beim Start
+# eine `lastKnownGood.json`, und ein Schreibfehler waere derselbe Startabbruch
+# wie ein fehlender Download.
 RUN useradd --create-home --shell /bin/bash worker \
- && chown -R worker:worker /app
+ && chown -R worker:worker /app /opt/corepack
 USER worker
 
 # Der Health-Port ist der einzige, den dieser Container oeffnet. Er dient dem
