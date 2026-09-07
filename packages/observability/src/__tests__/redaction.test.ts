@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LOG_ALLOWLIST, REDACTED, redact, tally } from "../redaction";
+import { LOG_ALLOWLIST, REDACTED, describeShape, redact, tally } from "../redaction";
 import { createLogger } from "../logger";
 
 /**
@@ -168,5 +168,43 @@ describe("Auszaehlungen ueberleben die Allowlist", () => {
 
   it("liefert bei nichts auch nichts", () => {
     expect(tally({})).toBe("");
+  });
+});
+
+describe("Antwortform beschreiben", () => {
+  it("nennt Pfade und Typen, aber keine Werte", () => {
+    // Der ganze Zweck: einen Anbietervertrag belegen, ohne die Antwort
+    // auszugeben. Schluesselnamen, Verschachtelung und Typen reichen dafuer.
+    const shape = describeShape({
+      result: { context: { slot: 300_000_000 }, value: { owner: "TokenkegQfeZ" } },
+    });
+    expect(shape).toContain("result.context.slot:number");
+    expect(shape).toContain("result.value.owner:string");
+    expect(shape).not.toContain("300000000");
+    expect(shape).not.toContain("Tokenkeg");
+  });
+
+  it("fuehrt null als eigenen Typ", () => {
+    // Bei einem Mint-Account ist `mintAuthority: null` die Aussage "niemand
+    // kann nachpraegen" — also die wichtigste Information ueberhaupt. Sie mit
+    // "fehlt" zu verwechseln waere derselbe Fehler wie ueberall sonst.
+    expect(describeShape({ mintAuthority: null })).toBe("mintAuthority:null");
+  });
+
+  it("beschreibt eine Liste durch ihr erstes Element", () => {
+    const shape = describeShape({ pairs: [{ priceUsd: "0.1" }, { priceUsd: "0.2" }] });
+    expect(shape).toContain("pairs:array[2]");
+    expect(shape).toContain("pairs[].priceUsd:string");
+    expect(shape).not.toContain("0.1");
+  });
+
+  it("bleibt bei einer absurd tiefen Antwort stehen", () => {
+    let tief: Record<string, unknown> = { ende: 1 };
+    for (let i = 0; i < 50; i += 1) tief = { a: tief };
+    expect(() => describeShape(tief)).not.toThrow();
+  });
+
+  it("liefert eine sortierte und damit vergleichbare Zeile", () => {
+    expect(describeShape({ b: 1, a: "x" })).toBe("a:string b:number");
   });
 });

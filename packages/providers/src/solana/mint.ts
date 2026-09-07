@@ -1,4 +1,5 @@
 import { isBase58Address, providerId, type Clock, type ProviderId } from "@sae/core";
+import { describeShape } from "@sae/observability";
 
 import { classifyFailure, type FailureClass } from "../capability";
 import { unverifiedContract, type ContractResult, type ResponseContract } from "../contract";
@@ -73,7 +74,23 @@ export const SOLANA_MINT_CONTRACT: ResponseContract<MintAccount | null> = unveri
 export type MintFetchOutcome =
   | { readonly kind: "OK"; readonly account: MintAccount | null; readonly latencyMs: number }
   /** Antwort kam an, taugt aber nicht — inklusive „noch kein Vertrag". */
-  | { readonly kind: "SCHEMA_REJECTED"; readonly reason: string; readonly latencyMs: number }
+  | {
+      readonly kind: "SCHEMA_REJECTED";
+      readonly reason: string;
+      readonly latencyMs: number;
+      /**
+       * Die FORM der Antwort — Schluesselpfade und Typen, keine Werte.
+       *
+       * Eine Ablehnung, die nicht sagt, was stattdessen kam, zwingt jeden
+       * dazu, den Anbieter selbst aufzurufen. Genau das ist hier nicht immer
+       * moeglich: aus der Entwicklungsumgebung ist kein Solana-RPC
+       * erreichbar, wohl aber aus dem laufenden Worker. Die Form im Log ist
+       * damit der Weg, wie ein ungeprueftes Schema zu einem geprueften wird —
+       * ohne dass jemand eine Antwort abtippt und ohne dass Werte im Log
+       * landen.
+       */
+      readonly shape: string;
+    }
   /** Das RPC selbst hat einen Fehler gemeldet — mit HTTP 200. */
   | { readonly kind: "RPC_ERROR"; readonly code: number; readonly message: string; readonly latencyMs: number }
   | {
@@ -143,7 +160,7 @@ export class SolanaMintAdapter {
     if (!isBase58Address(mint)) {
       // Keine Anfrage fuer etwas, das keine Adresse ist. Das RPC wuerde sie mit
       // einem Fehler beantworten, und der saehe aus wie ein Ausfall.
-      return { kind: "SCHEMA_REJECTED", reason: "Keine Solana-Adresse.", latencyMs: 0 };
+      return { kind: "SCHEMA_REJECTED", reason: "Keine Solana-Adresse.", latencyMs: 0, shape: "" };
     }
 
     const fetchImpl = this.#deps.fetchImpl ?? fetch;
@@ -191,7 +208,12 @@ export class SolanaMintAdapter {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return { kind: "SCHEMA_REJECTED", reason: "Antwort ist kein gueltiges JSON.", latencyMs };
+      return {
+        kind: "SCHEMA_REJECTED",
+        reason: "Antwort ist kein gueltiges JSON.",
+        latencyMs,
+        shape: "",
+      };
     }
 
     // Der Fehlerast ZUERST und vor dem Vertrag: ein JSON-RPC-Fehler kommt mit
@@ -204,7 +226,12 @@ export class SolanaMintAdapter {
 
     const validated: ContractResult<MintAccount | null> = this.#contract.validate(parsed);
     if (validated.kind !== "VALID") {
-      return { kind: "SCHEMA_REJECTED", reason: validated.reason, latencyMs };
+      return {
+        kind: "SCHEMA_REJECTED",
+        reason: validated.reason,
+        latencyMs,
+        shape: describeShape(parsed),
+      };
     }
     return { kind: "OK", account: validated.value, latencyMs };
   }

@@ -46,7 +46,7 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // kein Geheimnisgehalt.
   "added", "known",
   "seen", "fresh", "candidates", "watchlist", "duplicates", "failedSources",
-  "withoutAuthorityCheck", "superseded", "noSourceReasons", "unusableQuotes",
+  "withoutAuthorityCheck", "superseded", "noSourceReasons", "unusableQuotes", "mintShape",
 ]);
 
 /**
@@ -75,6 +75,51 @@ export function tally(counts: Readonly<Record<string, number>>): string {
     .sort((a, b) => (b[1] - a[1] !== 0 ? b[1] - a[1] : a[0].localeCompare(b[0])))
     .map(([name, count]) => `${name}=${String(count)}`)
     .join(" ");
+}
+
+/**
+ * Beschreibt die FORM eines Wertes, nie seinen Inhalt.
+ *
+ * Gedacht fuer genau einen Zweck: einen Anbietervertrag belegen, ohne die
+ * Antwort auszugeben. Um ein Schema zu schreiben, braucht man Schluesselnamen,
+ * Verschachtelung und Typen — die Werte braucht man nicht. Sie mitzuloggen
+ * waere unnoetig und im Zweifel gefaehrlich; die Allowlist waere umgangen,
+ * sobald ein Anbieter irgendwo eine Kennung mitschickt.
+ *
+ * Ausgabe: `result.value.data.parsed.info.decimals:number` je Pfad, sortiert,
+ * damit zwei Messungen vergleichbar sind.
+ *
+ * `null` wird als eigener Typ gefuehrt und nicht mit „fehlt" verwechselt: bei
+ * einem Mint-Account ist `mintAuthority: null` die Aussage „niemand kann
+ * nachpraegen", also die wichtigste Information ueberhaupt.
+ */
+export function describeShape(value: unknown, maxPaths = 60): string {
+  const paths: string[] = [];
+
+  const walk = (v: unknown, path: string, depth: number): void => {
+    if (paths.length >= maxPaths || depth > MAX_DEPTH) return;
+    if (v === null) {
+      paths.push(`${path}:null`);
+      return;
+    }
+    if (Array.isArray(v)) {
+      // Nur das erste Element: eine Liste beschreibt sich durch ihre Form,
+      // nicht durch ihre Laenge.
+      paths.push(`${path}:array[${String(v.length)}]`);
+      if (v.length > 0) walk(v[0], `${path}[]`, depth + 1);
+      return;
+    }
+    if (typeof v === "object") {
+      for (const [key, inner] of Object.entries(v as Record<string, unknown>)) {
+        walk(inner, path === "" ? key : `${path}.${key}`, depth + 1);
+      }
+      return;
+    }
+    paths.push(`${path}:${typeof v}`);
+  };
+
+  walk(value, "", 0);
+  return paths.sort().join(" ");
 }
 
 export const REDACTED = "[redacted]";

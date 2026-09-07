@@ -2566,3 +2566,51 @@ Fehler an dieser Stelle.
 `FailureClass` kennt keinen Timeout, und aus der Fehlermeldung darauf zu
 schließen wäre Textvergleich über Laufzeitgrenzen hinweg. Der Adapter hält den
 `AbortController` selbst — er weiß es sicher und sagt es als eigenes Feld.
+
+## §95 — Der Worker belegt seinen Vertrag selbst
+
+Der Mint-Leser aus §94 braucht eine echte Antwort, um vom ungeprüften zum
+geprüften Vertrag zu werden. Aus der Entwicklungsumgebung ist kein Solana-RPC
+erreichbar; der Betreiber hat — nachvollziehbar — abgelehnt, dafür einen Befehl
+auszuführen.
+
+Damit blieb eine Beobachtung übrig, die vorher niemand ausgenutzt hatte: **der
+laufende Worker kann es.** Er hat Netzzugang und `SOLANA_RPC_URL`, er läuft im
+Minutentakt, und seine Logs liest der Betreiber ohnehin.
+
+Also fragt `probeMintContract` im `provider-health`-Takt selbst und schreibt
+die **Form** der Antwort ins Log:
+
+```
+mintShape: result.context.slot:number
+           result.value.data.parsed.info.decimals:number
+           result.value.data.parsed.info.mintAuthority:null
+           result.value.data.parsed.type:string
+           result.value.owner:string …
+```
+
+Schlüsselpfade und Typen — **keine Werte**. Für ein Schema braucht man genau
+das; die Werte braucht man nicht, und sie mitzuloggen würde die Allowlist
+umgehen, sobald ein Anbieter irgendwo eine Kennung mitschickt.
+
+`null` wird als eigener Typ geführt und nicht mit „fehlt" verwechselt: bei
+einem Mint-Account ist `mintAuthority: null` die Aussage „niemand kann
+nachprägen" — die wichtigste Information überhaupt.
+
+### Zwei Selbstbegrenzungen
+
+1. Die Sonde läuft **nur, solange der Vertrag ungeprüft ist**. Sobald aus
+   `unverifiedContract()` ein `zodContract({verified: true})` wird, hört das
+   Loggen von selbst auf. Niemand muss daran denken, es wieder auszubauen.
+2. Ohne `SOLANA_RPC_URL` passiert nichts.
+
+### Der Nebeneffekt ist der eigentliche Gewinn
+
+`SCHEMA_REJECTED` trägt jetzt die Form der abgelehnten Antwort — für **jeden**
+Anbieter, nicht nur für diesen. Eine Ablehnung, die nicht sagt, was stattdessen
+kam, zwingt jeden dazu, den Anbieter selbst aufzurufen. Genau das ist nicht
+immer möglich, und genau daran hing dieser Vertrag.
+
+Sondenadresse ist der USDC-Mint: öffentlich, unveränderlich, und mit
+abgegebener Freeze-Authority ein Fall, in dem sich `null` und „fehlt"
+unterscheiden müssen.

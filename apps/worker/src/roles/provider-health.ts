@@ -1,7 +1,8 @@
-import { providerId, systemClock } from "@sae/core";
+import { providerId, systemClock, type Clock } from "@sae/core";
 import { loadEnv, providerEnvSchema, readProviderConfig, type KnownProviderId } from "@sae/config";
 import { summarizeFleet, type ProviderStatus, type ProviderStatusReport } from "@sae/providers";
-import { DexScreenerMarketAdapter } from "@sae/providers";
+import { DexScreenerMarketAdapter, SolanaMintAdapter } from "@sae/providers";
+import type { Logger } from "@sae/observability";
 import { createDatabase, ProviderHealthStore, ProviderReadinessStore } from "@sae/db";
 
 import type { RoleContext, RoleHandler } from "../role";
@@ -296,6 +297,11 @@ export const providerHealthRole: RoleHandler = {
         },
         "Provider-Status gemessen",
       );
+
+      // Solange der Mint-Leser keinen geprueften Vertrag hat, misst dieser
+      // Takt nebenbei die Antwortform. Sobald der Vertrag steht, hoert das von
+      // selbst auf — die Funktion prueft es selbst.
+      await probeMintContract({ env: process.env, logger: ctx.logger });
     };
 
     // Sofort einmal messen, damit der Scheduler nicht bis zum ersten Takt
@@ -315,3 +321,62 @@ export const providerHealthRole: RoleHandler = {
     sampleTimer = null;
   },
 };
+
+/**
+ * Belegt den Vertrag des Mint-Lesers — ohne dass jemand etwas abtippt.
+ *
+ * Das Problem, das diese Funktion loest, ist ein Umgebungsproblem: aus der
+ * Entwicklungsumgebung ist kein Solana-RPC erreichbar (drei Endpunkte
+ * getestet, alle gesperrt), aus dem laufenden Worker sehr wohl. Ein Schema
+ * gegen eine vermutete Antwortform zu schreiben ist ausgeschlossen; jemanden
+ * einen curl-Befehl ausfuehren zu lassen ist eine Zumutung, die man sich
+ * sparen kann, wenn ein Dienst laeuft, der es ohnehin koennte.
+ *
+ * Also fragt der Worker selbst und schreibt die **Form** der Antwort ins Log:
+ * Schluesselpfade und Typen, keine Werte. Daraus laesst sich das Schema
+ * schreiben.
+ *
+ * Zwei Selbstbegrenzungen, damit daraus kein Dauerzustand wird:
+ *
+ * 1. Sie laeuft nur, solange der Vertrag **ungeprueft** ist. Sobald aus
+ *    `unverifiedContract()` ein `zodContract({verified: true})` wird, hoert
+ *    das Loggen von selbst auf — niemand muss daran denken.
+ * 2. Ohne `SOLANA_RPC_URL` passiert nichts.
+ *
+ * Die Sondenadresse ist der USDC-Mint: oeffentlich, unveraenderlich, und mit
+ * abgegebener Freeze-Authority ein Fall, bei dem `null` und „fehlt" sich
+ * unterscheiden muessen.
+ */
+export async function probeMintContract(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly logger: Logger;
+  readonly clock?: Clock;
+}): Promise<void> {
+  const rpcUrl = input.env["SOLANA_RPC_URL"];
+  if (rpcUrl === undefined || rpcUrl.trim() === "") return;
+
+  const clock = input.clock ?? systemClock;
+  const adapter = new SolanaMintAdapter({ clock, rpcUrl });
+  if (adapter.contractVerified) return;
+
+  const outcome = await adapter.fetchMint(CONTRACT_PROBE_MINT);
+
+  if (outcome.kind === "SCHEMA_REJECTED" && outcome.shape !== "") {
+    input.logger.info(
+      { provider: "solana-rpc", mintShape: outcome.shape },
+      "Antwortform des Mint-Lesers gemessen — Grundlage fuer den geprueften Vertrag",
+    );
+    return;
+  }
+
+  // Kein Erfolgsfall moeglich, solange der Vertrag ungeprueft ist: jede
+  // gueltige Antwort landet ebenfalls in SCHEMA_REJECTED. Alles andere ist ein
+  // echter Ausfall und wird als solcher gemeldet.
+  input.logger.warn(
+    { provider: "solana-rpc", kind: outcome.kind },
+    "Antwortform des Mint-Lesers nicht messbar",
+  );
+}
+
+/** USDC — oeffentlich, unveraenderlich, Freeze-Authority abgegeben. */
+export const CONTRACT_PROBE_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
