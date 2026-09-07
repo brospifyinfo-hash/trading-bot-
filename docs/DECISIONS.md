@@ -2674,3 +2674,61 @@ trägt keine Entscheidung.
 `JUPITER_BASE_URL` ist auf keinem Dienst gesetzt. Ohne sie schweigt die Sonde
 — korrekt, aber es passiert auch nichts. Das ist der nächste Handgriff, und es
 ist ein Eintrag in den Variablen, kein Befehl.
+
+## §97 — Die Naht ist gebaut, und sie brauchte keine neue Schnittstelle
+
+Nach dem Rechenkern (§96) das Bindeglied: aus einem Quote plus Slot-Uhrzeit
+wird ein Marktdatensatz mit **gemessenem** Alter.
+
+Bemerkenswert ist, was dafür **nicht** nötig war. `MarketDataAdapter.fetchMarket`
+gibt seit jeher `{ value, observedAt: Date | null }` zurück, und `observedAt`
+ist ausdrücklich dokumentiert als „der Zeitstempel des ANBIETERS … DexScreener
+liefert nachweislich keinen". Ein Quote kann ihn liefern.
+
+Es ändert sich also keine Schnittstelle. Es wird eine ausgefüllt, die die
+ganze Zeit da war und für die es bisher keinen Anbieter gab. Der Rest der Kette
+— `sourced()` rechnet `freshnessSeconds`, der Snapshot trägt es,
+`snapshotSupportsEntry` prüft es — funktioniert unverändert weiter.
+
+### `getBlockTime`: fragen statt rechnen
+
+Solana zielt auf 400 ms je Slot, und daraus ließe sich ein Alter schätzen.
+Genau das wird **nicht** getan. Slots fallen aus, die Netzlast schwankt, und
+die Abweichung wächst mit dem Abstand. Ein geschätztes Alter, das in die
+Frischeprüfung geht, ist ein erfundener Wert mit besserer Tarnung — dieselbe
+Klasse Fehler wie in §89, nur schwerer zu erkennen.
+
+Die Einheit steht im Code ausgeschrieben: Unix-**Sekunden**, nicht
+Millisekunden. Faktor 1000 daneben ergäbe ein Datum in 1970 oder 56000 und
+fiele auf; gefährlicher wäre ein Alter, das um Faktor 1000 danebenliegt und
+plausibel aussieht.
+
+### Fünf Fälle statt „geht nicht"
+
+`quoteToMarket` unterscheidet: kein Quote, kein Preis, kein `contextSlot`,
+keine Slot-Uhrzeit, Uhrenversatz. Das ist kein Selbstzweck — die ersten beiden
+sind Aussagen über den **Token** („nicht handelbar"), die letzten drei über
+unsere **Infrastruktur** („uns fehlt eine Zeitquelle"). Sie zu vermengen hieße,
+ein Betriebsproblem als Marktbefund zu lesen und den falschen Hebel zu suchen.
+
+### Der Test, um den es geht
+
+`quote-market.test.ts` führt das Ergebnis durch **denselben** Torwächter, der
+DexScreener-Daten seit jeher ablehnt:
+
+| Quelle | `freshnessSeconds` | `snapshotSupportsEntry` |
+|---|---|---|
+| DexScreener | `null` | abgelehnt — „Unbekannt ist nicht frisch" |
+| Quote + Slot-Uhrzeit | `4` | **zugelassen** |
+| Quote, 15 Minuten alt | `900` | abgelehnt — zu alt |
+
+Die dritte Zeile ist so wichtig wie die zweite: ein gemessenes Alter heißt
+**bekannt**, nicht **erlaubt**. Die Frischegrenze bleibt, was sie war.
+
+### Was noch aussteht
+
+Beide Verträge — Jupiters `/quote` und `getBlockTime` — sind weiter
+ungeprüft, und `JUPITER_BASE_URL` ist auf keinem Dienst gesetzt. Der
+Rechenweg steht vollständig und ist geprüft; was fehlt, ist der Beleg, dass
+die Anbieter so antworten wie angenommen. Die Sonden aus §95/§96 messen das,
+sobald die Variable gesetzt ist.
