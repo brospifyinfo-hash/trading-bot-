@@ -3,6 +3,7 @@ import { providerId, type Clock, type ProviderId } from "@sae/core";
 import { PostgresCheckpointStore, schema, type Database } from "@sae/db";
 import { createTestDatabase } from "@sae/db/testing";
 import { createLogger } from "@sae/observability";
+import { JobConsumer } from "../../consumer";
 import type { MarketDataAdapter, MarketFields } from "@sae/pipeline";
 import type { KnownProviderId } from "@sae/config";
 import type { ProviderCapability, ProviderStatus } from "@sae/providers";
@@ -185,5 +186,90 @@ describe("Ohne erreichbare Quelle entsteht kein Snapshot", () => {
     expect(result.ingested).toBe(0);
     expect(result.noSource).toBe(5);
     expect(await db.select().from(schema.tokenSnapshots)).toHaveLength(0);
+  });
+});
+
+describe("Wie oft der Consumer die Datenbank fragt", () => {
+  /**
+   * Der Anlass ist eine ausgefallene Produktion: Neon meldete
+   * „exceeded the data transfer quota", der Worker kam nicht mehr hoch und
+   * startete im Sekundentakt neu.
+   *
+   * Die Ursache war der Leerlauf. `reclaimExpired`, `retireSuperseded` und
+   * `claim` liefen JEDE Sekunde — drei Rundreisen, ueber 250.000 am Tag, ohne
+   * dass irgendetwas zu tun war. Die Fristenpruefung war dabei nicht einmal
+   * sinnvoll: Fristen laufen 60 Sekunden.
+   *
+   * Diese Tests halten die Trennung fest. Sie zaehlen Aufrufe, nicht Zeit.
+   */
+  function zaehlendeQueue() {
+    const counts = { reclaim: 0, superseded: 0, claim: 0 };
+    return {
+      counts,
+      queue: {
+        async reclaimExpired() {
+          counts.reclaim += 1;
+          return [];
+        },
+        async retireSuperseded() {
+          counts.superseded += 1;
+          return 0;
+        },
+        async claim() {
+          counts.claim += 1;
+          return [];
+        },
+      } as never,
+    };
+  }
+
+  function consumerMit(queue: never, now: () => Date) {
+    return new JobConsumer({
+      workerId: "test",
+      queue,
+      handlers: {},
+      logger: createLogger({ service: "test", level: "error" }),
+      now,
+    });
+  }
+
+  it("fragt bei jedem Durchlauf nach Arbeit, raeumt aber nicht jedes Mal auf", async () => {
+    const { counts, queue } = zaehlendeQueue();
+    let t = new Date("2026-09-07T23:00:00Z");
+    const consumer = consumerMit(queue, () => t);
+
+    // Zehn Durchlaeufe im Abstand von fuenf Sekunden — knapp eine Minute.
+    for (let i = 0; i < 10; i += 1) {
+      await consumer.cycle();
+      t = new Date(t.getTime() + 5_000);
+    }
+
+    // Arbeit holen: jedes Mal. Das ist der Zweck des Durchlaufs.
+    expect(counts.claim).toBe(10);
+    // Aufraeumen: deutlich seltener. Vorher war beides gleich haeufig.
+    expect(counts.reclaim).toBeLessThan(counts.claim);
+    expect(counts.superseded).toBeLessThan(counts.reclaim);
+  });
+
+  it("raeumt beim ersten Durchlauf sofort auf", async () => {
+    // Nach einem Neustart koennen Auftraege eines abgestuerzten Vorgaengers
+    // liegen. Die sollen nicht eine halbe Minute warten.
+    const { counts, queue } = zaehlendeQueue();
+    const t = new Date("2026-09-07T23:00:00Z");
+    await consumerMit(queue, () => t).cycle();
+    expect(counts.reclaim).toBe(1);
+    expect(counts.superseded).toBe(1);
+  });
+
+  it("raeumt bei stehender Uhr kein zweites Mal auf", async () => {
+    const { counts, queue } = zaehlendeQueue();
+    const t = new Date("2026-09-07T23:00:00Z");
+    const consumer = consumerMit(queue, () => t);
+    await consumer.cycle();
+    await consumer.cycle();
+    await consumer.cycle();
+    expect(counts.claim).toBe(3);
+    expect(counts.reclaim).toBe(1);
+    expect(counts.superseded).toBe(1);
   });
 });

@@ -2920,3 +2920,69 @@ aussehen.
 | `RESEARCH_BATCH` | MARKET_DATA_ONLY |
 
 Diese Tabelle darf veralten — die im Log nicht.
+
+## §101 — Das Datenkontingent war aufgebraucht, und der Leerlauf war schuld
+
+Der Worker kam nicht mehr hoch:
+
+```
+PostgresError: Your project has exceeded the data transfer quota.
+code: '53000'
+```
+
+Danach Neustart im Sekundentakt, jeder mit demselben Fehler.
+
+### Die Ursache lag nicht in der Arbeit, sondern im Nichtstun
+
+Der Consumer-Zyklus lief mit **einer Sekunde** Taktung, und in jedem Durchlauf
+standen **drei** Datenbankabfragen:
+
+```
+reclaimExpired    ← jede Sekunde
+retireSuperseded  ← jede Sekunde
+claim             ← jede Sekunde
+```
+
+Über 250.000 Rundreisen am Tag, ohne dass etwas zu tun war. Auf einer nach
+Datenmenge abgerechneten Datenbank ist das kein Schönheitsfehler, sondern die
+Rechnung.
+
+**Zwei der drei waren nicht einmal sachlich begründet.** Fristen laufen 60
+Sekunden — sie sekündlich zu suchen kann nichts finden, was 30 Sekunden später
+nicht auch noch da wäre. Und `retireSuperseded` ist Aufräumarbeit; sie stand
+seit §88 im Sekundentakt, weil ich sie in den Zyklus geschrieben habe, ohne zu
+fragen, wie oft der läuft. Das ist meine Ursache, und sie hat die Rechnung
+verdreifacht.
+
+### Die Korrektur
+
+| | vorher | jetzt | Abfragen/Tag |
+|---|---|---|---|
+| `claim` | 1 s | **5 s** | 86.400 → 17.280 |
+| `reclaimExpired` | 1 s | **30 s** | 86.400 → 2.880 |
+| `retireSuperseded` | 1 s | **60 s** | 86.400 → 1.440 |
+| Anbieterzustand | 30 s | **60 s** | 2.880 → 1.440 |
+
+Zusammen von rund **262.000 auf 23.000** am Tag — Faktor 11.
+
+Fünf Sekunden Taktung kosten im schlechtesten Fall fünf Sekunden Verzögerung
+bei einem Auftrag. Der schnellste Takt des Schedulers liegt bei zehn Sekunden;
+häufiger zu fragen, als eingereiht wird, bringt nichts.
+
+Die Wartung läuft beim **ersten** Durchlauf trotzdem sofort: nach einem
+Neustart können Aufträge eines abgestürzten Vorgängers liegen, und die sollen
+nicht eine halbe Minute warten.
+
+### Was die Tests festhalten
+
+Sie zählen Aufrufe, nicht Zeit: bei zehn Durchläufen wird zehnmal nach Arbeit
+gefragt, aber deutlich seltener aufgeräumt. Und bei stehender Uhr wird kein
+zweites Mal aufgeräumt — sonst hinge die Sparsamkeit daran, dass die Uhr
+weiterläuft.
+
+### Was Code nicht behebt
+
+Das Kontingent selbst. Es setzt sich mit dem Abrechnungszeitraum zurück oder
+wird mit einem größeren Tarif angehoben — beides eine Entscheidung des
+Betreibers. Bis dahin bleiben die Dienste unten; sie im Neustart-Kreis laufen
+zu lassen, verbraucht nur weiter.

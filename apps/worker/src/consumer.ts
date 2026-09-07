@@ -97,6 +97,23 @@ export interface ConsumerCycle {
 const DEFAULT_BATCH = 5;
 const DEFAULT_LEASE_MS = 60_000;
 
+/**
+ * Wie oft abgelaufene Fristen gesucht werden.
+ *
+ * Die Frist selbst betraegt 60 Sekunden. Haeufiger zu suchen kann nichts
+ * finden, was nicht auch beim naechsten Mal noch da waere — es kostet nur
+ * Abfragen.
+ */
+const LEASE_SWEEP_MS = 30_000;
+
+/** Wie oft ueberholte Takte zurueckgezogen werden. Aufraeumarbeit, keine Eile. */
+const SUPERSEDE_SWEEP_MS = 60_000;
+
+/** Ist die Wartung faellig? Beim ersten Mal immer. */
+function due(last: number | null, now: Date, everyMs: number): boolean {
+  return last === null || now.getTime() - last >= everyMs;
+}
+
 function failureOf(error: unknown): FailureClass {
   const message = error instanceof Error ? error.message : String(error);
   const httpStatus =
@@ -111,6 +128,9 @@ export class JobConsumer {
   #timer: ReturnType<typeof setInterval> | null = null;
   #busy = false;
   #stopping = false;
+  /** Wann die Fristenpruefung zuletzt lief. `null` = noch nie. */
+  #lastLeaseCheck: number | null = null;
+  #lastSupersedeCheck: number | null = null;
 
   constructor(options: ConsumerOptions) {
     this.#o = options;
@@ -126,24 +146,22 @@ export class JobConsumer {
    */
   async cycle(): Promise<ConsumerCycle> {
     const now = this.#o.now();
-    const reclaimed = await this.#o.queue.reclaimExpired(now);
-    if (reclaimed.length > 0) {
-      this.#o.logger.warn(
-        { count: reclaimed.length },
-        "Auftraege mit abgelaufener Frist zurueckgegeben",
-      );
-    }
 
-    // Vor dem Ziehen und nicht danach: sonst arbeitet dieser Durchlauf
-    // ausgerechnet die aeltesten und damit ueberholten Auftraege ab. Sie
-    // stehen in der Reihenfolge ganz vorn.
-    const superseded = await this.#o.queue.retireSuperseded(now);
-    if (superseded > 0) {
-      this.#o.logger.info(
-        { superseded },
-        "Ueberholte Takte zurueckgezogen — ein neuerer Auftrag derselben Art lag vor",
-      );
-    }
+    // Aufraeumen laeuft auf EIGENEM Takt, nicht bei jedem Durchlauf.
+    //
+    // Vorher liefen beide Abfragen jede Sekunde mit — zusammen mit `claim`
+    // waren das drei Rundreisen zur Datenbank pro Sekunde, rund um die Uhr,
+    // also ueber 250.000 am Tag im Leerlauf. Auf einer nach Datenmenge
+    // abgerechneten Datenbank ist das kein Schoenheitsfehler, sondern die
+    // Rechnung: das Kontingent war aufgebraucht, und der Worker kam nicht
+    // mehr hoch.
+    //
+    // Sachlich war es ausserdem sinnlos. Fristen laufen 60 Sekunden — sie
+    // sekuendlich zu pruefen kann nichts finden, was 30 Sekunden spaeter
+    // nicht auch noch da waere. Und ueberholte Takte sind Aufraeumarbeit,
+    // keine Eilsache.
+    const reclaimed = await this.#maintainLeases(now);
+    const superseded = await this.#retireSuperseded(now);
 
     const claimed = await this.#o.queue.claim({
       workerId: this.#o.workerId,
@@ -218,10 +236,52 @@ export class JobConsumer {
       done,
       retried,
       dead,
-      reclaimed: reclaimed.length,
+      reclaimed,
       superseded,
       unhandled,
     };
+  }
+
+  /**
+   * Abgelaufene Fristen einsammeln — hoechstens alle `LEASE_SWEEP_MS`.
+   *
+   * Beim ersten Durchlauf laeuft sie sofort: nach einem Neustart koennen
+   * Auftraege eines abgestuerzten Vorgaengers liegen, und die sollen nicht
+   * eine halbe Minute warten.
+   */
+  async #maintainLeases(now: Date): Promise<number> {
+    if (!due(this.#lastLeaseCheck, now, LEASE_SWEEP_MS)) return 0;
+    this.#lastLeaseCheck = now.getTime();
+
+    const reclaimed = await this.#o.queue.reclaimExpired(now);
+    if (reclaimed.length > 0) {
+      this.#o.logger.warn(
+        { count: reclaimed.length },
+        "Auftraege mit abgelaufener Frist zurueckgegeben",
+      );
+    }
+    return reclaimed.length;
+  }
+
+  /**
+   * Ueberholte Takte zurueckziehen — hoechstens alle `SUPERSEDE_SWEEP_MS`.
+   *
+   * Sie laeuft VOR dem Ziehen, wenn sie laeuft: sonst arbeitet der Durchlauf
+   * ausgerechnet die aeltesten und damit ueberholten Auftraege ab, denn die
+   * stehen in der Reihenfolge ganz vorn.
+   */
+  async #retireSuperseded(now: Date): Promise<number> {
+    if (!due(this.#lastSupersedeCheck, now, SUPERSEDE_SWEEP_MS)) return 0;
+    this.#lastSupersedeCheck = now.getTime();
+
+    const superseded = await this.#o.queue.retireSuperseded(now);
+    if (superseded > 0) {
+      this.#o.logger.info(
+        { superseded },
+        "Ueberholte Takte zurueckgezogen — ein neuerer Auftrag derselben Art lag vor",
+      );
+    }
+    return superseded;
   }
 
   start(intervalMs = 1_000): void {

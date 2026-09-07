@@ -20,10 +20,28 @@ import type { RoleContext, RoleHandler } from "../role";
  * einen haengenden Auftrag haelt.
  */
 
-const POLL_MS = 1_000;
+/**
+ * Wie oft nach Arbeit gefragt wird.
+ *
+ * Von einer Sekunde auf fuenf. Der Grund ist gemessen und nicht geschaetzt:
+ * bei einer Sekunde lief diese Abfrage 86.400 Mal am Tag, und zusammen mit
+ * der Wartung waren es ueber 250.000 Rundreisen zur Datenbank — im Leerlauf.
+ * Auf einer nach Datenmenge abgerechneten Datenbank hat das das Kontingent
+ * aufgezehrt, bis der Worker nicht mehr startete.
+ *
+ * Fuenf Sekunden kosten im schlechtesten Fall fuenf Sekunden Verzoegerung bei
+ * einem Auftrag. Der schnellste Takt des Schedulers liegt bei zehn Sekunden —
+ * haeufiger zu fragen als eingereiht wird, bringt nichts.
+ */
+const POLL_MS = 5_000;
 const LEASE_MS = 60_000;
-/** Wie oft der Anbieterzustand neu gelesen wird. */
-const STATUS_REFRESH_MS = 30_000;
+/**
+ * Wie oft der Anbieterzustand neu gelesen wird.
+ *
+ * Eine Minute statt einer halben: der provider-health-Dienst misst selbst nur
+ * im Minutentakt, haeufiger zu lesen kann also nichts Neues bringen.
+ */
+const STATUS_REFRESH_MS = 60_000;
 
 let consumer: JobConsumer | null = null;
 let statusTimer: NodeJS.Timeout | null = null;
