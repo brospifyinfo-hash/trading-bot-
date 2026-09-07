@@ -24,7 +24,7 @@ DISCOVERY → ENRICHMENT → FEATURES → SCORING → DECISION → OPPORTUNITY
 | **discovery** *(Handler)* | IMPLEMENTED | DexScreener `token-profiles` + `tokens/v1` | neue Tokens mit Zustand | `tokens` | `DISCOVER_TOKENS` | über Consumer | nein | `UNIQUE (mint)` | **TOKEN_DISCOVERY** | — |
 | **enrichment** | BLOCKED | Tokens | Sicherheit, Holder | `token_security`, `token_wallet_metrics` | — | — | — | — | **RugCheck, Helius** | Tokens |
 | **scoring** | GEBAUT, NICHT VERDRAHTET | Feature-Vektor | `ScoringResult` | `scores` | `SCORE_TOKEN` | über Consumer | nein | Snapshot-Hash | keiner | **Snapshot-Historie** |
-| **decision** | GEBAUT, NICHT VERDRAHTET | Score, Risiko, EV | `Decision` | `opportunities`, `feature_snapshots` | `EVALUATE_OPPORTUNITY` | über Consumer | nein | `UNIQUE (token, stream, decided_at)` | keiner | **Features** |
+| **decision** *(Handler)* | VERDRAHTET — laeuft, blockiert am Datentor | Score, Risiko, EV | `Decision` | `opportunities`, `feature_snapshots` | `EVALUATE_OPPORTUNITY` | über Consumer | nein | `UNIQUE (token, stream, decided_at)` | keiner | **Features** |
 | **paper** | GEBAUT, NICHT VERDRAHTET | Gelegenheit | Position | `paper_positions`, `paper_position_events` | `MONITOR_PAPER_POSITION` | über Consumer | nein | `UNIQUE (opportunity_id)` | **Router-Quote** | Gelegenheiten |
 | **positions** | BLOCKED | offene Positionen | Exits | `paper_position_events` | `MONITOR_PAPER_POSITION` | über Consumer | nein | optimistische Sperre (`version`) | **Marktdaten** | offene Positionen |
 | **reconciler** | BLOCKED | Positionen, Chain | Abgleich | `reconciliation_events` | `RECONCILE` | über Consumer | nein | — | **RPC** | Live-Positionen |

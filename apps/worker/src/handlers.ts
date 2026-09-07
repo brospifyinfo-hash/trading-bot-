@@ -1,18 +1,23 @@
 import { systemClock, tokenId as asTokenId } from "@sae/core";
 import {
+  countSnapshots,
+  ensureActiveStrategyVersion,
   JobQueueRepository,
   OpportunityRepository,
   ProviderHealthStore,
   ProviderReadinessStore,
+  selectTrackedTokens,
   type ClaimedJob,
   type Database,
 } from "@sae/db";
-import type { Logger } from "@sae/observability";
-import type { ProviderStatus } from "@sae/providers";
+import { tally, type Logger } from "@sae/observability";
+import type { ProviderStatus, ProviderStatusReport } from "@sae/providers";
 import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
-import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
+import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
+import { UnavailableQuoteSource } from "./pipeline/quote-source";
+import { runDecision } from "./pipeline/decision-run";
 import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
 import { resolveMarketInput } from "./pipeline/market-input";
@@ -232,6 +237,94 @@ class DiscoverTokensHandler implements JobHandler {
 }
 
 /**
+ * Gelegenheitspruefung — der Weg vom Snapshot zur Entscheidung.
+ *
+ * Bis hierher zeigte diese Auftragsart auf den allgemeinen
+ * Marktdaten-Handler: er holte Daten und warf das Ergebnis weg.
+ * `runOpportunityPipeline` wurde ausschliesslich aus Tests aufgerufen.
+ *
+ * Der Lauf endet heute in aller Regel mit `BLOCKED` — die Marktdaten tragen
+ * kein bekanntes Alter, und der Torwaechter laesst deshalb keine
+ * Einstiegsentscheidung zu. Das ist kein Rueckschritt, sondern der Gewinn:
+ * vorher passierte nichts und niemand erfuhr warum, jetzt steht im Log,
+ * welches Tor zu ist.
+ */
+class EvaluateOpportunityHandler implements JobHandler {
+  constructor(private readonly deps: HandlerDeps) {}
+
+  async handle(job: ClaimedJob): Promise<unknown> {
+    void job;
+    const url = this.deps.env["DATABASE_URL"];
+    if (url === undefined) return waitingForData("Keine Datenbank konfiguriert.");
+
+    // Die Strategieversion, auf die sich jede Entscheidung beruft. Sie fehlte
+    // in der Produktionsdatenbank vollstaendig; ohne sie waere der erste
+    // echte Entscheidungsversuch an einem Fremdschluessel gescheitert.
+    const strategy = await ensureActiveStrategyVersion({
+      db: this.deps.db,
+      parameters: DEFAULT_STRATEGY_PARAMETERS,
+      at: systemClock.now(),
+    });
+    if (strategy.created) {
+      this.deps.logger.info(
+        { role: "decision", version: strategy.version },
+        "Strategieversion angelegt — Startparameter, ausdruecklich nicht validiert",
+      );
+    }
+
+    const tokens = await selectTrackedTokens(this.deps.db, MAX_TOKENS_PER_RUN);
+    if (tokens.length === 0) return waitingForData("Keine beobachteten Tokens.");
+
+    // Die Anbieterlage aus den PERSISTIERTEN Messungen. Ohne Messung gilt ein
+    // Anbieter als nicht erreichbar — dieselbe pessimistische Vorgabe wie
+    // ueberall sonst.
+    const reports: readonly ProviderStatusReport[] = (
+      await new ProviderHealthStore(this.deps.db).latest()
+    ).map((row) => ({
+      providerId: row.providerId as never,
+      kind: "market" as const,
+      status: row.status as ProviderStatus,
+      capabilities: [],
+      lastSuccessAt: row.lastSuccessAt,
+      lastFailureAt: row.lastFailureAt,
+      lastFailureReason: row.lastFailureReason,
+      latencyMsP50: row.latencyMsP50,
+      latencyMsP95: row.latencyMsP95,
+      rateLimit: null,
+      // Aus der Messung uebernommen, nicht ersetzt: `null` heisst hier
+      // ausdruecklich "noch nie etwas geliefert" und nicht "frisch".
+      dataFreshnessSeconds: row.dataFreshnessSeconds,
+      detail: row.detail,
+    }));
+    const snapshotCount = await countSnapshots(this.deps.db);
+
+    const outcomes: Record<string, number> = {};
+    for (const token of tokens) {
+      const result = await runDecision({
+        db: this.deps.db,
+        logger: this.deps.logger,
+        env: this.deps.env,
+        tokenId: token.id,
+        mint: token.mint,
+        strategyVersionId: strategy.id,
+        snapshotCount,
+        providerReports: reports,
+        quotes: new UnavailableQuoteSource(),
+        liquidityUsd: null,
+      });
+      const seen = outcomes[result.outcome];
+      outcomes[result.outcome] = seen === undefined ? 1 : seen + 1;
+    }
+
+    this.deps.logger.info(
+      { role: "decision", processed: tokens.length, reasons: tally(outcomes) },
+      "Gelegenheiten geprueft",
+    );
+    return { status: "OK", processed: tokens.length, outcomes };
+  }
+}
+
+/**
  * Marktdaten auffrischen — mit Wiederaufnahme.
  *
  * Der einzige Handler mit Checkpoint. Er braucht ihn, weil er eine Liste
@@ -274,7 +367,7 @@ export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
     REFRESH_MARKET_DATA: new MarketRefreshHandler(deps),
     DISCOVER_TOKENS: new DiscoverTokensHandler(deps),
     SCORE_TOKEN: market("Bewertung"),
-    EVALUATE_OPPORTUNITY: market("Gelegenheitspruefung"),
+    EVALUATE_OPPORTUNITY: new EvaluateOpportunityHandler(deps),
     MONITOR_PAPER_POSITION: market("Positionsueberwachung"),
     RECONCILE: market("Abgleich"),
     STRATEGY_HEALTH: market("Strategie-Gesundheit"),

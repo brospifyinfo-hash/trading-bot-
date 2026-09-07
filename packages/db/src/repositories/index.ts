@@ -7,3 +7,4 @@ export * from "./snapshots";
 export * from "./decisions";
 export * from "./watchlist";
 export * from "./discovery";
+export * from "./strategy-bootstrap";

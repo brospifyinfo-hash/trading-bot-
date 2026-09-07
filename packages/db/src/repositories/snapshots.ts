@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Clock, TokenId } from "@sae/core";
 import {
   decideIngest,
@@ -158,4 +158,21 @@ function missingOf(market: MarketObservation): Record<string, string> {
     if (value === null) out[name] = "NOT_PROVIDED_BY_SOURCE";
   }
   return out;
+}
+
+/**
+ * Wie viele Snapshots die Historie enthaelt.
+ *
+ * Geht in die Bereitschaftspruefung ein: unter einer Mindestzahl traegt eine
+ * Zeitreihe keine Analyse, und das System sagt das lieber, als auf zwei
+ * Punkten eine Kennzahl zu bauen.
+ */
+export async function countSnapshots(db: Database): Promise<number> {
+  const rows = await db.execute<{ n: string }>(
+    sql`select count(*)::text as n from token_snapshots`,
+  );
+  const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] }).rows ?? []);
+  const first = list[0] as { n?: string } | undefined;
+  const parsed = Number(first?.n ?? "0");
+  return Number.isFinite(parsed) ? parsed : 0;
 }

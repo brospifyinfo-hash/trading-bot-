@@ -2796,3 +2796,70 @@ Lokal belegt ist der Mechanismus: `corepack prepare --activate` füllt
 `$COREPACK_HOME/v1/pnpm/10.33.0`. **Nicht** belegt ist der vollständige
 Docker-Bau — dafür gibt es in dieser Umgebung keinen Daemon. Schlägt er fehl,
 behält Railway die laufende Fassung und zeigt den Fehler im Build-Log.
+
+## §99 — Der Weg vom Snapshot zur Entscheidung ist angeschlossen
+
+Auf die Frage „bleibt sonst nichts übrig" hatte ich zu schnell „nein" gesagt.
+Nachgesehen statt erinnert, und §98 in der Worker-Matrix korrigiert. Hier die
+Behebung.
+
+`EVALUATE_OPPORTUNITY` ruft jetzt `runOpportunityPipeline` auf. Vorher zeigte
+die Auftragsart auf den allgemeinen Marktdaten-Handler, der Daten holte und das
+Ergebnis wegwarf.
+
+### Zwei Dinge, die dabei zum Vorschein kamen
+
+**Es gab keine Strategieversion.** `decisions` und `opportunities` verweisen per
+Fremdschlüssel darauf, und der Verweis ist Pflicht. Die Tests legen sich eine
+an, der Betrieb nie — die erste echte Entscheidung wäre an einem
+Fremdschlüssel gescheitert, und der Fehler hätte nach einem Datenbankproblem
+ausgesehen statt nach einer fehlenden Einrichtung.
+
+`ensureActiveStrategyVersion` legt sie an, idempotent. Ihr `reason` sagt
+ausdrücklich, was sie ist: *„Startparameter. Ausdrücklich nicht validiert und
+nicht als profitabel behauptet — sie halten fest, womit gerechnet wird."*
+Ein Neustart darf keine zweite anlegen, sonst zerfällt die Statistik in
+Versionen, die sich in nichts unterscheiden.
+
+**Der Test-Aufbau hätte nicht in den Betrieb gedurft.** In `harness.ts` stehen
+`eur(100)` als Positionsgröße und ein fest hingeschriebenes EV-Objekt. Für
+einen Test ist das richtig. Im Betrieb wäre es Erfindung. Beide kommen deshalb
+aus den **echten** Rechnern:
+
+- `computePositionSize` aus `@sae/risk`
+- `estimateEv` aus `@sae/decision` — ohne abgeschlossene Trades liefert er von
+  sich aus `UNKNOWN / INSUFFICIENT_SAMPLE`. Dieselbe Auskunft, aber gerechnet
+  statt hingeschrieben.
+
+Ausdrücklich **keine** Messung, sondern eine Festlegung der Simulation, ist
+`PAPER_PORTFOLIO` — es gibt kein Konto, das man abfragen könnte. Der Wert steht
+sichtbar neben `PAPER_NOTIONAL`, das dieselbe Rolle schon hatte.
+
+### `UnavailableQuoteSource`
+
+Der simulierte Ausführer braucht eine Kursquelle, um überhaupt gebaut werden zu
+können. Solange kein Router-Vertrag belegt ist, gibt es keinen Kurs — und dann
+wird auch keiner geschätzt. Ein Ausführer mit erfundenem Kurs erzeugte
+Paper-Positionen mit erfundenen Einstiegen, und die spätere Statistik hätte
+keine Chance, das noch zu bemerken.
+
+### Was der Lauf heute tut
+
+Er endet mit `NO_SOURCE` — kein Anbieter mit geprüftem Vertrag ist erreichbar.
+**Das ist der Gewinn, nicht der Mangel:** vorher passierte nichts und niemand
+erfuhr warum; jetzt steht der Grund im Log, und er zeigt auf die richtige
+Stelle. Sobald ein Preis ein bekanntes Alter trägt, wandert derselbe Lauf zum
+nächsten Tor weiter, statt dass die Suche bei Jupiter anfängt, wo nichts kaputt
+ist.
+
+Der Test prüft deshalb nicht, dass eine Position entsteht — sie entsteht zu
+Recht nicht. Er prüft, dass die Kette **läuft** und dass am Ende ein benannter
+Grund steht statt Schweigen. Und dass dabei weder eine Gelegenheit noch eine
+Position angelegt wird.
+
+### Noch nicht verdrahtet
+
+`SCORE_TOKEN`, `MONITOR_PAPER_POSITION`, `RECONCILE`, `STRATEGY_HEALTH` und
+`RESEARCH_BATCH` zeigen weiterhin auf den allgemeinen Handler. Sie stehen
+hinter dem Datentor, das heute ohnehin schließt — die Reihenfolge ist damit
+richtig, aber die Lücke bleibt und ist hier benannt statt vergessen.
