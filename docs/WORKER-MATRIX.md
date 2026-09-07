@@ -23,12 +23,12 @@ DISCOVERY → ENRICHMENT → FEATURES → SCORING → DECISION → OPPORTUNITY
 | **market-refresh** *(Handler)* | IMPLEMENTED | Tokenliste | Snapshots | `token_snapshots`, `job_checkpoints` | `REFRESH_MARKET_DATA` | über Consumer | **ja** | `UNIQUE (ingest_key)` | **Marktdaten** | Tokens |
 | **discovery** *(Handler)* | IMPLEMENTED | DexScreener `token-profiles` + `tokens/v1` | neue Tokens mit Zustand | `tokens` | `DISCOVER_TOKENS` | über Consumer | nein | `UNIQUE (mint)` | **TOKEN_DISCOVERY** | — |
 | **enrichment** | BLOCKED | Tokens | Sicherheit, Holder | `token_security`, `token_wallet_metrics` | — | — | — | — | **RugCheck, Helius** | Tokens |
-| **scoring** | READY — WAITING FOR DATA | Feature-Vektor | `ScoringResult` | `scores` | `SCORE_TOKEN` | über Consumer | nein | Snapshot-Hash | keiner | **Snapshot-Historie** |
-| **decision** | READY — WAITING FOR DATA | Score, Risiko, EV | `Decision` | `opportunities`, `feature_snapshots` | `EVALUATE_OPPORTUNITY` | über Consumer | nein | `UNIQUE (token, stream, decided_at)` | keiner | **Features** |
-| **paper** | READY — WAITING FOR DATA | Gelegenheit | Position | `paper_positions`, `paper_position_events` | `MONITOR_PAPER_POSITION` | über Consumer | nein | `UNIQUE (opportunity_id)` | **Router-Quote** | Gelegenheiten |
+| **scoring** | GEBAUT, NICHT VERDRAHTET | Feature-Vektor | `ScoringResult` | `scores` | `SCORE_TOKEN` | über Consumer | nein | Snapshot-Hash | keiner | **Snapshot-Historie** |
+| **decision** | GEBAUT, NICHT VERDRAHTET | Score, Risiko, EV | `Decision` | `opportunities`, `feature_snapshots` | `EVALUATE_OPPORTUNITY` | über Consumer | nein | `UNIQUE (token, stream, decided_at)` | keiner | **Features** |
+| **paper** | GEBAUT, NICHT VERDRAHTET | Gelegenheit | Position | `paper_positions`, `paper_position_events` | `MONITOR_PAPER_POSITION` | über Consumer | nein | `UNIQUE (opportunity_id)` | **Router-Quote** | Gelegenheiten |
 | **positions** | BLOCKED | offene Positionen | Exits | `paper_position_events` | `MONITOR_PAPER_POSITION` | über Consumer | nein | optimistische Sperre (`version`) | **Marktdaten** | offene Positionen |
 | **reconciler** | BLOCKED | Positionen, Chain | Abgleich | `reconciliation_events` | `RECONCILE` | über Consumer | nein | — | **RPC** | Live-Positionen |
-| **alerts** | READY — WAITING FOR DATA | Manual-Gelegenheit | E-Mail | `alerts`, `email_alerts` | — | Resend-Idempotenzschlüssel | nein | `idempotency-key` je Gelegenheit | **Resend** | Gelegenheiten |
+| **alerts** | GEBAUT, NICHT VERDRAHTET | Manual-Gelegenheit | E-Mail | `alerts`, `email_alerts` | — | Resend-Idempotenzschlüssel | nein | `idempotency-key` je Gelegenheit | **Resend** | Gelegenheiten |
 | **expire-opportunities** *(Handler)* | IMPLEMENTED | Zeit | Zustandswechsel | `opportunities` | `EXPIRE_OPPORTUNITIES` | über Consumer | nein | bedingtes `UPDATE` | keiner | Gelegenheiten |
 | **execution** | **NICHT GEBAUT — bewusst** | — | — | — | — | — | — | — | — | — |
 
@@ -74,3 +74,26 @@ aktiver Mint-Authority kommt also durch das Vorsieb. Die Einstiegsentscheidung
 fängt es ab (`securityScore` → `notComputable` → `dataCompleteness` unter
 `minDataCompleteness` → `DATA_INCOMPLETE`), aber das Feld
 `withoutAuthorityCheck` im Log sagt, wie oft das passiert.
+
+## „READY — WAITING FOR DATA" war zu freundlich
+
+Der Status stand bei `scoring`, `decision`, `paper` und `alerts` und las sich
+wie „fertig, wartet nur auf Daten". Das stimmt nicht.
+
+`runOpportunityPipeline` — die Kette aus Bewertung, Entscheidung, Gelegenheit
+und Paper-Position — wird **ausschliesslich aus Tests aufgerufen**. Kein
+Handler ruft sie. Die Auftragsarten `SCORE_TOKEN`, `EVALUATE_OPPORTUNITY`,
+`MONITOR_PAPER_POSITION`, `RECONCILE`, `STRATEGY_HEALTH` und `RESEARCH_BATCH`
+zeigen alle auf denselben generischen Marktdaten-Handler, der Daten holt und
+das Ergebnis wegwirft.
+
+Das ist **exakt dieselbe Luecke wie bei der Discovery** (DECISIONS §87): alles
+gebaut, alles getestet, nur ruft es niemand zusammen auf. Dort war die
+Diagnose „ein Sieb braucht jemanden, der Sand hineinschuettet". Hier wurde die
+Diagnose beim Nachbarn gestellt und beim Rest nicht wiederholt.
+
+Bekaeme das System morgen einen Preis mit bekanntem Alter, passierte trotzdem
+nichts: es gibt keinen Weg von einem Snapshot zu einer Bewertung.
+
+Der Status heisst deshalb jetzt **GEBAUT, NICHT VERDRAHTET** — nicht schoener,
+aber richtig.
