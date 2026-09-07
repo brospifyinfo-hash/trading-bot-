@@ -4,7 +4,7 @@ import { createDatabase, JobQueueRepository, ProviderHealthStore } from "@sae/db
 import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 import type { ProviderStatus } from "@sae/providers";
 
-import { JobConsumer } from "../consumer";
+import { describeWiring, JobConsumer } from "../consumer";
 import { buildHandlers } from "../handlers";
 import { buildMarketAdapters, createRejectionTally } from "../pipeline/market-adapters";
 import type { RoleContext, RoleHandler } from "../role";
@@ -71,10 +71,7 @@ export const consumerRole: RoleHandler = {
     };
     await refreshStatus();
 
-    const loop = new JobConsumer({
-      workerId: `${hostname()}:${String(process.pid)}`,
-      queue,
-      handlers: buildHandlers({
+    const handlers = buildHandlers({
         db,
         logger: ctx.logger,
         env: process.env,
@@ -83,7 +80,12 @@ export const consumerRole: RoleHandler = {
         // Ohne Messung: UNAVAILABLE. Ohne Messung ist nichts bekannt, und ein
         // unbekannter Zustand darf keinen Abruf tragen.
         statusOf: (id: KnownProviderId): ProviderStatus => known.get(id) ?? "UNAVAILABLE",
-      }),
+    });
+
+    const loop = new JobConsumer({
+      workerId: `${hostname()}:${String(process.pid)}`,
+      queue,
+      handlers,
       logger: ctx.logger,
       now: () => systemClock.now(),
       leaseMs: LEASE_MS,
@@ -100,6 +102,10 @@ export const consumerRole: RoleHandler = {
         // Welche Anbieter eine Messung haben. Leer heisst: der
         // provider-health-Dienst laeuft noch nicht.
         measured: [...known.keys()].join(",") || "keine",
+        // Was die Auftragsarten tatsaechlich tun — abgeleitet, nicht
+        // aufgeschrieben. Eine von Hand gepflegte Statusangabe driftet; genau
+        // das ist zweimal passiert.
+        wiring: describeWiring(handlers),
       },
       "Consumer gestartet",
     );

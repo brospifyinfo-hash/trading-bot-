@@ -94,6 +94,7 @@ function statusOfFrom(deps: HandlerDeps): (id: KnownProviderId) => ProviderStatu
 }
 
 class ProviderHealthHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
   constructor(private readonly deps: HandlerDeps) {}
 
   async handle(job: ClaimedJob): Promise<unknown> {
@@ -113,6 +114,7 @@ class ProviderHealthHandler implements JobHandler {
 }
 
 class ExpireOpportunitiesHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
   constructor(private readonly deps: HandlerDeps) {}
 
   async handle(job: ClaimedJob): Promise<unknown> {
@@ -137,6 +139,10 @@ class ExpireOpportunitiesHandler implements JobHandler {
  * Ergebnis `NO_SOURCE` — kein Snapshot, keine Gelegenheit, keine Position.
  */
 class MarketDataHandler implements JobHandler {
+  // Er holt Marktdaten und verwirft das Ergebnis. Das ist heute vertretbar,
+  // weil die Kette dahinter ohnehin am Datentor endet — aber es ist keine
+  // Fertigmeldung, und die Einstufung sagt das.
+  readonly wiring = "MARKET_DATA_ONLY" as const;
   constructor(
     private readonly deps: HandlerDeps,
     private readonly what: string,
@@ -214,6 +220,7 @@ class MarketDataHandler implements JobHandler {
  * Handelsentscheidung, legt keine Gelegenheit an und eroeffnet keine Position.
  */
 class DiscoverTokensHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
   constructor(private readonly deps: HandlerDeps) {}
 
   async handle(job: ClaimedJob): Promise<unknown> {
@@ -250,6 +257,7 @@ class DiscoverTokensHandler implements JobHandler {
  * welches Tor zu ist.
  */
 class EvaluateOpportunityHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
   constructor(private readonly deps: HandlerDeps) {}
 
   async handle(job: ClaimedJob): Promise<unknown> {
@@ -332,6 +340,7 @@ class EvaluateOpportunityHandler implements JobHandler {
  * weitermachen und nicht von vorn beginnen.
  */
 class MarketRefreshHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
   constructor(private readonly deps: HandlerDeps) {}
 
   async handle(job: ClaimedJob): Promise<unknown> {

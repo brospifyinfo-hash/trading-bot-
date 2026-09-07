@@ -24,6 +24,48 @@ export type HandlerResult = unknown;
 export interface JobHandler {
   /** Wird mit der Nutzlast des Auftrags aufgerufen. Wirft bei Fehlschlag. */
   handle(job: ClaimedJob): Promise<HandlerResult>;
+  /**
+   * Ob dieser Handler die Arbeit seiner Auftragsart tatsaechlich tut.
+   *
+   * Der Anlass ist ein Fehler, den ich zweimal gemacht habe: in der
+   * Worker-Matrix stand bei vier Rollen „READY — WAITING FOR DATA", und das
+   * las sich wie „fertig, wartet nur auf Daten". Tatsaechlich zeigten ihre
+   * Auftragsarten auf den allgemeinen Marktdaten-Handler, der Daten holt und
+   * das Ergebnis wegwirft. Die Kette dahinter war gebaut, getestet — und
+   * wurde ausschliesslich aus Tests aufgerufen.
+   *
+   * Eine von Hand gepflegte Statusangabe driftet. Diese hier kann es nicht:
+   * sie steht an der Klasse, die die Arbeit tut oder eben nicht.
+   */
+  readonly wiring?: HandlerWiring;
+}
+
+export type HandlerWiring =
+  /** Tut die Arbeit seiner Auftragsart. */
+  | "DEDICATED"
+  /**
+   * Holt nur Marktdaten und verwirft das Ergebnis.
+   *
+   * Ein regulaerer Zwischenzustand, solange die Kette dahinter ohnehin am
+   * Datentor endet — aber einer, der benannt gehoert und nicht als „fertig"
+   * durchgehen darf.
+   */
+  | "MARKET_DATA_ONLY";
+
+/**
+ * Was die Auftragsarten heute tatsaechlich tun.
+ *
+ * Aus der Registrierung abgeleitet und nicht aufgeschrieben. Ein Handler, der
+ * seine Einstufung nicht angibt, gilt als `MARKET_DATA_ONLY` — die
+ * pessimistische Vorgabe, damit ein vergessenes Feld nicht wie eine
+ * Fertigmeldung aussieht.
+ */
+export function describeWiring(registry: HandlerRegistry): Readonly<Record<string, HandlerWiring>> {
+  const out: Record<string, HandlerWiring> = {};
+  for (const [kind, handler] of Object.entries(registry)) {
+    out[kind] = handler.wiring ?? "MARKET_DATA_ONLY";
+  }
+  return out;
 }
 
 export type HandlerRegistry = Readonly<Record<string, JobHandler>>;

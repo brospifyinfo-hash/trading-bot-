@@ -2863,3 +2863,60 @@ Position angelegt wird.
 `RESEARCH_BATCH` zeigen weiterhin auf den allgemeinen Handler. Sie stehen
 hinter dem Datentor, das heute ohnehin schließt — die Reihenfolge ist damit
 richtig, aber die Lücke bleibt und ist hier benannt statt vergessen.
+
+## §100 — Der Status wird abgeleitet, nicht aufgeschrieben
+
+Auf die Frage, was jetzt am wenigsten Verwirrung stiftet, ist die Antwort
+nicht „die restlichen fünf Auftragsarten verdrahten". Die stehen alle **hinter**
+dem Datentor, das heute ohnehin schließt. Sie jetzt anzuschließen hieße, Code
+hinzuzufügen, den niemand laufen sehen kann — und dessen Richtigkeit sich
+folglich nicht zeigen lässt.
+
+Die Verwirrung sitzt woanders, und ich bin ihr selbst zweimal aufgesessen:
+**welche Teile arbeiten tatsächlich?**
+
+In der Worker-Matrix stand bei vier Rollen `READY — WAITING FOR DATA`. Das las
+sich wie „fertig, wartet nur auf Daten". Tatsächlich zeigten ihre Auftragsarten
+auf den allgemeinen Marktdaten-Handler, der Daten holt und das Ergebnis
+wegwirft. Ich habe diese Angabe selbst geschrieben und ihr später geglaubt.
+
+### Die Lehre ist nicht „sorgfältiger schreiben"
+
+Eine von Hand gepflegte Statusangabe driftet. Immer. Deshalb steht die
+Einstufung jetzt **an der Klasse, die die Arbeit tut oder eben nicht**:
+
+```ts
+class EvaluateOpportunityHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
+```
+
+```ts
+class MarketDataHandler implements JobHandler {
+  readonly wiring = "MARKET_DATA_ONLY" as const;
+```
+
+`describeWiring()` leitet daraus die Übersicht ab, und der Consumer schreibt
+sie beim Start ins Log. Wer eine Auftragsart verdrahtet, ändert die Einstufung
+in derselben Datei, in der er den Handler schreibt — vergessen kann man es
+kaum, und ein Test hält die Liste der offenen fest.
+
+Ein Handler **ohne** Angabe gilt als `MARKET_DATA_ONLY`. Die pessimistische
+Vorgabe ist Absicht: ein vergessenes Feld darf nicht wie eine Fertigmeldung
+aussehen.
+
+### Stand, abgeleitet statt behauptet
+
+| Auftragsart | |
+|---|---|
+| `SAMPLE_PROVIDER_HEALTH` | DEDICATED |
+| `EXPIRE_OPPORTUNITIES` | DEDICATED |
+| `REFRESH_MARKET_DATA` | DEDICATED |
+| `DISCOVER_TOKENS` | DEDICATED |
+| `EVALUATE_OPPORTUNITY` | DEDICATED |
+| `SCORE_TOKEN` | MARKET_DATA_ONLY |
+| `MONITOR_PAPER_POSITION` | MARKET_DATA_ONLY |
+| `RECONCILE` | MARKET_DATA_ONLY |
+| `STRATEGY_HEALTH` | MARKET_DATA_ONLY |
+| `RESEARCH_BATCH` | MARKET_DATA_ONLY |
+
+Diese Tabelle darf veralten — die im Log nicht.

@@ -4,6 +4,8 @@ import { InMemoryDispatcher, cadenceWindow, jobRequest } from "@sae/pipeline";
 import { createLogger } from "@sae/observability";
 
 import { SchedulerLoop } from "../roles/scheduler";
+import { describeWiring } from "../consumer";
+import { buildHandlers } from "../handlers";
 
 const T0 = new Date("2026-08-31T12:00:00Z");
 const ctx = { logger: createLogger({ service: "test", level: "error" }), role: "scheduler" as const };
@@ -95,5 +97,51 @@ describe("Scheduler reiht Auftraege ein", () => {
     const before = dispatcher.jobs.length;
     await l.tick();
     expect(dispatcher.jobs.length).toBeGreaterThan(before);
+  });
+});
+
+describe("Was die Auftragsarten tatsaechlich tun", () => {
+  /**
+   * Der Fehler, den diese Pruefung verhindern soll, ist mir zweimal passiert:
+   * in der Worker-Matrix stand bei vier Rollen "READY — WAITING FOR DATA",
+   * und das las sich wie "fertig". Tatsaechlich zeigten ihre Auftragsarten
+   * auf den allgemeinen Marktdaten-Handler, der Daten holt und wegwirft.
+   *
+   * Eine von Hand gepflegte Statusangabe driftet. Diese wird abgeleitet.
+   */
+  const registry = buildHandlers({
+    db: null as never,
+    logger: createLogger({ service: "test", level: "error" }),
+    env: {} as NodeJS.ProcessEnv,
+  });
+
+  it("kennt fuer jede Auftragsart eine Einstufung", () => {
+    const wiring = describeWiring(registry);
+    expect(Object.keys(wiring).sort()).toEqual(Object.keys(registry).sort());
+  });
+
+  it("weist die verdrahteten Arten aus", () => {
+    const wiring = describeWiring(registry);
+    expect(wiring["DISCOVER_TOKENS"]).toBe("DEDICATED");
+    expect(wiring["REFRESH_MARKET_DATA"]).toBe("DEDICATED");
+    expect(wiring["EVALUATE_OPPORTUNITY"]).toBe("DEDICATED");
+    expect(wiring["SAMPLE_PROVIDER_HEALTH"]).toBe("DEDICATED");
+  });
+
+  it("laesst die unverdrahteten nicht als fertig durchgehen", () => {
+    // Sie sind ein regulaerer Zwischenzustand — aber einer, der benannt
+    // gehoert. Wird eine davon verdrahtet, faellt sie hier auf.
+    const wiring = describeWiring(registry);
+    const offen = Object.entries(wiring)
+      .filter(([, w]) => w === "MARKET_DATA_ONLY")
+      .map(([kind]) => kind)
+      .sort();
+    expect(offen).toEqual([
+      "MONITOR_PAPER_POSITION",
+      "RECONCILE",
+      "RESEARCH_BATCH",
+      "SCORE_TOKEN",
+      "STRATEGY_HEALTH",
+    ]);
   });
 });

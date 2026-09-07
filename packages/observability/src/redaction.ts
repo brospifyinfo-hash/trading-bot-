@@ -46,7 +46,7 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // kein Geheimnisgehalt.
   "added", "known",
   "seen", "fresh", "candidates", "watchlist", "duplicates", "failedSources",
-  "withoutAuthorityCheck", "superseded", "noSourceReasons", "unusableQuotes", "mintShape",
+  "withoutAuthorityCheck", "superseded", "noSourceReasons", "unusableQuotes", "mintShape", "wiring",
 ]);
 
 /**
