@@ -2614,3 +2614,63 @@ immer möglich, und genau daran hing dieser Vertrag.
 Sondenadresse ist der USDC-Mint: öffentlich, unveränderlich, und mit
 abgegebener Freeze-Authority ein Fall, in dem sich `null` und „fehlt"
 unterscheiden müssen.
+
+## §96 — Der Weg zum Datenalter führt über einen Quote, nicht über Kontenlayouts
+
+Auftrag war, das fehlende Datenalter anzugehen — die letzte Lücke vor
+Einstiegsentscheidungen. Der naheliegende Weg wäre, die Pool-Reserven selbst
+von der Kette zu lesen. **Er ist der teuerste und der riskanteste.**
+
+Jeder Handelsplatz legt seinen Pool-Zustand anders ab. Die Vault-Adressen
+stehen an programmspezifischen Byte-Offsets, und aus dieser Umgebung ist kein
+Solana-RPC erreichbar, gegen das sich ein Offset prüfen ließe. Ein Versatz um
+acht Byte ergäbe keinen Fehler, sondern **einen falschen Preis** — plausibel
+aussehend und um Zehnerpotenzen daneben. Bei konzentrierter Liquidität
+(CLMM, Whirlpool, DLMM) ist das Verhältnis der Vaults ohnehin nicht der Preis.
+
+### Der billigere Weg war schon halb gebaut
+
+Ein Router-Quote löst zwei Probleme auf einmal:
+
+- Er nennt mit **`contextSlot`** den Slot, zu dem er aus dem Kettenzustand
+  gerechnet wurde. Über `getBlockTime(slot)` wird daraus eine echte Uhrzeit —
+  von der Kette abgelesen, nicht geschätzt.
+- Er ist der Preis, zu dem **tatsächlich getauscht würde**, inklusive Route und
+  Preiseinfluss. Für eine Einstiegsentscheidung ist das die richtigere Zahl als
+  ein Pool-Mittelpreis.
+
+`JupiterRouterProvider` existiert seit Langem, `/quote` ist implementiert, und
+`contextSlot` steht als `optional()` im Schema — **niemand hat je geprüft, ob
+es tatsächlich kommt.** Genau daran hängt jetzt alles.
+
+### Was dieser Commit liefert
+
+Den **Rechenkern**, vollständig prüfbar ohne Netz:
+
+- `quoteUnitPrice` rechnet über verschiedene Dezimalstellen hinweg, ganzzahlig
+  bis zur letzten Division. Hier wohnen die gefährlichen Fehler — eine
+  vertauschte Dezimalstelle verschiebt einen Preis um Zehnerpotenzen und sieht
+  dabei plausibel aus. Getestet gegen von Hand nachgerechnete Werte, inklusive
+  Beträgen jenseits von 2^53.
+- `quoteAge` unterscheidet vier Fälle statt zwei: bekannt, kein `contextSlot`,
+  keine Slot-Uhrzeit, **Uhrenversatz**. Der letzte wird ausdrücklich **nicht**
+  auf null gekappt — gekappt sähe eine falsch gehende Uhr wie „taufrisch" aus,
+  also wie das beste denkbare Ergebnis.
+
+### Und die Sonden, die den Rest belegen
+
+Nach dem Muster aus §95 misst der `provider-health`-Takt jetzt auch die
+Antwortform von `getSlot` und von Jupiters `/quote`. Damit beantwortet **eine
+einzige Log-Zeile** die Frage, an der der ganze Weg hängt: steht `contextSlot`
+in der Antwort?
+
+Die Quote-Parameter stammen aus der Spezifikation
+(`docs/providers/jupiter.md`), nicht aus einer Vermutung. Die Sonde ist
+ausdrücklich kein Adapter: sie liefert keinen Wert, färbt keinen Status und
+trägt keine Entscheidung.
+
+### Was noch fehlt
+
+`JUPITER_BASE_URL` ist auf keinem Dienst gesetzt. Ohne sie schweigt die Sonde
+— korrekt, aber es passiert auch nichts. Das ist der nächste Handgriff, und es
+ist ein Eintrag in den Variablen, kein Befehl.

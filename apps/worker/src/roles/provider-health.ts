@@ -2,7 +2,7 @@ import { providerId, systemClock, type Clock } from "@sae/core";
 import { loadEnv, providerEnvSchema, readProviderConfig, type KnownProviderId } from "@sae/config";
 import { summarizeFleet, type ProviderStatus, type ProviderStatusReport } from "@sae/providers";
 import { DexScreenerMarketAdapter, SolanaMintAdapter } from "@sae/providers";
-import type { Logger } from "@sae/observability";
+import { describeShape, type Logger } from "@sae/observability";
 import { createDatabase, ProviderHealthStore, ProviderReadinessStore } from "@sae/db";
 
 import type { RoleContext, RoleHandler } from "../role";
@@ -302,6 +302,7 @@ export const providerHealthRole: RoleHandler = {
       // Takt nebenbei die Antwortform. Sobald der Vertrag steht, hoert das von
       // selbst auf — die Funktion prueft es selbst.
       await probeMintContract({ env: process.env, logger: ctx.logger });
+      await probeFreshnessContracts({ env: process.env, logger: ctx.logger });
     };
 
     // Sofort einmal messen, damit der Scheduler nicht bis zum ersten Takt
@@ -380,3 +381,92 @@ export async function probeMintContract(input: {
 
 /** USDC — oeffentlich, unveraenderlich, Freeze-Authority abgegeben. */
 export const CONTRACT_PROBE_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/** Wrapped SOL — die Eingabeseite der Quote-Sonde. */
+const PROBE_INPUT_MINT = "So11111111111111111111111111111111111111112";
+
+/** 0,01 SOL. Klein genug, um jede Route zu finden, gross genug fuer einen Preis. */
+const PROBE_AMOUNT_LAMPORTS = "10000000";
+
+/**
+ * Holt eine Antwort und beschreibt ihre FORM.
+ *
+ * Bewusst ein roher Aufruf und kein Adapter: eine Sonde ist kein Anbieter. Sie
+ * liefert keinen Wert, den irgendwer benutzt, sie faerbt keinen Status und
+ * traegt keine Entscheidung — sie beantwortet genau eine Frage, naemlich wie
+ * die Antwort aufgebaut ist. Dafuer einen vollstaendigen Adapter zu bauen
+ * hiesse, drei Klassen zu pflegen, deren einziger Zweck es ist, wieder zu
+ * verschwinden.
+ */
+async function shapeOf(
+  url: string,
+  init?: RequestInit,
+): Promise<{ readonly shape: string } | { readonly failure: string }> {
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    const body = await response.text();
+    if (!response.ok) return { failure: `HTTP ${String(response.status)}` };
+    return { shape: describeShape(JSON.parse(body) as unknown) };
+  } catch (error: unknown) {
+    return { failure: error instanceof Error ? error.name : "UNKNOWN" };
+  }
+}
+
+const PROBE_TIMEOUT_MS = 8_000;
+
+/**
+ * Misst die Antwortform der beiden Vertraege, die zum Datenalter fuehren.
+ *
+ * `getBlockTime` macht aus dem `contextSlot` eines Quotes eine echte Uhrzeit —
+ * abgelesen, nicht geschaetzt. Erst damit hat ein Preis ein bekanntes Alter,
+ * und erst dann laesst der Torwaechter eine Einstiegsentscheidung zu.
+ *
+ * Beide Sonden laufen nur, solange ihr Ziel nicht belegt ist, und schweigen
+ * ohne Konfiguration.
+ */
+export async function probeFreshnessContracts(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly logger: Logger;
+}): Promise<void> {
+  const rpcUrl = input.env["SOLANA_RPC_URL"];
+  if (rpcUrl !== undefined && rpcUrl.trim() !== "") {
+    const result = await shapeOf(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // Ohne Slot-Argument antwortet getBlockTime nicht; der zuletzt
+      // bestaetigte Slot ist der einzige, von dem wir sicher wissen, dass es
+      // ihn gibt.
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [] }),
+    });
+    logShape(input.logger, "solana-rpc:getSlot", result);
+  }
+
+  const jupiterUrl = input.env["JUPITER_BASE_URL"];
+  if (jupiterUrl !== undefined && jupiterUrl.trim() !== "") {
+    // Parameter aus der Spezifikation, siehe docs/providers/jupiter.md.
+    const query = new URLSearchParams({
+      inputMint: PROBE_INPUT_MINT,
+      outputMint: CONTRACT_PROBE_MINT,
+      amount: PROBE_AMOUNT_LAMPORTS,
+      slippageBps: "50",
+    });
+    const result = await shapeOf(`${jupiterUrl.replace(/\/$/, "")}/quote?${query.toString()}`);
+    // Die eine Frage, an der alles haengt: steht `contextSlot` in der Antwort?
+    logShape(input.logger, "jupiter:quote", result);
+  }
+}
+
+function logShape(
+  logger: Logger,
+  provider: string,
+  result: { readonly shape: string } | { readonly failure: string },
+): void {
+  if ("shape" in result) {
+    logger.info({ provider, mintShape: result.shape }, "Antwortform gemessen");
+    return;
+  }
+  logger.warn({ provider, kind: result.failure }, "Antwortform nicht messbar");
+}
