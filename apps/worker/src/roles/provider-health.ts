@@ -15,7 +15,7 @@ import {
   SolanaBlockTimeAdapter,
   SolanaMintAdapter,
 } from "@sae/providers";
-import { describeShape, type Logger } from "@sae/observability";
+import { describeShape, pairs, type Logger } from "@sae/observability";
 import { createDatabase, ProviderHealthStore, ProviderReadinessStore } from "@sae/db";
 
 import type { RoleContext, RoleHandler } from "../role";
@@ -293,7 +293,19 @@ export async function sampleProviderHealth(input: {
    */
   readonly readiness?: ProviderReadinessStore;
   readonly at?: Date;
-}): Promise<{ readonly written: number; readonly marketDataConnected: boolean; readonly summary: string }> {
+}): Promise<{
+  readonly written: number;
+  readonly marketDataConnected: boolean;
+  readonly summary: string;
+  /**
+   * Jeder Anbieter mit seinem Zustand.
+   *
+   * Die Zusammenfassung sagt „2 von 3 Marktdatenquellen verbunden" und laesst
+   * offen, welche die dritte ist — also genau die Frage offen, fuer die man
+   * die Zeile liest. Hier steht sie beantwortet.
+   */
+  readonly states: Readonly<Record<string, string>>;
+}> {
   const at = input.at ?? systemClock.now();
   const providerEnv = loadEnv(providerEnvSchema, input.env);
 
@@ -367,7 +379,12 @@ export async function sampleProviderHealth(input: {
     }
   }
 
-  return { written, marketDataConnected: fleet.anyMarketDataConnected, summary: fleet.summary };
+  return {
+    written,
+    marketDataConnected: fleet.anyMarketDataConnected,
+    summary: fleet.summary,
+    states: Object.fromEntries(reports.map((r) => [String(r.providerId), r.status])),
+  };
 }
 
 /**
@@ -403,6 +420,10 @@ export const providerHealthRole: RoleHandler = {
           written: result.written,
           marketDataConnected: result.marketDataConnected,
           summary: result.summary,
+          // Als EIN Wert und nicht als Objekt: die Allowlist prueft jeden
+          // Schluessel, und die Schluessel sind hier Anbieternamen — also
+          // Daten. Dieselbe Begruendung wie bei `tally` (DECISIONS §100).
+          providers: pairs(result.states),
         },
         "Provider-Status gemessen",
       );

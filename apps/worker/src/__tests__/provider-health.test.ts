@@ -110,6 +110,50 @@ describe("Der Zustand kommt jetzt aus einer echten Abfrage", () => {
     return written[0]!.find((r) => String(r.providerId) === "dexscreener")!;
   }
 
+  /**
+   * Die Frage, die das Log nicht beantworten konnte.
+   *
+   * Im Betrieb stand „2 von 3 Marktdatenquellen verbunden." — und welche die
+   * dritte war, sagte die Zeile nicht. Eine Zusammenfassung, die zaehlt statt
+   * zu benennen, laesst genau die Frage offen, fuer die man sie liest.
+   *
+   * `states` nennt jetzt jeden Anbieter mit seinem Zustand. Nicht schoener,
+   * sondern beantwortbar.
+   */
+  it("nennt jeden Anbieter mit seinem Zustand, nicht nur die Anzahl", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      ({ ok: true, status: 200, text: async () => "[]" }) as unknown as Response) as typeof fetch;
+
+    const { store } = fakeStore();
+    let result;
+    try {
+      result = await sampleProviderHealth({
+        env: CONFIGURED,
+        store,
+        at: new Date("2026-09-10T12:00:00Z"),
+      });
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    expect(result.states["dexscreener"]).toBe("CONNECTED");
+    // Der Anbieter, der in „2 von 3" die fehlende Eins war: nie konfiguriert.
+    expect(result.states["birdeye"]).toBe("NOT_CONFIGURED");
+    // Ohne JUPITER_BASE_URL ist die Quote-Quelle nicht konfiguriert — und das
+    // steht jetzt da, statt sich aus einer Differenz ergeben zu muessen.
+    expect(result.states["jupiter-quote"]).toBe("NOT_CONFIGURED");
+    // Jeder Anbieter, keiner fehlt.
+    expect(Object.keys(result.states).sort()).toEqual([
+      "birdeye",
+      "dexscreener",
+      "helius",
+      "jupiter",
+      "jupiter-quote",
+      "rugcheck",
+    ]);
+  });
+
   it("meldet CONNECTED bei einer lesbaren Antwort", async () => {
     const r = await messen({ body: "[]" });
     expect(r.status).toBe("CONNECTED");

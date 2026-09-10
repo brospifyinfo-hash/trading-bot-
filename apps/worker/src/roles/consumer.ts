@@ -4,6 +4,8 @@ import { createDatabase, JobQueueRepository, ProviderHealthStore } from "@sae/db
 import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 import type { ProviderStatus } from "@sae/providers";
 
+import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
+
 import { describeWiring, JobConsumer } from "../consumer";
 import { buildHandlers } from "../handlers";
 import { buildMarketAdapters, createRejectionTally } from "../pipeline/market-adapters";
@@ -68,8 +70,9 @@ export const consumerRole: RoleHandler = {
     // werden — und die Auftraege laufen im Zyklus nacheinander, es kann sich
     // also nichts vermischen.
     const rejections = createRejectionTally();
+    const providerEnv = loadEnv(providerEnvSchema, process.env);
     const adapters = buildMarketAdapters({
-      env: loadEnv(providerEnvSchema, process.env),
+      env: providerEnv,
       clock: systemClock,
       rejections,
     });
@@ -117,6 +120,18 @@ export const consumerRole: RoleHandler = {
         running: stats.running,
         dead: stats.dead,
         adapters: [...adapters.keys()].join(","),
+        // Die REIHENFOLGE, in der gefragt wird — und die entscheidet alles.
+        //
+        // `MARKET_DATA_PRIORITY` ist eine Umgebungsvariable, deren Wirkung
+        // bisher nirgends sichtbar war: ob sie greift, liess sich nur daran
+        // ablesen, dass eine Zaehlung um eins gestiegen war. Eine
+        // Konfiguration, deren Wirkung man erraten muss, ist eine, die
+        // irgendwann falsch steht und es niemandem sagt.
+        //
+        // Nur Mitgliedschaft und Stufe, nicht der Zustand: der wird je
+        // Auftrag frisch gelesen und waere hier eine Momentaufnahme, die
+        // sofort veraltet.
+        chain: describeChain(providerEnv, adapters),
         // Welche Anbieter eine Messung haben. Leer heisst: der
         // provider-health-Dienst laeuft noch nicht.
         measured: [...known.keys()].join(",") || "keine",
@@ -155,3 +170,28 @@ export const consumerRole: RoleHandler = {
     closeDb = null;
   },
 };
+
+/**
+ * Die Anbieterkette als eine Zeile.
+ *
+ * Baut sie einmal beim Start — dieselben Eingaben wie im Auftrag, also dasselbe
+ * Ergebnis. Der Zustand wird bewusst als `CONNECTED` eingesetzt: er faerbt
+ * weder Mitgliedschaft noch Stufe, und ein Startwert aus einer noch leeren
+ * Messreihe wuerde nur einen Zustand behaupten, den niemand geprueft hat.
+ * Was hier steht, ist die KONFIGURATION — wer in welcher Reihenfolge gefragt
+ * wird.
+ */
+function describeChain(
+  env: Parameters<typeof buildMarketDataChain>[0]["env"],
+  adapters: ReadonlyMap<KnownProviderId, MarketDataAdapter>,
+): string {
+  const chain = buildMarketDataChain({ env, adapters, statusOf: () => "CONNECTED" });
+  const teile = [chain.note];
+  if (chain.configuredWithoutAdapter.length > 0) {
+    teile.push(`ohne Adapter: ${chain.configuredWithoutAdapter.join(",")}`);
+  }
+  if (chain.adapterWithoutConfig.length > 0) {
+    teile.push(`ohne Konfiguration: ${chain.adapterWithoutConfig.join(",")}`);
+  }
+  return teile.join(" | ");
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LOG_ALLOWLIST, REDACTED, describeShape, redact, tally } from "../redaction";
+import { LOG_ALLOWLIST, REDACTED, describeShape, pairs, redact, tally } from "../redaction";
 import { createLogger } from "../logger";
 
 /**
@@ -168,6 +168,47 @@ describe("Auszaehlungen ueberleben die Allowlist", () => {
 
   it("liefert bei nichts auch nichts", () => {
     expect(tally({})).toBe("");
+  });
+});
+
+describe("Benannte Zustaende ueberleben die Allowlist", () => {
+  /**
+   * Der Anlass: eine Flottenmeldung sagte „2 von 3 Marktdatenquellen
+   * verbunden" und verschwieg, welche die dritte war. Als Objekt geloggt
+   * waeren die Anbieternamen Schluessel — und damit weg.
+   */
+  it("bringt Namen UND Zustaende durch", () => {
+    const alsObjekt = redact({ providers: { "jupiter-quote": "CONNECTED" } }) as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(alsObjekt["providers"]?.["jupiter-quote"]).toBe(REDACTED);
+
+    const alsWert = redact({
+      providers: pairs({ "jupiter-quote": "CONNECTED", birdeye: "NOT_CONFIGURED" }),
+    });
+    expect(alsWert).toEqual({ providers: "birdeye=NOT_CONFIGURED jupiter-quote=CONNECTED" });
+  });
+
+  it("sortiert nach Namen, damit zwei Takte vergleichbar bleiben", () => {
+    // Nach Wert sortiert wuerde eine Statusaenderung die ganze Zeile
+    // umstellen, und ein Unterschied im Log waere nicht mehr automatisch ein
+    // Unterschied in der Sache.
+    expect(pairs({ c: "X", a: "Z", b: "Y" })).toBe("a=Z b=Y c=X");
+  });
+
+  it("liefert bei nichts auch nichts", () => {
+    expect(pairs({})).toBe("");
+  });
+
+  it("laesst die Kettenbeschreibung durch", () => {
+    // `chain` traegt die Reihenfolge, in der Anbieter gefragt werden. Ohne
+    // Eintrag in der Allowlist stuende dort "[redacted]" — und die Frage, ob
+    // MARKET_DATA_PRIORITY greift, waere weiterhin unbeantwortbar.
+    expect(LOG_ALLOWLIST.has("chain")).toBe(true);
+    expect(redact({ chain: "2 Kettenmitglied(er): jupiter-quote=PRIMARY" })).toEqual({
+      chain: "2 Kettenmitglied(er): jupiter-quote=PRIMARY",
+    });
   });
 });
 

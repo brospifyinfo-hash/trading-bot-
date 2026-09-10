@@ -3242,3 +3242,66 @@ MARKET_DATA_PRIORITY=jupiter-quote,dexscreener
 Ohne diese Zeile entstehen Snapshots mit echtem Alter und trotzdem niemals eine
 Gelegenheit. Ein Test hält das fest, damit es nicht als „der Bot handelt nicht"
 wieder auftaucht.
+
+## §105 — „2 von 3 verbunden" beantwortet die falsche Frage
+
+Datum: 2026-09-10
+
+Nach der Umstellung meldete `provider-health`:
+
+```
+written: 6  marketDataConnected: true
+summary: 2 von 3 Marktdatenquellen verbunden.
+```
+
+Daraus ließ sich ableiten, dass die neue Quelle greift — `written` war von 5
+auf 6 gestiegen, die Zusammenfassung von „1 von 2" auf „2 von 3". Das ist ein
+Beleg durch **Differenzbildung über zwei Log-Zeilen hinweg**, und zwei Fragen
+blieben trotzdem offen:
+
+1. Welche der drei Quellen ist nicht verbunden?
+2. Greift `MARKET_DATA_PRIORITY` überhaupt — und in welcher Reihenfolge wird
+   gefragt?
+
+Auf beide gab das Log keine Antwort. Eine Zusammenfassung, die **zählt statt zu
+benennen**, lässt genau die Frage offen, für die man sie liest. Und eine
+Konfiguration, deren Wirkung man aus einer Zahl erraten muss, ist eine, die
+irgendwann falsch steht und es niemandem sagt.
+
+### Zwei Zeilen, die es beantworten
+
+`providers` nennt jeden Anbieter mit seinem Zustand:
+
+```
+providers: birdeye=NOT_CONFIGURED dexscreener=CONNECTED helius=NOT_CONFIGURED
+           jupiter=UNAVAILABLE jupiter-quote=CONNECTED rugcheck=NOT_CONFIGURED
+```
+
+`chain` nennt die Reihenfolge, in der gefragt wird — beim Start des Consumers,
+aus derselben Konfiguration, die auch der Auftrag benutzt:
+
+```
+chain: 2 Kettenmitglied(er): jupiter-quote=PRIMARY, dexscreener=SECONDARY.
+```
+
+Bewusst nur Mitgliedschaft und Stufe, nicht der Zustand: der wird je Auftrag
+frisch gelesen und wäre beim Start eine Momentaufnahme, die sofort veraltet.
+
+### Der Fallstrick, der beides fast unlesbar gemacht hätte
+
+Die Redaction-Allowlist prüft **jeden** Schlüssel, auch die in verschachtelten
+Objekten. Als Objekt geloggt wären die Anbieternamen Schlüssel — und damit
+`[redacted]`. Genau derselbe Fehler wie beim Histogramm der Ablehnungsgründe
+(§100), nur mit Zuständen statt Zahlen.
+
+`pairs()` macht daraus einen einzigen Wert, sortiert nach Namen. Nach Namen und
+nicht nach Zustand, damit eine Statusänderung nicht die ganze Zeile umstellt:
+ein Unterschied im Log soll ein Unterschied in der Sache sein und keine
+Umsortierung.
+
+### Nachgereicht: der Befund selbst
+
+Ein Test hält jetzt fest, was in der Produktion zu sehen war — sechs Anbieter,
+drei davon mit `TOKEN_MARKET`, und `birdeye` als die nie konfigurierte dritte.
+Vorher war das eine plausible Vermutung. Plausible Vermutungen haben in diesem
+Projekt schon zweimal danebengelegen (§103).

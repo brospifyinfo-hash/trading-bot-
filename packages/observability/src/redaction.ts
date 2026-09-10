@@ -47,6 +47,11 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   "added", "known",
   "seen", "fresh", "candidates", "watchlist", "duplicates", "failedSources",
   "withoutAuthorityCheck", "superseded", "noSourceReasons", "unusableQuotes", "mintShape", "wiring",
+  // Vierter Durchgang, ausgeloest von einer Frage, die das Log nicht
+  // beantworten konnte: „2 von 3 Marktdatenquellen verbunden" — welche denn
+  // nicht? Eine Zusammenfassung, die zaehlt statt zu benennen, laesst genau
+  // die Frage offen, fuer die man sie liest.
+  "providers", "chain",
 ]);
 
 /**
@@ -74,6 +79,25 @@ export function tally(counts: Readonly<Record<string, number>>): string {
   return entries
     .sort((a, b) => (b[1] - a[1] !== 0 ? b[1] - a[1] : a[0].localeCompare(b[0])))
     .map(([name, count]) => `${name}=${String(count)}`)
+    .join(" ");
+}
+
+/**
+ * Benannte Zustaende als EIN Wert — dieselbe Begruendung wie bei `tally`.
+ *
+ * Der Anlass: die Flottenmeldung sagte „2 von 3 Marktdatenquellen verbunden"
+ * und verschwieg, welche die dritte war. Eine Zahl beantwortet die Frage
+ * „laeuft es?", aber nie die Frage „was fehlt?" — und die zweite ist die, mit
+ * der jemand vor dem Log sitzt.
+ *
+ * Sortiert nach Namen und nicht nach Wert: die Reihenfolge soll zwischen zwei
+ * Takten stabil sein, damit ein Unterschied im Log ein Unterschied in der Sache
+ * ist und nicht eine Umsortierung.
+ */
+export function pairs(entries: Readonly<Record<string, string>>): string {
+  return Object.entries(entries)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, value]) => `${name}=${value}`)
     .join(" ");
 }
 
