@@ -8,7 +8,7 @@ import {
   type IngestResult,
 } from "@sae/db";
 import { tally, type Logger } from "@sae/observability";
-import { runResumable, type MarketDataAdapter } from "@sae/pipeline";
+import { runResumable, snapshotSupportsEntry, type MarketDataAdapter } from "@sae/pipeline";
 import type { ProviderStatus } from "@sae/providers";
 
 import { resolveMarketInput } from "./market-input";
@@ -55,6 +55,21 @@ export interface MarketRefreshResult {
   readonly noSource: number;
   readonly rejected: number;
   readonly completed: boolean;
+  /**
+   * Wie viele der geschriebenen Snapshots eine Einstiegsentscheidung tragen
+   * koennten.
+   *
+   * **Die aussagekraeftigste Zahl des Systems.** `ingested` sagt, dass Daten
+   * ankommen; diese Zahl sagt, ob sie etwas WERT sind. Der Unterschied war ein
+   * Jahr lang die ganze Geschichte dieses Projekts: die Kette lief, schrieb
+   * Snapshots, und keiner davon kam je am Torwaechter vorbei — sichtbar wurde
+   * das nirgends.
+   *
+   * Sie wird vom Torwaechter selbst gezaehlt, nicht nachgebaut.
+   */
+  readonly entryReady: number;
+  /** Warum die uebrigen es nicht koennten. Leer, wenn alle es koennen. */
+  readonly entryBlocked: Readonly<Record<string, number>>;
 }
 
 interface TokenUnit {
@@ -91,6 +106,8 @@ export async function refreshMarketData(
       noSource: 0,
       rejected: 0,
       completed: true,
+      entryReady: 0,
+      entryBlocked: {},
     };
   }
 
@@ -98,6 +115,8 @@ export async function refreshMarketData(
   let ingested = 0;
   let noSource = 0;
   let rejected = 0;
+  let entryReady = 0;
+  const entryBlocked: Record<string, number> = {};
 
   const run = await runResumable<TokenUnit, IngestResult | null>({
     jobKey,
@@ -160,8 +179,30 @@ export async function refreshMarketData(
         },
       });
 
-      if (result.kind === "ACCEPTED") ingested += 1;
-      else if (result.kind === "REJECTED") rejected += 1;
+      if (result.kind === "ACCEPTED") {
+        ingested += 1;
+
+        // Derselbe Torwaechter, den die Entscheidung spaeter befragt — hier
+        // nur gezaehlt, nicht angewendet. Fuer die HISTORIE wird alles
+        // geschrieben; ob ein Snapshot eine Einstiegsentscheidung tragen
+        // koennte, ist eine getrennte Frage, und sie war bisher nirgends
+        // beantwortet.
+        const gate = snapshotSupportsEntry({
+          providerId: input.provenance.sourceProvider as never,
+          tier: input.provenance.sourceTier ?? "FALLBACK",
+          freshnessSeconds: input.freshnessSeconds,
+          contributors: [],
+        });
+        if (gate.allowed) entryReady += 1;
+        else {
+          // Ausgeschrieben statt `(x ?? 0) + 1`: `sae/no-numeric-fallback`
+          // kann einen Zaehler nicht von einem ersetzten Messwert
+          // unterscheiden, und die Regel dafuer stillzulegen waere der
+          // falsche Weg.
+          const bisher = entryBlocked[gate.code];
+          entryBlocked[gate.code] = bisher === undefined ? 1 : bisher + 1;
+        }
+      } else if (result.kind === "REJECTED") rejected += 1;
       return result;
     },
   });
@@ -186,6 +227,9 @@ export async function refreshMarketData(
       ingested,
       noSource,
       rejected,
+      // Die Zahl, auf die es ankommt — und ihre Kehrseite, sobald es eine gibt.
+      entryReady,
+      ...(Object.keys(entryBlocked).length > 0 ? { entryBlocked: tally(entryBlocked) } : {}),
       ...(why !== undefined && why.tokens > 0 ? { noSourceReasons: tally(why.reasons) } : {}),
       // Nur wenn es etwas zu sagen gibt: eine leere Zeile jede Minute ist
       // keine Auskunft, sondern Rauschen.
@@ -204,6 +248,8 @@ export async function refreshMarketData(
     noSource,
     rejected,
     completed: run.completed,
+    entryReady,
+    entryBlocked,
   };
 }
 

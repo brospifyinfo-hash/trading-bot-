@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Clock } from "@sae/core";
 import { schema, type Database } from "@sae/db";
+import { desc, eq } from "drizzle-orm";
 import { createTestDatabase } from "@sae/db/testing";
 import { createLogger } from "@sae/observability";
 import { snapshotSupportsEntry } from "@sae/pipeline";
@@ -124,6 +125,25 @@ afterEach(() => {
 });
 
 /** Ein Netz aus Papier, das nach Adresse und RPC-Methode auseinanderhaelt. */
+function netzFuer(fuerMint: string): void {
+  const quote = QUOTE.replace(new RegExp(MEME, "g"), fuerMint);
+  const dexscreener = DEXSCREENER.replace(new RegExp(MEME, "g"), fuerMint);
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+    const antwort = (body: string): Response =>
+      ({ ok: true, status: 200, text: async () => body }) as unknown as Response;
+
+    if (href.startsWith("https://jupiter.invalid")) return antwort(quote);
+    if (href.startsWith("https://dexscreener.invalid")) return antwort(dexscreener);
+
+    const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+    if (body.method === "getBlockTime") {
+      return antwort(JSON.stringify({ id: 1, jsonrpc: "2.0", result: SLOT_SECONDS }));
+    }
+    return antwort(mintAntwort(6));
+  }) as typeof fetch;
+}
+
 function netz(): void {
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
@@ -164,6 +184,11 @@ describe("Frische einer Quelle MIT Zeitstempel", () => {
 
     expect(result.status).toBe("OK");
     expect(result.ingested).toBe(1);
+    // Die Zahl, die das ganze Projekt beantwortet: der Snapshot ist da UND er
+    // koennte etwas tragen. Ohne benannte Prioritaet stuende hier 0 bei
+    // ingested 1 — Daten kommen an, sind aber nichts wert.
+    expect(result.entryBlocked).toEqual({ FALLBACK_TIER: 1 });
+    expect(result.entryReady).toBe(0);
 
     const [row] = await db
       .select({
@@ -189,6 +214,47 @@ describe("Frische einer Quelle MIT Zeitstempel", () => {
     // Die Liquiditaet kommt weiterhin von DexScreener — durchgereicht, nicht
     // erfunden.
     expect(Number(row?.liquidity)).toBe(180_000);
+  });
+
+  /**
+   * Derselbe Lauf, nur mit benannter Prioritaet — und erst hier ist die Arbeit
+   * tatsaechlich fertig.
+   *
+   * Der Unterschied zwischen diesem Test und dem darueber ist EINE
+   * Umgebungsvariable, und er ist der Unterschied zwischen „Daten kommen an"
+   * und „Daten sind etwas wert".
+   */
+  it("traegt mit benannter Prioritaet eine Einstiegsentscheidung", async () => {
+    const mint = "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj";
+    await db
+      .insert(schema.tokens)
+      .values({ mint, discoverySource: "dexscreener", state: "SCREENING" });
+    netzFuer(mint);
+
+    const env = { ...ENV, MARKET_DATA_PRIORITY: "jupiter-quote,dexscreener" };
+    const result = await refreshMarketData("test:quote-priority", {
+      db,
+      logger,
+      env,
+      clock,
+      adapters: buildMarketAdapters({ env, clock }),
+      statusOf: () => "CONNECTED",
+      maxUnitsPerRun: 5,
+      maxTokens: 5,
+    });
+
+    expect(result.ingested).toBe(1);
+    // DIE Zahl. Zum ersten Mal ungleich null.
+    expect(result.entryReady).toBe(1);
+    expect(result.entryBlocked).toEqual({});
+
+    const [row] = await db
+      .select({ tier: schema.tokenSnapshots.sourceTier })
+      .from(schema.tokenSnapshots)
+      .where(eq(schema.tokenSnapshots.sourceProviderId, "jupiter-quote"))
+      .orderBy(desc(schema.tokenSnapshots.observedAt))
+      .limit(1);
+    expect(row?.tier).toBe("PRIMARY");
   });
 
   it("laesst den Torwaechter zum ersten Mal aufmachen", () => {

@@ -52,6 +52,10 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // nicht? Eine Zusammenfassung, die zaehlt statt zu benennen, laesst genau
   // die Frage offen, fuer die man sie liest.
   "providers", "chain",
+  // Die aussagekraeftigste Zahl des Systems und ihre Kehrseite: wie viele
+  // Snapshots eine Einstiegsentscheidung tragen koennten — und warum die
+  // uebrigen es nicht koennen.
+  "entryReady", "entryBlocked",
 ]);
 
 /**

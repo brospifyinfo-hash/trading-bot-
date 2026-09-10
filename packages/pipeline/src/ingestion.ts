@@ -199,12 +199,29 @@ export async function markIngested(seen: SeenKeys, candidate: SnapshotCandidate)
  * dort geht es um Geld, und die Qualitaetsstufe ist genau die Information, die
  * das entscheidet.
  */
+/**
+ * Warum der Torwaechter zu bleibt — als kurze Kennung.
+ *
+ * `reason` ist ein Satz fuer Menschen und enthaelt Zahlen („Daten 47 s alt"),
+ * taugt also nicht als Schluessel einer Auszaehlung: jede Ablehnung ergaebe
+ * eine eigene Zeile. Der Code ist die zaehlbare Haelfte derselben Auskunft.
+ *
+ * Bewusst HIER und nicht beim Aufrufer nachgebaut: eine zweite Stelle, die
+ * dieselben Bedingungen prueft, driftet — und driftet ausgerechnet an dem
+ * Tor, an dem die teuersten Fehler dieses Systems entstehen.
+ */
+export type EntryGateCode = "OK" | "FALLBACK_TIER" | "AGE_UNKNOWN" | "TOO_OLD";
+
 export function snapshotSupportsEntry(
   provenance: SnapshotProvenance,
   settings: IngestSettings = DEFAULT_INGEST_SETTINGS,
-): { readonly allowed: boolean; readonly reason: string } {
+): { readonly allowed: boolean; readonly reason: string; readonly code: EntryGateCode } {
   if (provenance.tier === "FALLBACK") {
-    return { allowed: false, reason: "Fallback-Daten tragen keine Einstiegsentscheidung." };
+    return {
+      allowed: false,
+      reason: "Fallback-Daten tragen keine Einstiegsentscheidung.",
+      code: "FALLBACK_TIER",
+    };
   }
   if (provenance.freshnessSeconds === null) {
     // Der Fall, den DexScreener erzwingt: die Quelle liefert keinen
@@ -214,13 +231,15 @@ export function snapshotSupportsEntry(
     return {
       allowed: false,
       reason: "Anbieter liefert kein Datenalter. Unbekannt ist nicht frisch.",
+      code: "AGE_UNKNOWN",
     };
   }
   if (provenance.freshnessSeconds > settings.maxAgeSeconds) {
     return {
       allowed: false,
       reason: `Daten ${provenance.freshnessSeconds.toFixed(0)} s alt, erlaubt sind ${settings.maxAgeSeconds} s.`,
+      code: "TOO_OLD",
     };
   }
-  return { allowed: true, reason: "" };
+  return { allowed: true, reason: "", code: "OK" };
 }

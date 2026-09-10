@@ -3305,3 +3305,63 @@ Ein Test hält jetzt fest, was in der Produktion zu sehen war — sechs Anbieter
 drei davon mit `TOKEN_MARKET`, und `birdeye` als die nie konfigurierte dritte.
 Vorher war das eine plausible Vermutung. Plausible Vermutungen haben in diesem
 Projekt schon zweimal danebengelegen (§103).
+
+## §106 — `ingested` sagt nicht, ob die Daten etwas wert sind
+
+Datum: 2026-09-10
+
+### Eine Berichtigung zuerst
+
+Zur Meldung `written: 6 · 2 von 3 Marktdatenquellen verbunden` wurde gesagt,
+daran sehe man „indirekt, dass `MARKET_DATA_PRIORITY` greift". Das stimmt
+nicht, und der Irrtum ist lehrreich.
+
+Beide Zahlen sind **vollständig durch das Deployment erklärt**: der neue Code
+fügt einen sechsten Anbietereintrag hinzu (`written` 5 → 6) und einen dritten
+mit `TOKEN_MARKET` (`von 2` → `von 3`). Dass zwei davon verbunden sind, sagt,
+dass die Sonde für `jupiter-quote` durchlief — sie braucht `JUPITER_BASE_URL`,
+und die stand bei `provider-health` schon vorher.
+
+`MARKET_DATA_PRIORITY` kommt in dieser Rechnung **an keiner Stelle vor**. Die
+Zeile hätte exakt so ausgesehen, wenn die Variable nirgends gesetzt wäre.
+
+Das ist die Sorte Schluss, gegen die dieses Projekt seine Instrumente baut: ein
+Beleg durch Differenzbildung, der eine andere Ursache hat als die vermutete.
+Zweimal vorher danebengelegen (§103), hier fast ein drittes Mal.
+
+### Die Zahl, die es beantwortet
+
+`ingested` sagt, dass Snapshots ankommen. Es sagt nichts darüber, ob einer
+davon je eine Entscheidung tragen könnte — und genau das war ein Jahr lang die
+ganze Geschichte dieses Projekts: die Kette lief, schrieb Snapshots, und keiner
+kam am Torwächter vorbei. Sichtbar wurde das nirgends.
+
+Der Auffrischungslauf zählt jetzt mit:
+
+```
+ingested: 11  entryReady: 11
+ingested: 11  entryReady: 0   entryBlocked: FALLBACK_TIER=11
+```
+
+Die zweite Zeile ist der heutige Zustand, solange `MARKET_DATA_PRIORITY` nicht
+steht. Sie sagt in einem Blick, was vorher nur eine Vermutung war.
+
+Gezählt wird vom **Torwächter selbst**, nicht von einer nachgebauten Prüfung.
+Dafür gibt `snapshotSupportsEntry` jetzt zusätzlich einen `code` zurück:
+`reason` ist ein Satz für Menschen und enthält Zahlen („Daten 47 s alt"), taugt
+also nicht als Schlüssel einer Auszählung — jede Ablehnung ergäbe eine eigene
+Zeile. Eine zweite Stelle, die dieselben Bedingungen prüft, würde driften, und
+zwar ausgerechnet an dem Tor, an dem die teuersten Fehler dieses Systems
+entstehen.
+
+### Zwei Tests, ein Unterschied
+
+Derselbe Lauf, einmal ohne und einmal mit benannter Priorität:
+
+| | `ingested` | `entryReady` | `entryBlocked` | `source_tier` |
+|---|---|---|---|---|
+| ohne | 1 | 0 | `FALLBACK_TIER=1` | FALLBACK |
+| mit | 1 | 1 | — | PRIMARY |
+
+Der Unterschied ist eine Umgebungsvariable. Er ist auch der Unterschied
+zwischen „Daten kommen an" und „Daten sind etwas wert".
