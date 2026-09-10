@@ -56,6 +56,7 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // Snapshots eine Einstiegsentscheidung tragen koennten — und warum die
   // uebrigen es nicht koennen.
   "entryReady", "entryBlocked",
+  "authoritiesWritten",
 ]);
 
 /**

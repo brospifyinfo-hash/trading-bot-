@@ -3741,3 +3741,57 @@ brächte 21/29 = **0.724** — beide Tore offen, mit einem Anbieter.
 Zwei Spalten in `token_snapshots`: `volume_5m_usd` und `price_impact_bps`.
 Beide nullable, beide additiv; alte Zeilen tragen sie nicht und liefern dann
 ehrlich `Missing` statt einer nachgerechneten Zahl.
+
+## §112 — Die Konzentration steht vielleicht schon in der Kette
+
+Datum: 2026-09-10
+
+Der Plan für Schritt B war: ein externer Sicherheitsanbieter liefert
+`top10HolderSharePct`, das eine Pflichtfeld, an dem der Sicherheits-Teilscore
+hängt (Gewicht 0.20, §111).
+
+Diese Annahme ist möglicherweise falsch — zu unseren Gunsten. Solana kennt die
+größten Token-Konten eines Mint, und die Gesamtmenge lesen wir aus dem
+Mint-Konto **ohnehin schon**. Der Anteil ist damit eine Division, kein
+Anbieter.
+
+Ob der konfigurierte Endpunkt das liefert, wird **gemessen** — die Sonde im
+provider-health-Takt schreibt die Antwortform ins Log, genau wie bei
+`getAccountInfo`, `getBlockTime` und dem Jupiter-Quote. Der Vertrag ist bis
+dahin `unverified` und lehnt jede Antwort ab.
+
+### Was diese Zahl ist — und was nicht
+
+Sie misst die Konzentration über **Token-Konten**, nicht über Besitzer. Das
+wird hier nicht weggeredet, weil beide Abweichungen in verschiedene Richtungen
+zeigen und sich nicht aufheben:
+
+- Ein Besitzer kann mehrere Konten halten → die echte Konzentration ist
+  **höher** als gemessen.
+- Unter den größten Konten stehen regelmäßig Liquiditätspools und
+  Börsen-Wallets → die echte Konzentration ist **niedriger** als gemessen.
+
+Wer die Zahl als „Anteil der zehn größten Halter" liest, liest sie falsch. Ein
+Anbieter wie RugCheck oder Helius kann Konten Besitzern zuordnen und Pools
+erkennen; das bleibt der bessere Wert. Dieser hier ist der, den es ohne einen
+weiteren Anbieter gibt — und „besser als kein Maß" ist bei einem Tor, das
+sonst dauerhaft zu bleibt, das Argument.
+
+### Die Rechnung, nicht der Abruf, ist die gefährliche Stelle
+
+`concentrationOf` liefert `null` statt einer Zahl, wenn die Gesamtmenge 0 ist
+oder die Summe der Konten sie übersteigt. Das Zweite kann nur heißen, dass
+Mengen und Gesamtmenge nicht zusammengehören — und ein Prozentwert daraus wäre
+schlimmer als keiner, weil er plausibel aussieht.
+
+Gerechnet wird ganzzahlig bis zur letzten Division. Token-Mengen erreichen
+Größenordnungen jenseits von `Number.MAX_SAFE_INTEGER`; über `number` gerechnet
+wäre der Anteil stillschweigend gerundet.
+
+### Nebenbei: ein Schlüssel im Klartext
+
+In diesem Zusammenhang wurde ein RPC-Zugang als Bildschirmfoto geteilt, mit dem
+API-Schlüssel im Klartext und zusätzlich in der URL. Er ist nirgends in dieses
+Repository gelangt — nicht in Code, nicht in Logs, nicht in die Dokumentation.
+Festgehalten wird nur die Regel, die daraus folgt: Zugangsdaten werden direkt
+beim Anbieter kopiert und direkt in Railway eingesetzt, ohne Zwischenstation.

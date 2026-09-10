@@ -350,6 +350,10 @@ export async function runTokenDiscovery(deps: DiscoveryRunDeps): Promise<Discove
       rejected: summary.rejected,
       duplicates: summary.duplicates,
       failedSources: summary.failedSources,
+      // Meist 0 — eine Zeile entsteht nur bei Aenderung. Groesser 0 heisst
+      // „neuer Token" oder „an einem bekannten hat sich etwas geaendert", und
+      // das Zweite ist ein Ereignis.
+      authoritiesWritten: summary.authoritiesWritten,
       // Als ein Wert, nicht als Objekt: die Allowlist prueft jeden
       // Schluessel, und Ablehnungsgruende sind Daten, keine Feldnamen.
       reasons: tally(summary.reasons),

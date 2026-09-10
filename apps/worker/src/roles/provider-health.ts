@@ -12,6 +12,7 @@ import {
   JupiterQuoteAdapter,
   JUPITER_QUOTE_CONTRACT,
   SOLANA_BLOCK_TIME_CONTRACT,
+  SOLANA_LARGEST_ACCOUNTS_CONTRACT,
   SolanaBlockTimeAdapter,
   SolanaMintAdapter,
 } from "@sae/providers";
@@ -600,6 +601,31 @@ export async function probeFreshnessContracts(input: {
       });
       logShape(input.logger, "solana-rpc:getBlockTime", result);
     }
+  }
+
+  // Die Sonde, die ueber Schritt B entscheidet.
+  //
+  // `top10HolderSharePct` ist das eine Pflichtfeld, an dem der
+  // Sicherheits-Teilscore haengt (Gewicht 0.20, DECISIONS §111). Bisher war
+  // die Annahme, dafuer brauche es einen externen Anbieter. Liefert das RPC
+  // die groessten Token-Konten, gibt es die Zahl ohne einen weiteren
+  // Anbieter — mit bekannter Unschaerfe (siehe `largest-accounts.ts`).
+  if (
+    !SOLANA_LARGEST_ACCOUNTS_CONTRACT.verified &&
+    rpcUrl !== undefined &&
+    rpcUrl.trim() !== ""
+  ) {
+    const result = await shapeOf(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getTokenLargestAccounts",
+        params: [CONTRACT_PROBE_MINT, { commitment: "confirmed" }],
+      }),
+    });
+    logShape(input.logger, "solana-rpc:getTokenLargestAccounts", result);
   }
 
   const jupiterUrl = input.env["JUPITER_BASE_URL"];

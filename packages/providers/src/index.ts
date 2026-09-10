@@ -18,4 +18,5 @@ export * from "./dexscreener/provider";
 export * from "./solana/mint-schema";
 export * from "./solana/mint";
 export * from "./solana/block-time";
+export * from "./solana/largest-accounts";
 export * from "./jupiter/quote-fetch";
