@@ -3365,3 +3365,60 @@ Derselbe Lauf, einmal ohne und einmal mit benannter Priorität:
 
 Der Unterschied ist eine Umgebungsvariable. Er ist auch der Unterschied
 zwischen „Daten kommen an" und „Daten sind etwas wert".
+
+## §107 — Der Papierhandel bekommt einen Einstiegskurs
+
+Datum: 2026-09-10
+
+`runDecision` bekam `quotes: new UnavailableQuoteSource()` — eine Kursquelle,
+die ehrlich `MISSING(NOT_YET_COLLECTED)` zurückgibt. Selbst wenn eine
+Entscheidung bis zu einer Gelegenheit gekommen wäre, hätte der Simulator keine
+Position eröffnen können: kein Einstiegskurs.
+
+Das war richtig, solange kein Router-Vertrag belegt war. Seit §104 ist er
+belegt, also gibt es jetzt `JupiterQuoteSource`.
+
+### Warum ein Router-Quote und nicht der Snapshot-Preis
+
+Der Snapshot sagt, was ein Token **wert** ist. Der Quote sagt, was man
+tatsächlich **bekommt** — einschließlich Route, Preiseinfluss und der Menge,
+um die es geht. Für eine simulierte Ausführung ist nur das Zweite richtig: eine
+Papier-Position, die zum Mittelpreis eines Pools eröffnet, hat einen Einstieg,
+den es nie gegeben hätte, und jede spätere Statistik rechnet damit weiter, ohne
+dass irgendwo etwas kaputt aussieht.
+
+Die Slippage kommt aus dem **Plan**, nicht aus einer Konstante: ein Quote mit
+fremder Toleranz beantwortet eine andere Frage.
+
+### Kein Ausführungspfad
+
+Diese Quelle führt nichts aus. Sie signiert nichts, sendet nichts, berührt
+keinen Schlüssel. Ein Quote ist eine Frage, keine Transaktion. Live-Handel
+bleibt vollständig abgeschaltet.
+
+### Jeder Fehlschlag endet in MISSING
+
+Neun von zehn Tests prüfen nicht den Erfolgsfall, sondern dass nirgends ein
+Ersatzwert entsteht — Drosselung, Sperre, unlesbare Antwort, `outAmount: 0`,
+Netzfehler. Der letzte Fall ist der unauffälligste und der wichtigste: eine
+geworfene Ausnahme hier bräche den ganzen Entscheidungslauf ab und damit auch
+die Token, die mit dem Fehler nichts zu tun haben.
+
+`outAmount: "0"` ist der zweite: eine Ausgabe von null ist kein Kurs.
+Durchgelassen ergäbe sie eine Position mit unendlichem Einstiegspreis.
+
+### Eine offene Ungenauigkeit, ausgeschrieben
+
+`BAD_REQUEST` wird auf `NO_DATA_FOR_TOKEN` abgebildet. Ein 4xx auf eine
+wohlgeformte Anfrage heißt bei einem Router am ehesten „für dieses Paar in
+dieser Größe gibt es keinen Weg" — **sicher ist das nicht**, gemessen wurde
+bisher nur der Erfolgsfall. Für die Folge macht es keinen Unterschied (es wird
+nicht ausgeführt), für die spätere Auswertung schon. Sobald ein solcher Fall
+im Log auftaucht, lässt er sich nachprüfen; bis dahin steht die Unsicherheit
+im Code statt in niemandes Kopf.
+
+### Was danach noch fehlt
+
+`MONITOR_PAPER_POSITION` zeigt weiterhin auf den generischen
+Marktdaten-Handler. Eine eröffnete Papier-Position wird also nie überwacht und
+nie geschlossen. Das ist der nächste Schritt.

@@ -16,7 +16,7 @@ import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
 import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
-import { UnavailableQuoteSource } from "./pipeline/quote-source";
+import { buildQuoteSource } from "./pipeline/quote-source";
 import { runDecision } from "./pipeline/decision-run";
 import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
@@ -306,6 +306,15 @@ class EvaluateOpportunityHandler implements JobHandler {
     }));
     const snapshotCount = await countSnapshots(this.deps.db);
 
+    // Einmal je Lauf und nicht je Token: der Adapter haelt keinen Zustand,
+    // aber ihn zwoelfmal zu bauen waere zwoelfmal dieselbe Arbeit.
+    //
+    // Ohne JUPITER_BASE_URL bleibt es bei der Quelle, die nichts weiss. Das
+    // ist die richtige Antwort und kein Notbehelf: ein geschaetzter
+    // Einstiegskurs erzeugte Papier-Positionen mit erfundenen Einstiegen, und
+    // die spaetere Statistik haette keine Chance, das noch zu bemerken.
+    const quotes = buildQuoteSource(loadEnv(providerEnvSchema, this.deps.env));
+
     const outcomes: Record<string, number> = {};
     for (const token of tokens) {
       const result = await runDecision({
@@ -317,7 +326,7 @@ class EvaluateOpportunityHandler implements JobHandler {
         strategyVersionId: strategy.id,
         snapshotCount,
         providerReports: reports,
-        quotes: new UnavailableQuoteSource(),
+        quotes,
         liquidityUsd: null,
       });
       const seen = outcomes[result.outcome];
