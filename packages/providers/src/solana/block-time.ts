@@ -1,8 +1,9 @@
+import type { Clock } from "@sae/core";
 import { describeShape } from "@sae/observability";
 import { z } from "zod";
 
 import { classifyFailure, type FailureClass } from "../capability";
-import { unverifiedContract, type ContractResult, type ResponseContract } from "../contract";
+import { zodContract, type ContractResult, type ResponseContract } from "../contract";
 
 /**
  * `getBlockTime` — aus einem Slot wird eine echte Uhrzeit.
@@ -24,9 +25,6 @@ import { unverifiedContract, type ContractResult, type ResponseContract } from "
  * `result` ist eine Unix-Zeit in **Sekunden**, oder `null`, wenn der Slot nicht
  * (mehr) verfuegbar ist — etwa weil er aelter ist als die Aufbewahrung des
  * Knotens. `null` ist damit eine Auskunft und kein Fehler.
- *
- * Der Vertrag ist ungeprueft: aus der Entwicklungsumgebung ist kein Solana-RPC
- * erreichbar. Die Sonde im provider-health-Takt misst die Form im Betrieb.
  */
 
 export const GET_BLOCK_TIME = "getBlockTime";
@@ -39,12 +37,27 @@ export const blockTimeResultSchema = z
   })
   .passthrough();
 
-export const SOLANA_BLOCK_TIME_CONTRACT: ResponseContract<Date | null> = unverifiedContract({
-  provider: "solana-rpc",
-  endpoint: GET_BLOCK_TIME,
-  needed:
-    "Eine echte Antwort von getBlockTime. Dann wird aus unverifiedContract() " +
-    "ein zodContract({verified: true}) mit toBlockTime als Transformation.",
+/**
+ * Der geprüfte Vertrag.
+ *
+ * `verified: true`, abgeleitet aus einer echten Antwort vom 2026-09-10 —
+ * gemessen von der Sonde im provider-health-Takt, nicht aus der Spezifikation
+ * abgeschrieben. Die gemessene Form war
+ * `id:number · jsonrpc:string · result:number`, und `result` trug eine Zahl in
+ * der Groessenordnung der Unix-Sekunden.
+ *
+ * Damit ist die letzte offene Stelle der Kette geschlossen: ein Quote nennt
+ * seinen `contextSlot`, dieser Vertrag macht daraus eine Uhrzeit, und aus der
+ * Uhrzeit wird ein echtes Datenalter (DECISIONS §96/§97). Kein geschaetzter
+ * 400-ms-Takt, keine ersetzte eigene Uhr.
+ *
+ * `passthrough()` laesst `id` und alles weitere stehen, statt daran zu
+ * scheitern — ein RPC, das ein Feld ERGAENZT, hat nichts gebrochen.
+ */
+export const SOLANA_BLOCK_TIME_CONTRACT: ResponseContract<Date | null> = zodContract({
+  schema: blockTimeResultSchema.transform(toBlockTimeFromParsed),
+  schemaVersion: "solana-getblocktime-v1@2026-09-10",
+  verified: true,
 });
 
 export type BlockTimeOutcome =
@@ -64,12 +77,33 @@ export type BlockTimeOutcome =
 export function toBlockTime(raw: unknown): Date | null {
   const parsed = blockTimeResultSchema.safeParse(raw);
   if (!parsed.success) return null;
-  const seconds = parsed.data.result;
+  return toBlockTimeFromParsed(parsed.data);
+}
+
+/**
+ * Derselbe Schritt, aber auf einer bereits geprueften Antwort.
+ *
+ * Getrennt, weil der Vertrag ihn als `transform` braucht: dort ist die Antwort
+ * schon validiert, und ein zweites `safeParse` darin koennte einen
+ * Schemafehler in ein stilles `null` verwandeln — also genau die
+ * Unterscheidung einebnen, fuer die es `INVALID` gegen `VALID` gibt.
+ */
+function toBlockTimeFromParsed(parsed: z.infer<typeof blockTimeResultSchema>): Date | null {
+  const seconds = parsed.result;
   if (seconds === null) return null;
   return new Date(seconds * 1_000);
 }
 
 export interface BlockTimeDeps {
+  /**
+   * Die Uhr ist eine Abhaengigkeit, weil die Latenz eine Messung ist.
+   *
+   * Vorher stand hier `latencyMs: 0` — eine erfundene Kennzahl, dieselbe
+   * Klasse Fehler wie das erfundene Datenalter in DECISIONS §89. Sie waere in
+   * die Provider-Health gewandert und haette diesen Abruf als den schnellsten
+   * im System ausgewiesen.
+   */
+  readonly clock: Clock;
   readonly rpcUrl: string;
   readonly contract?: ResponseContract<Date | null>;
   readonly timeoutMs?: number;
@@ -99,6 +133,9 @@ export class SolanaBlockTimeAdapter {
     if (!Number.isInteger(slot) || slot < 0) {
       return { kind: "SCHEMA_REJECTED", reason: "Kein gueltiger Slot.", shape: "" };
     }
+
+    const startedAt = this.#deps.clock.now().getTime();
+    const elapsed = (): number => Math.max(0, this.#deps.clock.now().getTime() - startedAt);
 
     const fetchImpl = this.#deps.fetchImpl ?? fetch;
     let response: Response;
@@ -145,6 +182,6 @@ export class SolanaBlockTimeAdapter {
     if (validated.kind !== "VALID") {
       return { kind: "SCHEMA_REJECTED", reason: validated.reason, shape: describeShape(parsed) };
     }
-    return { kind: "OK", at: validated.value, latencyMs: 0 };
+    return { kind: "OK", at: validated.value, latencyMs: elapsed() };
   }
 }

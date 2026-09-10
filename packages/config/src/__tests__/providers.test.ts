@@ -45,13 +45,56 @@ describe("Provider-Konfiguration", () => {
     // - jupiter: gegen die herstellereigene OpenAPI-Spezifikation, 2026-08-30
     // - dexscreener: gegen eine echte API-Antwort, 2026-09-03 (siehe
     //   packages/providers/src/dexscreener/__tests__/real-response.ts)
+    // - jupiter-quote: gegen zwei echte Antworten, 2026-09-10 — den Quote
+    //   selbst und `getBlockTime`, beide von der Sonde im
+    //   provider-health-Takt gemessen (siehe
+    //   packages/providers/src/solana/__tests__/block-time.test.ts).
     //
     // Wer hier einen Anbieter ergaenzt, ohne dass sein Schema aus einer
     // Primaerquelle stammt, hebelt die wichtigste Regel des Provider-Layers
     // aus — und dieser Test ist die Stelle, an der das auffaellt.
     const entries = readProviderConfig(empty);
     const implemented = entries.filter((e) => e.adapterImplemented).map((e) => e.id);
-    expect(implemented.sort()).toEqual(["dexscreener", "jupiter"]);
+    expect(implemented.sort()).toEqual(["dexscreener", "jupiter", "jupiter-quote"]);
+  });
+
+  /**
+   * Die Quote-Marktquelle braucht ZWEI Adressen.
+   *
+   * Der Quote allein ergibt keinen Preis: die Dezimalstellen des Mint und die
+   * Uhrzeit des Slots kommen vom Solana-Knoten. Ohne ihn endet jeder Abruf in
+   * NO_DECIMALS oder NO_SLOT_TIME — ein Kettenmitglied, das zuverlaessig
+   * nichts liefert, und im Dashboard eine gruene Zeile fuer eine Quelle, die
+   * nicht arbeitet.
+   */
+  it("meldet jupiter-quote erst als konfiguriert, wenn beide Adressen stehen", () => {
+    const nurJupiter = readProviderConfig({ JUPITER_BASE_URL: "https://example.invalid" });
+    expect(nurJupiter.find((e) => e.id === "jupiter-quote")!.configured).toBe(false);
+
+    const nurRpc = readProviderConfig({ SOLANA_RPC_URL: "https://rpc.invalid" });
+    expect(nurRpc.find((e) => e.id === "jupiter-quote")!.configured).toBe(false);
+
+    const beide = readProviderConfig({
+      JUPITER_BASE_URL: "https://example.invalid",
+      SOLANA_RPC_URL: "https://rpc.invalid",
+    });
+    expect(beide.find((e) => e.id === "jupiter-quote")!.configured).toBe(true);
+  });
+
+  /**
+   * Die Reihenfolge IST die Vorgabe.
+   *
+   * Ohne `MARKET_DATA_PRIORITY` folgt die Kette dieser Liste, und der Erste,
+   * der liefert, gewinnt. jupiter-quote nennt einen Messzeitpunkt,
+   * DexScreener nicht — steht DexScreener vorn, traegt kein Snapshot je ein
+   * Alter, und der Torwaechter laesst nie einen Einstieg zu. Dieser Test ist
+   * die einzige Stelle, an der ein Umsortieren auffiele.
+   */
+  it("fragt die Quelle mit Zeitstempel vor der ohne", () => {
+    const market = readProviderConfig(empty)
+      .filter((e) => e.kind === "market")
+      .map((e) => e.id);
+    expect(market.indexOf("jupiter-quote")).toBeLessThan(market.indexOf("dexscreener"));
   });
 
   it("enthaelt keine Endpunktpfade", () => {

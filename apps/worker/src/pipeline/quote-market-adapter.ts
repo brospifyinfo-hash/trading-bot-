@@ -31,23 +31,58 @@ import { quoteToMarket, type QuoteMarketResult, type QuoteSnapshot } from "@sae/
  * dessen Alter.
  */
 
-export const QUOTE_PROVIDER_ID: ProviderId = providerId("jupiter");
+/**
+ * Dieselbe Kennung wie der Konfigurationseintrag — und ausdruecklich NICHT
+ * `jupiter`.
+ *
+ * Der Router und die Marktquelle teilen sich einen Host und sonst nichts. Der
+ * Ausfuehrungspfad kann ausfallen, waehrend sich Preise weiterhin einwandfrei
+ * ablesen lassen, und umgekehrt. Eine gemeinsame Kennung wuerde beide Befunde
+ * in eine Zeile werfen — im Dashboard, in der Provider-Health und in der
+ * Herkunft jedes Snapshots.
+ */
+export const QUOTE_PROVIDER_ID: ProviderId = providerId("jupiter-quote");
 
 /** Was der Adapter fuer einen Token braucht, um ueberhaupt fragen zu koennen. */
 export interface QuoteMarketDeps {
   readonly clock: Clock;
   /** Der Anker, gegen den gefragt wird. Gegen USDC ist das Ergebnis ein Dollarpreis. */
   readonly quoteMint: string;
-  readonly quoteDecimals: number;
   /**
-   * Wie viel gefragt wird, in kleinster Einheit des GESUCHTEN Token.
+   * Wie viel gefragt wird — in GANZEN Einheiten des Ankers, also z. B. 100
+   * fuer 100 USDC.
    *
-   * Ein Quote haengt von der Menge ab: je groesser, desto mehr Preiseinfluss.
-   * Die Menge gehoert deshalb zur Messung und nicht in eine Konstante tief im
+   * Zwei Festlegungen stecken darin, und beide haben einen Grund.
+   *
+   * **Die Seite.** Ein Quote haengt von der Menge ab: je groesser, desto mehr
+   * Preiseinfluss. Fragte man von der TOKEN-Seite aus, muesste die Menge fuer
+   * jeden Token anders sein — eine feste Rohmenge bedeutet bei 6
+   * Dezimalstellen etwas voellig anderes als bei 9, und ohne den Preis (den
+   * wir ja gerade erst suchen) laesst sie sich nicht sinnvoll waehlen.
+   * Herausgekommen waere fuer den einen Token eine Staubmenge und fuer den
+   * naechsten ein Auftrag, der den Pool leerraeumt; beide Preise waeren echt
+   * gemessen und trotzdem nicht vergleichbar. Vom Anker aus gefragt ist es
+   * fuer jeden Token dieselbe reale Summe. Nebenbei ist das die KAUFSEITE,
+   * also genau die Richtung, die eine Einstiegsentscheidung angeht.
+   *
+   * **Die Einheit.** Ganze Anker-Einheiten und nicht die kleinste Einheit,
+   * weil letztere von den Dezimalstellen des Ankers abhinge — und die werden
+   * hier gelesen, nicht angenommen. Eine Rohmenge als Konstante waere still
+   * falsch, sobald der Anker gewechselt wird.
+   *
+   * Die Menge gehoert damit zur Messung und nicht in eine Konstante tief im
    * Code — wer sie aendert, aendert den gemessenen Preis.
    */
-  readonly probeAmountRaw: bigint;
-  /** Dezimalstellen des gesuchten Token. Ohne sie kein Preis. */
+  readonly probeNotional: number;
+  /**
+   * Dezimalstellen eines Mint. Ohne sie kein Preis.
+   *
+   * Wird fuer BEIDE Seiten benutzt, auch fuer den Anker. Dass USDC sechs
+   * Stellen hat, ist bekannt — aber eine bekannte Zahl abzuschreiben ist genau
+   * die Sorte Annahme, die dieses System nicht trifft, solange die Zahl
+   * ablesbar ist. Der Aufrufer merkt sich das Ergebnis; Dezimalstellen eines
+   * SPL-Mint sind nach der Erzeugung unveraenderlich.
+   */
   readonly decimalsOf: (mint: string) => Promise<number | null>;
   readonly fetchQuote: (input: {
     readonly inputMint: string;
@@ -68,28 +103,55 @@ export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
     capabilities: ["TOKEN_MARKET"],
 
     async fetchMarket(mint: string) {
-      const decimals = await deps.decimalsOf(mint);
+      // Beide Seiten zusammen: der Aufrufer merkt sich Dezimalstellen, der
+      // zweite Abruf kostet also nach dem ersten Token nichts mehr.
+      const [decimals, quoteDecimals] = await Promise.all([
+        deps.decimalsOf(mint),
+        deps.decimalsOf(deps.quoteMint),
+      ]);
       if (decimals === null) {
         // Ohne Dezimalstellen ist jede Preisrechnung um Zehnerpotenzen
         // daneben. Sie zu raten waere der teuerste denkbare Fehler.
         deps.onUnusable?.(mint, "NO_DECIMALS");
         return null;
       }
+      if (quoteDecimals === null) {
+        // Betrifft nicht diesen Token, sondern den Anker — also jeden Token.
+        // Ein eigener Grund, damit im Log nicht zwoelfmal „NO_DECIMALS"
+        // steht, wo einmal „der Anker ist nicht lesbar" gemeint ist.
+        deps.onUnusable?.(mint, "NO_ANCHOR_DECIMALS");
+        return null;
+      }
 
+      const probeAmountRaw = toRawAmount(deps.probeNotional, quoteDecimals);
+      if (probeAmountRaw === null) {
+        deps.onUnusable?.(mint, "BAD_PROBE_SIZE");
+        return null;
+      }
+
+      // Gefragt wird mit dem Anker: „was bekomme ich fuer diese Summe?"
       const raw = await deps.fetchQuote({
-        inputMint: mint,
-        outputMint: deps.quoteMint,
-        amountRaw: deps.probeAmountRaw,
+        inputMint: deps.quoteMint,
+        outputMint: mint,
+        amountRaw: probeAmountRaw,
       });
 
       const quote: QuoteSnapshot | null =
         raw === null
           ? null
           : {
-              inAmountRaw: deps.probeAmountRaw,
+              // Gelesen wird die Messung von der TOKEN-Seite aus, und deshalb
+              // stehen die Seiten hier andersherum als in der Anfrage. Das ist
+              // kein Dreher, sondern der Zweck: `quoteUnitPrice` liefert „Preis
+              // einer Eingabeeinheit in Ausgabeeinheiten". Eingabe = Token,
+              // Ausgabe = Anker ergibt den Ankerpreis je Token, also den
+              // Dollarpreis. Andersherum kaeme heraus, wie viele Token ein
+              // Dollar kauft — dieselbe Zahl auf dem Kopf, und als Preis
+              // gefuehrt waere sie um Groessenordnungen falsch.
+              inAmountRaw: raw.outAmountRaw,
               inDecimals: decimals,
-              outAmountRaw: raw.outAmountRaw,
-              outDecimals: deps.quoteDecimals,
+              outAmountRaw: probeAmountRaw,
+              outDecimals: quoteDecimals,
               contextSlot: raw.contextSlot,
             };
 
@@ -119,4 +181,22 @@ export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
       return { value: result.value, observedAt: result.observedAt };
     },
   };
+}
+
+/**
+ * Ganze Anker-Einheiten in die kleinste Einheit.
+ *
+ * Ganzzahlig gerechnet und nicht ueber `10 ** decimals` als Gleitkommazahl:
+ * bei neun Stellen und einer dreistelligen Summe waere das noch exakt, bei
+ * mehr nicht mehr — und ein um eine Einheit danebenliegender Nenner
+ * verschiebt jeden Preis, ohne dass irgendetwas auffaellt.
+ *
+ * `null` bei allem, was keine sinnvolle Summe ist. Kein Ersatzwert: eine
+ * stillschweigend auf 1 gesetzte Probemenge waere ein Staubauftrag, dessen
+ * Preis nichts mit dem Markt zu tun haette.
+ */
+function toRawAmount(notional: number, decimals: number): bigint | null {
+  if (!Number.isInteger(notional) || notional <= 0) return null;
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 32) return null;
+  return BigInt(notional) * 10n ** BigInt(decimals);
 }

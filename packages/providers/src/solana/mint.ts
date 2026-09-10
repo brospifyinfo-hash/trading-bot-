@@ -58,12 +58,6 @@ export interface MintAccount {
 }
 
 /**
- * Der Vertrag — noch ohne Beleg.
- *
- * `needed` beschreibt, was fehlt, damit jemand ohne Kenntnis dieses Codes
- * weiss, was zu tun ist.
- */
-/**
  * Der geprüfte Vertrag.
  *
  * `verified: true`, abgeleitet aus einer echten Antwort vom 2026-09-10 —

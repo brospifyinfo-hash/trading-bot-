@@ -1,7 +1,20 @@
 import { providerId, systemClock, type Clock } from "@sae/core";
-import { loadEnv, providerEnvSchema, readProviderConfig, type KnownProviderId } from "@sae/config";
+import {
+  loadEnv,
+  providerEnvSchema,
+  readProviderConfig,
+  type KnownProviderId,
+  type ProviderEnv,
+} from "@sae/config";
 import { summarizeFleet, type ProviderStatus, type ProviderStatusReport } from "@sae/providers";
-import { DexScreenerMarketAdapter, SolanaMintAdapter } from "@sae/providers";
+import {
+  DexScreenerMarketAdapter,
+  JupiterQuoteAdapter,
+  JUPITER_QUOTE_CONTRACT,
+  SOLANA_BLOCK_TIME_CONTRACT,
+  SolanaBlockTimeAdapter,
+  SolanaMintAdapter,
+} from "@sae/providers";
 import { describeShape, type Logger } from "@sae/observability";
 import { createDatabase, ProviderHealthStore, ProviderReadinessStore } from "@sae/db";
 
@@ -58,14 +71,17 @@ const PROBE_MINT = "So11111111111111111111111111111111111111112";
  * fragen, und jede Antwort waere wieder unlesbar. Unbrauchbar ist naeher an
  * nicht erreichbar als an eingeschraenkt.
  */
-async function probeDexScreener(baseUrl: string | undefined): Promise<{
+export interface ProbeResult {
   readonly status: ProviderStatus;
   readonly detail: string;
   readonly latencyMs: number;
   readonly ok: boolean;
   /** Fuer die Bereitschaftstabelle. `null`, wenn die Anfrage nie ankam. */
   readonly httpStatus: number | null;
-}> {
+}
+
+async function probeDexScreener(env: ProviderEnv): Promise<ProbeResult> {
+  const baseUrl = env.DEXSCREENER_BASE_URL;
   const adapter = new DexScreenerMarketAdapter({
     clock: systemClock,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
@@ -113,19 +129,112 @@ async function probeDexScreener(baseUrl: string | undefined): Promise<{
   }
 }
 
-/** Die Basis-URL, die fuer die Sonde gilt. */
-function baseUrlOf(
-  env: ReturnType<typeof loadEnv<typeof providerEnvSchema>>,
-  id: KnownProviderId,
-): string | undefined {
-  return id === "dexscreener" ? env.DEXSCREENER_BASE_URL : undefined;
+/**
+ * Die Quote-Marktquelle, gemessen auf ihrem ganzen Weg.
+ *
+ * Nicht nur „antwortet Jupiter?": geprueft wird genau das, was die Quelle im
+ * Betrieb leisten muss — ein Quote MIT `contextSlot`, dessen Slot sich in eine
+ * Uhrzeit aufloesen laesst. Eine Sonde, die weniger prueft, meldete
+ * `CONNECTED` fuer eine Quelle, die anschliessend bei jedem Token an
+ * `NO_CONTEXT_SLOT` oder `NO_SLOT_TIME` scheitert — und dann suchte jemand
+ * den Fehler in der Kette statt beim Anbieter.
+ *
+ * Das ist kein Luxus, sondern der Unterschied zwischen verdrahtet und
+ * arbeitend: ohne CONNECTED ueberspringt `resolveFromChain` das Mitglied
+ * (`SKIPPED_STATUS`), und die ganze Verkabelung waere still wirkungslos.
+ */
+async function probeQuoteMarket(env: ProviderEnv): Promise<ProbeResult> {
+  const baseUrl = env.JUPITER_BASE_URL;
+  const rpcUrl = env.SOLANA_RPC_URL;
+  if (baseUrl === undefined || rpcUrl === undefined) {
+    return {
+      status: "NOT_CONFIGURED",
+      detail: "JUPITER_BASE_URL oder SOLANA_RPC_URL fehlt.",
+      latencyMs: 0,
+      ok: false,
+      httpStatus: null,
+    };
+  }
+
+  // Dasselbe Paar wie die Formsonde: WSOL gegen USDC, 0,01 SOL. Die Richtung
+  // ist hier bewusst eine andere als im Betrieb (dort wird mit dem Anker
+  // gefragt) — fuer die drei Fragen dieser Sonde spielt sie keine Rolle:
+  // antwortet der Anbieter, nennt er einen Slot, und laesst der sich in eine
+  // Uhrzeit aufloesen. Ein eigenes Paar hier haette nur eine zweite Menge in
+  // einer zweiten Einheit bedeutet, die niemand mitpflegt.
+  const quotes = new JupiterQuoteAdapter({ clock: systemClock, baseUrl });
+  const outcome = await quotes.fetchQuote({
+    inputMint: PROBE_INPUT_MINT,
+    outputMint: CONTRACT_PROBE_MINT,
+    amountRaw: BigInt(PROBE_AMOUNT_LAMPORTS),
+    slippageBps: 50,
+  });
+
+  if (outcome.kind === "FAILED") {
+    return {
+      status:
+        outcome.failure === "BLOCKED"
+          ? "BLOCKED"
+          : outcome.failure === "RATE_LIMITED"
+            ? "DEGRADED"
+            : "UNAVAILABLE",
+      detail: `${outcome.failure}: ${outcome.reason}`,
+      latencyMs: outcome.latencyMs,
+      ok: false,
+      httpStatus: outcome.httpStatus,
+    };
+  }
+  if (outcome.kind === "SCHEMA_REJECTED") {
+    // Erreichbar und unlesbar ist naeher an nicht erreichbar als an
+    // eingeschraenkt — dieselbe Begruendung wie in der Tabelle oben.
+    return {
+      status: "UNAVAILABLE",
+      detail: `Antwort nicht lesbar: ${outcome.reason}`,
+      latencyMs: outcome.latencyMs,
+      ok: false,
+      httpStatus: outcome.httpStatus,
+    };
+  }
+
+  const slot = outcome.quote.contextSlot;
+  if (slot === undefined) {
+    // Ein Preis ohne Slot traegt keine Einstiegsentscheidung. Die Quelle lebt,
+    // taugt aber nicht fuer ihren Zweck — DEGRADED sagt genau das.
+    return {
+      status: "DEGRADED",
+      detail: "Quote ohne contextSlot: kein Messzeitpunkt, also kein Datenalter.",
+      latencyMs: outcome.latencyMs,
+      ok: false,
+      httpStatus: outcome.httpStatus,
+    };
+  }
+
+  const blockTime = new SolanaBlockTimeAdapter({ clock: systemClock, rpcUrl });
+  const at = await blockTime.fetchBlockTime(slot);
+  if (at.kind !== "OK" || at.at === null) {
+    return {
+      status: "DEGRADED",
+      detail: `Slot ${String(slot)} ohne abrufbare Uhrzeit (${at.kind}).`,
+      latencyMs: outcome.latencyMs + (at.kind === "OK" ? at.latencyMs : 0),
+      ok: false,
+      httpStatus: outcome.httpStatus,
+    };
+  }
+
+  const alterSekunden = Math.round((systemClock.now().getTime() - at.at.getTime()) / 1_000);
+  return {
+    status: "CONNECTED",
+    detail: `Quote mit Slot ${String(slot)}, Alter ${String(alterSekunden)}s.`,
+    latencyMs: outcome.latencyMs + at.latencyMs,
+    ok: true,
+    httpStatus: outcome.httpStatus,
+  };
 }
 
 /** Anbieter, die tatsaechlich gemessen werden koennen. */
-const PROBES: Partial<
-  Record<KnownProviderId, (baseUrl: string | undefined) => ReturnType<typeof probeDexScreener>>
-> = {
+const PROBES: Partial<Record<KnownProviderId, (env: ProviderEnv) => Promise<ProbeResult>>> = {
   dexscreener: probeDexScreener,
+  "jupiter-quote": probeQuoteMarket,
 };
 
 export function buildStatusReports(env: NodeJS.ProcessEnv): readonly ProviderStatusReport[] {
@@ -207,7 +316,7 @@ export async function sampleProviderHealth(input: {
       // die fehlende Konfiguration.
       if (probe === undefined || report.status === "NOT_CONFIGURED") return report;
 
-      const result = await probe(baseUrlOf(providerEnv, id));
+      const result = await probe(providerEnv);
       if (result.httpStatus !== null) probeStatus.set(id, result.httpStatus);
       return {
         ...report,
@@ -439,19 +548,26 @@ const PROBE_TIMEOUT_MS = 8_000;
  * abgelesen, nicht geschaetzt. Erst damit hat ein Preis ein bekanntes Alter,
  * und erst dann laesst der Torwaechter eine Einstiegsentscheidung zu.
  *
- * Beide Sonden laufen nur, solange ihr Ziel nicht belegt ist, und schweigen
- * ohne Konfiguration.
+ * **Stand 2026-09-10 sind beide Vertraege belegt, also schweigt diese
+ * Funktion vollstaendig.** Sie bleibt trotzdem stehen, und zwar aus zwei
+ * Gruenden: sie ist der Weg, auf dem die Belege entstanden sind, und der
+ * naechste unbekannte Endpunkt bekommt hier seine Sonde, statt dass jemand
+ * dieselbe Mechanik ein zweites Mal baut.
+ *
+ * Jede Sonde laeuft nur, solange ihr Ziel unbelegt ist, und schweigt ohne
+ * Konfiguration. Die Selbstbegrenzung ist nicht Kosmetik: drei Abrufe je
+ * Minute, die niemand mehr liest, sind genau die Art Leerlauf, die im
+ * September das Datenkontingent aufgebraucht hat (DECISIONS §101).
  */
 export async function probeFreshnessContracts(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly logger: Logger;
 }): Promise<void> {
   const rpcUrl = input.env["SOLANA_RPC_URL"];
-  if (rpcUrl !== undefined && rpcUrl.trim() !== "") {
+  if (!SOLANA_BLOCK_TIME_CONTRACT.verified && rpcUrl !== undefined && rpcUrl.trim() !== "") {
     // Zwei Anfragen, und die zweite ist die eigentliche: `getSlot` liefert
     // einen Slot, den es sicher gibt, und `getBlockTime` macht daraus die
-    // Uhrzeit. Nur der zweite Vertrag fehlt noch — der erste ist mit der
-    // Messung vom 2026-09-10 belegt.
+    // Uhrzeit.
     const slot = await currentSlot(rpcUrl);
     if (slot === null) {
       input.logger.warn({ provider: "solana-rpc:getSlot" }, "Antwortform nicht messbar");
@@ -466,7 +582,7 @@ export async function probeFreshnessContracts(input: {
   }
 
   const jupiterUrl = input.env["JUPITER_BASE_URL"];
-  if (jupiterUrl !== undefined && jupiterUrl.trim() !== "") {
+  if (!JUPITER_QUOTE_CONTRACT.verified && jupiterUrl !== undefined && jupiterUrl.trim() !== "") {
     // Parameter aus der Spezifikation, siehe docs/providers/jupiter.md.
     const query = new URLSearchParams({
       inputMint: PROBE_INPUT_MINT,
@@ -475,7 +591,6 @@ export async function probeFreshnessContracts(input: {
       slippageBps: "50",
     });
     const result = await shapeOf(`${jupiterUrl.replace(/\/$/, "")}/quote?${query.toString()}`);
-    // Die eine Frage, an der alles haengt: steht `contextSlot` in der Antwort?
     logShape(input.logger, "jupiter:quote", result);
   }
 }

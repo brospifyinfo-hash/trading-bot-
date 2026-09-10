@@ -9,6 +9,9 @@ import {
 } from "@sae/pipeline";
 import { DexScreenerMarketAdapter, type DexScreenerMarket } from "@sae/providers";
 
+import { quoteMarketAdapter } from "./quote-market-adapter";
+import { buildQuoteMarketDeps } from "./quote-market-source";
+
 /**
  * Die Stelle, an der aus einem Anbieter ein Kettenmitglied wird.
  *
@@ -148,7 +151,51 @@ export function buildMarketAdapters(
 ): ReadonlyMap<KnownProviderId, MarketDataAdapter> {
   const map = new Map<KnownProviderId, MarketDataAdapter>();
   map.set("dexscreener", dexScreenerChainAdapter(deps));
+
+  const quote = quoteSourceAdapter(deps);
+  if (quote !== null) map.set("jupiter-quote", quote);
+
   return map;
+}
+
+/**
+ * Die Quelle, die einen Preis MIT Zeitstempel liefert.
+ *
+ * Sie steht in der Kette vor DexScreener (siehe `readProviderConfig`), und der
+ * Unterschied ist nicht Geschwindigkeit, sondern Entscheidungsfaehigkeit: ein
+ * Preis ohne bekanntes Alter kommt am Torwaechter `snapshotSupportsEntry`
+ * nicht vorbei. Bis hierher galt das fuer JEDEN Preis im System (DECISIONS
+ * §89, §94) — deshalb hat der Papierhandel nie eine Gelegenheit gesehen.
+ *
+ * ### Warum DexScreener trotzdem abgefragt wird
+ *
+ * Ein Quote nennt einen Preis und sonst nichts. Liquiditaet,
+ * Marktkapitalisierung und Volumen kommen weiter von DexScreener und werden
+ * als `companion` beigelegt. Das ist zulaessig, WEIL der Snapshot-Pfad die
+ * Beitragenden mitfuehrt — und was dort fehlt, bleibt `null` statt 0.
+ *
+ * Der Begleitabruf laeuft ausdruecklich OHNE die Ablehnungszaehlung. Sonst
+ * stuende jeder Token, den beide Quellen ablehnen, zweimal in der Statistik,
+ * und die Zahlen im Log wuerden lautlos doppelt zaehlen.
+ */
+function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
+  const begleiter = dexScreenerChainAdapter({ env: deps.env, clock: deps.clock });
+
+  const quoteDeps = buildQuoteMarketDeps({
+    env: deps.env,
+    clock: deps.clock,
+    companion: async (mint: string): Promise<Partial<MarketFields>> => {
+      const result = await begleiter.fetchMarket(mint);
+      // Kein Begleitdatensatz ist kein Fehler: der Preis steht auch ohne ihn,
+      // und die fehlenden Felder bleiben fehlend.
+      return result === null ? {} : result.value;
+    },
+    ...(deps.rejections === undefined
+      ? {}
+      : { onUnusable: (mint: string, reason: string) => deps.rejections?.record(mint, [reason]) }),
+  });
+
+  return quoteDeps === null ? null : quoteMarketAdapter(quoteDeps);
 }
 
 function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {

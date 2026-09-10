@@ -1,3 +1,4 @@
+import type { Clock } from "@sae/core";
 import { describeShape } from "@sae/observability";
 
 import { classifyFailure, type FailureClass } from "../capability";
@@ -17,10 +18,11 @@ import { quoteResponseSchema, type JupiterQuoteResponse } from "./schema";
  * die eine Definition der Antwortform; zwei Definitionen derselben Antwort
  * laufen irgendwann auseinander, und dann stimmt eine von beiden nicht mehr.
  *
- * Der Vertrag ist ungeprueft, bis eine echte Antwort vorliegt. `contextSlot`
- * steht im Schema als `optional()` — ob das Feld tatsaechlich kommt, ist die
- * Frage, an der der gesamte Weg zum Datenalter haengt (DECISIONS §96/§97).
- * Sie wird gemessen, nicht angenommen.
+ * Der Vertrag ist gemessen und geprueft (siehe unten). `contextSlot` steht im
+ * Schema weiterhin als `optional()`, obwohl die Messung es geliefert hat: die
+ * Messung belegt EINE Antwort, nicht jede. Ein Quote ohne `contextSlot` fuehrt
+ * flussabwaerts zu `NO_CONTEXT_SLOT` und damit zu keinem Preis — das ist die
+ * richtige Folge und besser als eine Ablehnung der ganzen Antwort.
  */
 
 export const JUPITER_QUOTE_ENDPOINT = "/quote";
@@ -50,14 +52,47 @@ export const JUPITER_QUOTE_CONTRACT: ResponseContract<JupiterQuoteResponse> = zo
   verified: true,
 });
 
+/**
+ * Kein `NO_ROUTE`-Fall.
+ *
+ * Er stand hier, wurde aber nie erzeugt: ein Quote ohne Weg kommt als
+ * HTTP-Fehler und landet in `FAILED`. Ein Variantentyp, den der Code nie
+ * herstellt, ist eine Zusage ueber Verhalten, das es nicht gibt — ein
+ * Aufrufer haette einen Zweig dafuer geschrieben, der nie laeuft. Sollte eine
+ * Messung zeigen, dass Jupiter „kein Weg" anders beantwortet, kommt die
+ * Variante mit diesem Beleg zurueck.
+ */
 export type QuoteFetchOutcome =
-  | { readonly kind: "OK"; readonly quote: JupiterQuoteResponse; readonly latencyMs: number }
-  /** Kein Weg zwischen den beiden Token — eine Auskunft, kein Fehler. */
-  | { readonly kind: "NO_ROUTE"; readonly latencyMs: number }
-  | { readonly kind: "SCHEMA_REJECTED"; readonly reason: string; readonly shape: string }
-  | { readonly kind: "FAILED"; readonly failure: FailureClass; readonly reason: string };
+  | {
+      readonly kind: "OK";
+      readonly quote: JupiterQuoteResponse;
+      readonly latencyMs: number;
+      readonly httpStatus: number;
+    }
+  | {
+      readonly kind: "SCHEMA_REJECTED";
+      readonly reason: string;
+      readonly shape: string;
+      /** `null`, wenn die Anfrage nie hinausging. */
+      readonly httpStatus: number | null;
+      readonly latencyMs: number;
+    }
+  | {
+      readonly kind: "FAILED";
+      readonly failure: FailureClass;
+      readonly reason: string;
+      readonly httpStatus: number | null;
+      /**
+       * Auch ein Fehlschlag hat eine Dauer — und gerade sie ist die
+       * interessante: ein Zeitlimit nach acht Sekunden ist ein anderer Befund
+       * als eine sofortige Abweisung.
+       */
+      readonly latencyMs: number;
+    };
 
 export interface QuoteFetchDeps {
+  /** Fuer die Latenz. Sie wird gemessen, nicht als `0` behauptet. */
+  readonly clock: Clock;
   readonly baseUrl: string;
   readonly contract?: ResponseContract<JupiterQuoteResponse>;
   readonly timeoutMs?: number;
@@ -100,8 +135,19 @@ export class JupiterQuoteAdapter {
 
   async fetchQuote(request: QuoteRequestInput): Promise<QuoteFetchOutcome> {
     if (request.amountRaw <= 0n) {
-      return { kind: "SCHEMA_REJECTED", reason: "Menge muss positiv sein.", shape: "" };
+      // Vor jeder Messung: nichts ging hinaus, also ist die Dauer 0 und keine
+      // beschoenigte Zahl.
+      return {
+        kind: "SCHEMA_REJECTED",
+        reason: "Menge muss positiv sein.",
+        shape: "",
+        httpStatus: null,
+        latencyMs: 0,
+      };
     }
+
+    const startedAt = this.#deps.clock.now().getTime();
+    const elapsed = (): number => Math.max(0, this.#deps.clock.now().getTime() - startedAt);
 
     const fetchImpl = this.#deps.fetchImpl ?? fetch;
     let response: Response;
@@ -115,7 +161,13 @@ export class JupiterQuoteAdapter {
       body = await response.text();
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
-      return { kind: "FAILED", failure: classifyFailure({ message: reason }), reason };
+      return {
+        kind: "FAILED",
+        failure: classifyFailure({ message: reason }),
+        reason,
+        httpStatus: null,
+        latencyMs: elapsed(),
+      };
     }
 
     if (!response.ok) {
@@ -123,6 +175,8 @@ export class JupiterQuoteAdapter {
         kind: "FAILED",
         failure: classifyFailure({ httpStatus: response.status, message: body.slice(0, 200) }),
         reason: `HTTP ${String(response.status)}`,
+        httpStatus: response.status,
+        latencyMs: elapsed(),
       };
     }
 
@@ -130,14 +184,26 @@ export class JupiterQuoteAdapter {
     try {
       parsed = JSON.parse(body);
     } catch {
-      return { kind: "SCHEMA_REJECTED", reason: "Kein gueltiges JSON.", shape: "" };
+      return {
+        kind: "SCHEMA_REJECTED",
+        reason: "Kein gueltiges JSON.",
+        shape: "",
+        httpStatus: response.status,
+        latencyMs: elapsed(),
+      };
     }
 
     const validated: ContractResult<JupiterQuoteResponse> = this.#contract.validate(parsed);
     if (validated.kind !== "VALID") {
-      return { kind: "SCHEMA_REJECTED", reason: validated.reason, shape: describeShape(parsed) };
+      return {
+        kind: "SCHEMA_REJECTED",
+        reason: validated.reason,
+        shape: describeShape(parsed),
+        httpStatus: response.status,
+        latencyMs: elapsed(),
+      };
     }
-    return { kind: "OK", quote: validated.value, latencyMs: 0 };
+    return { kind: "OK", quote: validated.value, latencyMs: elapsed(), httpStatus: response.status };
   }
 
   /** Der Vertrag, sobald er belegt ist — als eine Zeile Umstellung. */

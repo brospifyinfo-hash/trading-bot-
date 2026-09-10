@@ -3118,3 +3118,127 @@ wie ein Vertragsproblem aus, obwohl nur die Frage falsch war.
 
 Im Log steht **kein** `Corepack is about to download` mehr. Der Dockerfile-Fix
 aus §98, den ich hier ohne Docker-Daemon nicht testen konnte, greift.
+
+## §104 — Der letzte Vertrag steht, und die Kette ist verdrahtet
+
+Datum: 2026-09-10
+
+Die Sonde im `provider-health`-Takt hat `getBlockTime` gemessen:
+
+```
+provider: solana-rpc:getBlockTime
+mintShape: id:number jsonrpc:string result:number
+```
+
+Drei Felder, `result` eine Zahl in der Größenordnung der Unix-Sekunden. Genau
+die Form, die `blockTimeResultSchema` beschreibt. `SOLANA_BLOCK_TIME_CONTRACT`
+ist damit `zodContract({verified: true})` — der letzte ungeprüfte Vertrag im
+System ist weg.
+
+Damit steht die vollständige Kette zum Datenalter:
+
+| Schritt | Vertrag | Belegt |
+|---|---|---|
+| Preis + `contextSlot` | Jupiter `/quote` | 2026-09-10 |
+| Slot → Uhrzeit | `getBlockTime` | 2026-09-10 |
+| Dezimalstellen | `getAccountInfo` | 2026-09-10 |
+
+### Was verdrahtet wurde
+
+Bis hierher war `quoteMarketAdapter` gebaut und ohne Aufrufstelle — dieselbe
+Lücke wie bei `runOpportunityPipeline` in §99, und dieselbe Sorte, die man
+später für ein Datenproblem hält. Jetzt hängt sie in der Kette:
+
+- **`jupiter-quote` ist eine eigene Anbieterkennung**, nicht ein zweites
+  `kind` am Router-Eintrag. Router und Marktquelle teilen einen Host und sonst
+  nichts: der Ausführungspfad kann ausfallen, während sich Preise weiterhin
+  einwandfrei ablesen lassen. Eine gemeinsame Kennung würde beide Befunde in
+  eine Zeile werfen — in der Provider-Health, im Dashboard und in der Herkunft
+  jedes Snapshots.
+- **Sie steht vor DexScreener.** Der Erste, der liefert, gewinnt, und nur diese
+  Quelle nennt einen Messzeitpunkt. Stünde DexScreener vorn, trüge kein
+  Snapshot je ein Alter, und die ganze Verdrahtung wäre wirkungslos.
+- **`configured` verlangt BEIDE Adressen**, `JUPITER_BASE_URL` und
+  `SOLANA_RPC_URL`. Der Quote allein ergibt keinen Preis: Dezimalstellen und
+  Slot-Uhrzeit kommen vom Knoten. `configured: true` mit nur einer Adresse wäre
+  eine Zusage, die der Adapter nicht halten kann.
+- **DexScreener bleibt** — als `companion` für Liquidität, Volumen und
+  Marktkapitalisierung, die ein Quote nicht kennt, und als Fallback, wenn der
+  Router keinen Weg findet.
+
+### Ein Fehler, der ohne die Verdrahtung nie aufgefallen wäre
+
+`resolveFromChain` überspringt jedes Mitglied, dessen Status nicht `CONNECTED`
+oder `DEGRADED` ist. `PROBES` kannte nur DexScreener, also wäre `jupiter-quote`
+dauerhaft `UNAVAILABLE` geblieben und bei **jedem** Abruf mit `SKIPPED_STATUS`
+ausgeschieden — verdrahtet und trotzdem still wirkungslos.
+
+Die Sonde prüft deshalb nicht „antwortet Jupiter?", sondern den ganzen Weg: ein
+Quote **mit** `contextSlot`, dessen Slot sich in eine Uhrzeit auflösen lässt.
+Eine Sonde, die weniger prüft, meldete `CONNECTED` für eine Quelle, die
+anschließend bei jedem Token an `NO_CONTEXT_SLOT` scheitert — und dann sucht
+jemand den Fehler in der Kette statt beim Anbieter.
+
+### Die Probemenge wechselt die Seite
+
+Ursprünglich fragte der Adapter von der Token-Seite: „was bekomme ich für
+diese Rohmenge Token?" Das ist nicht haltbar. Eine feste Rohmenge bedeutet bei
+6 Dezimalstellen etwas völlig anderes als bei 9, und ohne den Preis — den wir
+gerade erst suchen — lässt sie sich nicht sinnvoll wählen. Für den einen Token
+wäre eine Staubmenge herausgekommen, für den nächsten ein Auftrag, der den Pool
+leerräumt. Beide Preise echt gemessen, beide nicht vergleichbar.
+
+Gefragt wird jetzt mit dem **Anker**: „was bekomme ich für 100 USDC?" Dieselbe
+reale Summe für jeden Token, bekannte Dezimalstellen auf der Eingabeseite, und
+nebenbei die Kaufseite — also genau die Richtung, die eine
+Einstiegsentscheidung angeht.
+
+Gelesen wird die Messung trotzdem von der Token-Seite (`quoteUnitPrice` mit
+Eingabe = Token, Ausgabe = Anker). Andersherum käme heraus, wie viele Token ein
+Dollar kauft: dieselbe Zahl auf dem Kopf, als Preis geführt um Größenordnungen
+falsch, und nichts daran sähe kaputt aus. Ein Test nagelt die Richtung fest.
+
+Auch die Dezimalstellen des Ankers werden **gelesen** und nicht hingeschrieben.
+Dass USDC sechs hat, ist bekannt — aber eine bekannte Zahl abzuschreiben ist
+die Sorte Annahme, die dieses System nicht trifft, solange die Zahl ablesbar
+ist. Die Probemenge wird daraus ganzzahlig gerechnet.
+
+### Drei erfundene Kennzahlen entfernt
+
+`JupiterQuoteAdapter` und `SolanaBlockTimeAdapter` gaben `latencyMs: 0` zurück
+— fest, ohne Messung. Beide hätten sich in der Provider-Health als die
+schnellsten Abrufe im System ausgewiesen. Dieselbe Klasse Fehler wie das
+erfundene Datenalter in §89, nur an einer Stelle, die niemand liest, bis sie
+zählt. Beide messen jetzt gegen die injizierte Uhr, auch auf dem Fehlerast:
+ein Zeitlimit nach acht Sekunden ist ein anderer Befund als eine sofortige
+Abweisung.
+
+Dazu ist `NO_ROUTE` aus `QuoteFetchOutcome` verschwunden. Die Variante stand im
+Typ und wurde nie erzeugt — ein Quote ohne Weg kommt als HTTP-Fehler. Ein
+Variantentyp, den der Code nie herstellt, ist eine Zusage über Verhalten, das
+es nicht gibt; ein Aufrufer hätte einen Zweig dafür geschrieben, der nie läuft.
+
+### Die Sonden schweigen jetzt von selbst
+
+`probeFreshnessContracts` läuft nur, solange ihr Ziel unbelegt ist. Beide
+Ziele sind belegt, also schweigt sie vollständig — drei Abrufe je Minute, die
+niemand mehr liest, sind genau der Leerlauf aus §101. Die Funktion bleibt
+stehen: sie ist der Weg, auf dem die Belege entstanden sind.
+
+### Was noch fehlt, und es ist eine Zeile Konfiguration
+
+Ein Snapshot trägt jetzt ein echtes Alter — der Torwächter lässt ihn trotzdem
+nicht durch, solange die Quelle auf `FALLBACK` steht. Und dort steht sie,
+solange `MARKET_DATA_PRIORITY` sie nicht nennt. Das ist eine bewusste Vorgabe
+und kein Versehen: was entscheidungstragend sein darf, wird benannt, nicht
+erraten.
+
+Für den Betrieb heißt das:
+
+```
+MARKET_DATA_PRIORITY=jupiter-quote,dexscreener
+```
+
+Ohne diese Zeile entstehen Snapshots mit echtem Alter und trotzdem niemals eine
+Gelegenheit. Ein Test hält das fest, damit es nicht als „der Bot handelt nicht"
+wieder auftaucht.

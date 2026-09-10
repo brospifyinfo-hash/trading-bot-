@@ -27,6 +27,19 @@ export const providerEnvSchema = z.object({
 
   JUPITER_BASE_URL: nonEmpty.url().optional(),
 
+  /**
+   * Der Solana-Knoten.
+   *
+   * Steht hier, obwohl er kein Datenanbieter im engeren Sinn ist: die
+   * Quote-Marktquelle braucht ihn zwingend — fuer die Dezimalstellen eines
+   * Mint und fuer die Uhrzeit eines Slots. Ohne ihn kann sie keinen Preis
+   * bilden, und `readProviderConfig` koennte sie dann faelschlich als
+   * einsatzbereit melden. Im Worker ist die Variable ohnehin Pflicht
+   * (`workerEnvSchema`); `optional()` gilt nur fuer Aufrufer, die allein die
+   * Anbieterkonfiguration lesen.
+   */
+  SOLANA_RPC_URL: nonEmpty.url().optional(),
+
   HELIUS_BASE_URL: nonEmpty.url().optional(),
   HELIUS_API_KEY: nonEmpty.optional(),
 
@@ -35,7 +48,24 @@ export const providerEnvSchema = z.object({
 
 export type ProviderEnv = z.infer<typeof providerEnvSchema>;
 
-export type KnownProviderId = "dexscreener" | "birdeye" | "jupiter" | "helius" | "rugcheck";
+export type KnownProviderId =
+  | "dexscreener"
+  | "birdeye"
+  /** Der Router: Ausfuehrungspfad. */
+  | "jupiter"
+  /**
+   * Derselbe Host, andere Rolle: der Quote als MARKTDATENQUELLE.
+   *
+   * Eine eigene Kennung und kein zweites `kind` am Router-Eintrag, weil beide
+   * Rollen getrennt beurteilt werden muessen. Der Ausfuehrungspfad kann
+   * ausfallen, waehrend sich Preise weiterhin einwandfrei ablesen lassen — und
+   * umgekehrt. Provider-Health, Kettenprioritaet und Dashboard schluesseln
+   * alle auf diese Kennung; eine gemeinsame wuerde die beiden Befunde
+   * vermengen und damit den einen hinter dem anderen verstecken.
+   */
+  | "jupiter-quote"
+  | "helius"
+  | "rugcheck";
 
 export interface ProviderConfigEntry {
   readonly id: KnownProviderId;
@@ -58,6 +88,39 @@ export interface ProviderConfigEntry {
 
 export function readProviderConfig(env: ProviderEnv): readonly ProviderConfigEntry[] {
   const entries: ProviderConfigEntry[] = [
+    {
+      /**
+       * Bewusst VOR DexScreener.
+       *
+       * Die Reihenfolge hier ist die Reihenfolge der Kette, solange
+       * `MARKET_DATA_PRIORITY` nichts anderes sagt — und der Erste, der
+       * liefert, gewinnt. Diese Quelle nennt mit `contextSlot` den Zeitpunkt
+       * ihrer Messung; DexScreener nennt keinen. Ein Preis mit bekanntem
+       * Alter kann eine Einstiegsentscheidung tragen, einer ohne nicht
+       * (DECISIONS §89, §94). Die schlechtere Vorgabe waere hier also nicht
+       * nur langsamer, sie waere entscheidungsunfaehig.
+       *
+       * DexScreener bleibt trotzdem in der Kette: findet der Router keinen
+       * Weg, ist ein alterloser Preis fuer die HISTORIE immer noch besser als
+       * gar keiner — der Torwaechter laesst ihn nur nicht in einen Einstieg.
+       */
+      id: "jupiter-quote",
+      kind: "market",
+      capabilities: ["TOKEN_MARKET"],
+      baseUrl: env.JUPITER_BASE_URL ?? null,
+      requiresApiKey: false,
+      apiKeyPresent: true,
+      // BEIDE Variablen, und das ist keine Vorsicht: der Quote allein ergibt
+      // keinen Preis. Die Dezimalstellen des Mint und die Uhrzeit des Slots
+      // kommen vom Solana-Knoten, und ohne sie endet jeder Abruf in
+      // NO_DECIMALS oder NO_SLOT_TIME. `configured: true` waere dann eine
+      // Zusage, die der Adapter nicht halten kann.
+      configured: env.JUPITER_BASE_URL !== undefined && env.SOLANA_RPC_URL !== undefined,
+      // Seit 2026-09-10 geprueft: Quote-Vertrag und getBlockTime-Vertrag sind
+      // beide aus echten Antworten abgeleitet. Siehe
+      // apps/worker/src/pipeline/quote-market-adapter.ts.
+      adapterImplemented: true,
+    },
     {
       id: "dexscreener",
       kind: "market",
