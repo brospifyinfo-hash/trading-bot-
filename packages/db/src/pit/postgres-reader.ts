@@ -99,6 +99,8 @@ function mapSnapshot(row: SnapshotRow): PitSnapshot {
   return {
     tokenId: row.tokenId,
     observedAt: row.observedAt,
+    sourceProviderId: row.sourceProviderId,
+    sourceFreshnessSeconds: row.sourceFreshnessSeconds,
     priceUsd: row.priceUsd,
     marketCapUsd: row.marketCapUsd,
     liquidityUsd: row.liquidityUsd,

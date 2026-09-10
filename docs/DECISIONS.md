@@ -3554,3 +3554,106 @@ Marktdaten sind da, der Feature-Vektor braucht Historie.
 `MONITOR_PAPER_POSITION` zu verdrahten, während keine Position entstehen kann,
 wäre Arbeit an einem Ende, das nie erreicht wird. Erst der Einstieg, dann die
 Überwachung.
+
+## §110 — Der Feature-Vektor stand als `features: null` im Code
+
+Datum: 2026-09-10
+
+Vierte Lücke derselben Bauart. Auf dem Live-Pfad von `resolveMarketInput`
+stand:
+
+```ts
+return { kind: "OK", market: result.data.value, features: null, ... }
+```
+
+Ein Literal. Daneben, in `runOpportunityPipeline`, ein Kommentar, der genau
+beschrieb, wie der Vektor entsteht — „aus der Historie über den PitReader" —
+und niemand tat es. Der Durchlauf endete deshalb bei **jedem** Token mit
+`BLOCKED / NO_FEATURE_VECTOR`, unabhängig von der Datenlage.
+
+`buildFeatureVector` baut ihn jetzt.
+
+### Ausschließlich aus dem PitReader
+
+Es wäre naheliegend gewesen, den gerade frisch abgerufenen Preis zu nehmen — er
+ist jünger als der letzte Snapshot. Genau das wäre falsch: eine Preisänderung
+über fünf Minuten vergleicht zwei Messungen, und stammt die eine vom Router und
+die andere aus der Snapshot-Historie, misst die Differenz auch den Unterschied
+zwischen den Anbietern. **Eine Reihe muss aus einer Reihe kommen.**
+
+Der PitReader ist außerdem die Vorkehrung gegen Look-Ahead: jede Methode
+verlangt `asOf`, es gibt keine für „den aktuellen Stand".
+
+Die Herkunft überlebt bis ins einzelne Feld: `PitSnapshot` trägt jetzt
+`sourceProviderId`, und jedes `observed()` nennt den Anbieter, der diesen
+Datenpunkt geliefert hat. Ohne das wäre nach der Aggregation nicht mehr sagbar,
+worauf eine Entscheidung beruhte.
+
+### Ein Fehler, den nur der Test finden konnte
+
+`snapshotsBetween` ist halboffen (`from` exklusiv). Die Historie wurde exakt bis
+`asOf - 1h` geladen — ein Snapshot, der genau eine Stunde alt war, fiel damit
+per Definition heraus, und `priceChange1h` wäre **dauerhaft** `Missing`
+gewesen.
+
+Im Betrieb wäre das nie aufgefallen: `Missing` ist ein reguläres Ergebnis, und
+ein fehlendes Stundenmomentum sieht aus wie zu wenig Historie. Die geladene
+Spanne ist jetzt breiter als das längste Fenster — die Toleranz braucht Daten
+auf **beiden** Seiten ihres Zielpunkts.
+
+### Was NICHT genähert wird
+
+`volumeAcceleration` verlangt „Volumen der letzten 5 Minuten im Verhältnis zum
+Durchschnitt". Aus zwei Ständen eines rollenden 24-Stunden-Volumens ließe sich
+ein Zufluss schätzen — aber das ist eine andere Größe, und sie sähe der
+richtigen zum Verwechseln ähnlich. Also `Missing`.
+
+Ebenso `security.*`: ohne Befund steht dort `NOT_YET_COLLECTED` und
+ausdrücklich nicht `false`. „Wir wissen es nicht" ist etwas anderes als „die
+Autorität ist abgegeben"; ein `false` wäre eine Sicherheitsaussage, die niemand
+geprüft hat.
+
+### Die Messung — und der Befund, der eine Entscheidung verlangt
+
+Mit einem Vektor aus allem, was dieses System **heute tatsächlich erhebt**:
+
+```
+dataCompleteness: 0.310   Schwelle: 0.7
+weightCoverage:   0.250   Mindestens: 0.6   ->  finalScore: null
+notComputable: security, momentum, execution, smartMoney, social, dev, narrative
+```
+
+Zwei Tore, nicht eins. Die Score-Engine bildet nicht einmal einen Endscore,
+weil die Gewichtsabdeckung unter `MIN_WEIGHT_COVERAGE` liegt.
+
+Von 29 Feldern sind 9 belegt. Was die übrigen 20 bräuchten:
+
+| Gruppe | Felder | Woher |
+|---|---|---|
+| security | 6 | 2 aus dem Mint-Lesen, das die Discovery **bereits macht und wegwirft**; 4 aus RugCheck/Helius |
+| momentum | 3 | `buys/sells` liefert DexScreener und wir verwerfen sie; `volumeAcceleration` braucht ein echtes 5-Minuten-Volumen |
+| holder | 2 | Helius |
+| execution | 3 | aus einem Jupiter-Quote berechenbar — den gibt es jetzt |
+| pending | 6 | Anbieter, die es nicht gibt (Smart Money, Social, Dev, Narrative) |
+
+Ohne einen einzigen neuen Anbieter erreichbar: 5 weitere Felder (Autoritäten +
+Execution) → rund **0.48**. Die 6 `pending`-Felder sind laut ihrer eigenen
+Dokumentation „Kategorien, die erst in späteren Phasen befüllt werden" — sie
+zählen aber im Nenner mit. Das deckelt `dataCompleteness` bei 23/29 = **0.79**,
+selbst wenn alles andere perfekt wäre.
+
+**Damit ist die Lage entschieden, aber die Entscheidung nicht meine.** Der Bot
+kann mit den heute verfügbaren Anbietern keine Position eröffnen. Drei Wege,
+und sie sind unterschiedlich teuer:
+
+1. **Anbieter ergänzen** (RugCheck für Sicherheit, Helius für Holder). Echte
+   Arbeit, echte Zugangsdaten, und jeder braucht einen gemessenen Vertrag.
+2. **Die Schwellen senken** (`minDataCompleteness`, `MIN_WEIGHT_COVERAGE`). Das
+   schwächt ein Sicherheitstor und ist eine Strategieentscheidung, keine
+   technische.
+3. **Die `pending`-Felder aus dem Nenner nehmen**, weil sie planmäßig noch
+   nicht existieren. Sachlich am ehesten vertretbar — ändert aber die Bedeutung
+   einer Kennzahl, die bereits in Snapshots geschrieben wurde.
+
+Ich habe keinen davon eingeschlagen. Schwellen zu senken, damit ein Tor aufgeht,
+ist genau die Bewegung, gegen die dieses ganze System gebaut ist.

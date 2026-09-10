@@ -13,6 +13,17 @@
 export interface PitSnapshot {
   readonly tokenId: string;
   readonly observedAt: Date;
+  /**
+   * Wer diesen Datenpunkt geliefert hat.
+   *
+   * Wandert in die Herkunft jedes einzelnen Feature-Feldes. Ohne ihn stuende
+   * dort ein Sammelbegriff, und die Frage „auf welcher Quelle beruhte diese
+   * Entscheidung" waere nach der Aggregation nicht mehr beantwortbar — genau
+   * die Frage, fuer die `Observation` seine Quelle mitfuehrt.
+   */
+  readonly sourceProviderId: string | null;
+  /** Alter des Datenpunkts beim Abruf, in Sekunden. `null` = unbekannt. */
+  readonly sourceFreshnessSeconds: number | null;
   readonly priceUsd: number | null;
   readonly marketCapUsd: number | null;
   readonly liquidityUsd: number | null;

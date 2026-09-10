@@ -154,6 +154,14 @@ export async function isTokenBlacklisted(db: Database, mint: string): Promise<bo
 export interface TrackedToken {
   readonly id: string;
   readonly mint: string;
+  /**
+   * Wann WIR den Token zuerst gesehen haben.
+   *
+   * Ausdruecklich nicht das Alter des Pools: ein spaet gefundener Token ist
+   * aelter, als diese Zahl sagt. Sie heisst „seit wann beobachten wir ihn" und
+   * geht so auch in `tokenAgeSeconds` des Feature-Vektors ein.
+   */
+  readonly firstSeenAt: Date;
 }
 
 /**
@@ -180,7 +188,7 @@ export async function selectTrackedTokens(
   limit: number,
 ): Promise<readonly TrackedToken[]> {
   return db
-    .select({ id: tokens.id, mint: tokens.mint })
+    .select({ id: tokens.id, mint: tokens.mint, firstSeenAt: tokens.firstSeenAt })
     .from(tokens)
     .where(and(isNull(tokens.blacklistedAt), ne(tokens.state, "REJECTED")))
     .orderBy(desc(tokens.firstSeenAt))

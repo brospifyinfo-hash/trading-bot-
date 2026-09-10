@@ -331,6 +331,7 @@ class EvaluateOpportunityHandler implements JobHandler {
         // vorher eine leere Map — siehe die Begruendung an `DecisionRunDeps`.
         adapters: this.deps.adapters ?? new Map(),
         statusOf: this.deps.statusOf ?? ((): ProviderStatus => "UNAVAILABLE"),
+        firstSeenAt: token.firstSeenAt,
         liquidityUsd: null,
       });
       const seen = outcomes[result.outcome];

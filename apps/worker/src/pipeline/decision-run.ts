@@ -14,7 +14,7 @@ import {
   type ProviderStatusReport,
 } from "@sae/providers";
 import type { Logger } from "@sae/observability";
-import type { Database } from "@sae/db";
+import { LivePitReader, type Database } from "@sae/db";
 import type { MarketDataAdapter } from "@sae/pipeline";
 
 import { runOpportunityPipeline, PAPER_NOTIONAL, type PipelineDeps } from "./opportunity-pipeline";
@@ -91,6 +91,8 @@ export interface DecisionRunDeps {
    */
   readonly adapters: ReadonlyMap<KnownProviderId, MarketDataAdapter>;
   readonly statusOf: (id: KnownProviderId) => ProviderStatus;
+  /** Fuer `tokenAgeSeconds` im Feature-Vektor. */
+  readonly firstSeenAt: Date | null;
   /**
    * Woher die simulierte Ausfuehrung ihre Kurse nimmt.
    *
@@ -190,6 +192,11 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
       mint: deps.mint,
       adapters: deps.adapters,
       statusOf: deps.statusOf,
+      // Die Historie, aus der der Feature-Vektor entsteht. Live-Modus: der
+      // Leser verlangt trotzdem bei jeder Abfrage ein `asOf` — die Vorkehrung
+      // gegen Look-Ahead gilt in beiden Betriebsarten gleich.
+      pit: new LivePitReader(deps.db, systemClock),
+      firstSeenAt: deps.firstSeenAt,
       env: deps.env,
       allowDegraded: false,
     },

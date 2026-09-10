@@ -8,6 +8,9 @@ import {
   type MarketFields,
 } from "@sae/pipeline";
 import type { FeatureVector } from "@sae/scoring";
+import type { PitReader } from "@sae/db";
+
+import { buildFeatureVector } from "./feature-build";
 import type { ProviderStatus } from "@sae/providers";
 
 /**
@@ -39,6 +42,17 @@ export interface LiveMarketRequest {
   readonly env: NodeJS.ProcessEnv;
   /** Fuer eine Einstiegsentscheidung `false`: DEGRADED reicht dafuer nicht. */
   readonly allowDegraded: boolean;
+  /**
+   * Die Historie, aus der der Feature-Vektor entsteht.
+   *
+   * Optional, weil nicht jeder Aufrufer entscheiden will — der reine
+   * Marktdaten-Abruf braucht keine Features. Fehlt der Leser, bleibt
+   * `features: null`, und der Durchlauf endet flussabwaerts ehrlich mit
+   * `NO_FEATURE_VECTOR`.
+   */
+  readonly pit?: PitReader;
+  /** Fuer `tokenAgeSeconds`. */
+  readonly firstSeenAt?: Date | null;
 }
 
 /**
@@ -151,10 +165,26 @@ export async function resolveMarketInput(
     };
   }
 
+  // Aus der HISTORIE, nicht aus dem gerade abgerufenen Wert: eine Reihe muss
+  // aus einer Reihe kommen, sonst misst eine Preisaenderung auch den
+  // Unterschied zwischen zwei Anbietern. Siehe `feature-build.ts`.
+  //
+  // Hier stand `features: null` als Literal, mit einem Kommentar daneben, der
+  // beschrieb, wie der Vektor entsteht — nur tat es niemand (DECISIONS §110).
+  const features =
+    request.pit === undefined
+      ? null
+      : await buildFeatureVector({
+          pit: request.pit,
+          tokenId: request.tokenId,
+          asOf: clock.now(),
+          firstSeenAt: request.firstSeenAt ?? null,
+        });
+
   return {
     kind: "OK",
     market: result.data.value,
-    features: null,
+    features,
     // Unveraendert aus der Kette. Bei DexScreener ist das `null`.
     freshnessSeconds: result.data.freshnessSeconds,
     provenance: {
