@@ -43,6 +43,23 @@ import { quoteToMarket, type QuoteMarketResult, type QuoteSnapshot } from "@sae/
  */
 export const QUOTE_PROVIDER_ID: ProviderId = providerId("jupiter-quote");
 
+/**
+ * Was ein Kursabruf ergeben hat — mit Grund, wenn nichts.
+ *
+ * Frueher stand hier `| null`, und das hat eine Messung im Betrieb wertlos
+ * gemacht: von 25 Token lieferten 20 keinen Kurs, und im Log stand dazu
+ * genau ein Wort — `NO_QUOTE=20`. Ob der Router keinen Weg fand, ob er uns
+ * drosselte oder ob er gar nicht antwortete, waren im Ergebnis dasselbe
+ * `null`, obwohl es drei verschiedene Probleme mit drei verschiedenen
+ * Gegenmassnahmen sind: Menge senken, Takt senken, Anbieter pruefen.
+ *
+ * Dieselbe Lehre wie bei `noSourceReasons` (DECISIONS §100), eine Ebene
+ * tiefer.
+ */
+export type QuoteFetchResult =
+  | { readonly kind: "OK"; readonly outAmountRaw: bigint; readonly contextSlot: number | null }
+  | { readonly kind: "NONE"; readonly reason: string };
+
 /** Was der Adapter fuer einen Token braucht, um ueberhaupt fragen zu koennen. */
 export interface QuoteMarketDeps {
   readonly clock: Clock;
@@ -88,7 +105,7 @@ export interface QuoteMarketDeps {
     readonly inputMint: string;
     readonly outputMint: string;
     readonly amountRaw: bigint;
-  }) => Promise<{ readonly outAmountRaw: bigint; readonly contextSlot: number | null } | null>;
+  }) => Promise<QuoteFetchResult>;
   /** `null`, wenn die Uhrzeit des Slots nicht abrufbar ist. */
   readonly fetchSlotTime: (slot: number) => Promise<Date | null>;
   /** Ergaenzende Felder aus der Marktdatenquelle. Fehlend bleibt fehlend. */
@@ -136,29 +153,32 @@ export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
         amountRaw: probeAmountRaw,
       });
 
-      const quote: QuoteSnapshot | null =
-        raw === null
-          ? null
-          : {
-              // Gelesen wird die Messung von der TOKEN-Seite aus, und deshalb
-              // stehen die Seiten hier andersherum als in der Anfrage. Das ist
-              // kein Dreher, sondern der Zweck: `quoteUnitPrice` liefert „Preis
-              // einer Eingabeeinheit in Ausgabeeinheiten". Eingabe = Token,
-              // Ausgabe = Anker ergibt den Ankerpreis je Token, also den
-              // Dollarpreis. Andersherum kaeme heraus, wie viele Token ein
-              // Dollar kauft — dieselbe Zahl auf dem Kopf, und als Preis
-              // gefuehrt waere sie um Groessenordnungen falsch.
-              inAmountRaw: raw.outAmountRaw,
-              inDecimals: decimals,
-              outAmountRaw: probeAmountRaw,
-              outDecimals: quoteDecimals,
-              contextSlot: raw.contextSlot,
-            };
+      if (raw.kind !== "OK") {
+        // Der Grund des Anbieters, unveraendert weitergereicht. Ein generisches
+        // `NO_QUOTE` daraus zu machen waere derselbe Informationsverlust, den
+        // diese Zeile gerade behebt.
+        deps.onUnusable?.(mint, raw.reason);
+        return null;
+      }
+
+      const quote: QuoteSnapshot = {
+        // Gelesen wird die Messung von der TOKEN-Seite aus, und deshalb stehen
+        // die Seiten hier andersherum als in der Anfrage. Das ist kein Dreher,
+        // sondern der Zweck: `quoteUnitPrice` liefert „Preis einer
+        // Eingabeeinheit in Ausgabeeinheiten". Eingabe = Token, Ausgabe = Anker
+        // ergibt den Ankerpreis je Token, also den Dollarpreis. Andersherum
+        // kaeme heraus, wie viele Token ein Dollar kauft — dieselbe Zahl auf
+        // dem Kopf, und als Preis gefuehrt waere sie um Groessenordnungen
+        // falsch.
+        inAmountRaw: raw.outAmountRaw,
+        inDecimals: decimals,
+        outAmountRaw: probeAmountRaw,
+        outDecimals: quoteDecimals,
+        contextSlot: raw.contextSlot,
+      };
 
       const slotTime =
-        quote?.contextSlot === undefined || quote.contextSlot === null
-          ? null
-          : await deps.fetchSlotTime(quote.contextSlot);
+        quote.contextSlot === null ? null : await deps.fetchSlotTime(quote.contextSlot);
 
       const companion: Partial<MarketFields> =
         deps.companion === undefined ? {} : await deps.companion(mint);

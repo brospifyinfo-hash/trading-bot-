@@ -3422,3 +3422,72 @@ im Code statt in niemandes Kopf.
 `MONITOR_PAPER_POSITION` zeigt weiterhin auf den generischen
 Marktdaten-Handler. Eine eröffnete Papier-Position wird also nie überwacht und
 nie geschlossen. Das ist der nächste Schritt.
+
+## §108 — Der erste Einstieg ist möglich, und 80 % gehen trotzdem verloren
+
+Datum: 2026-09-10
+
+Erster Lauf mit gesetzter Priorität, aus dem Betrieb:
+
+```
+chain: 2 Kettenmitglied(er): jupiter-quote=PRIMARY, dexscreener=SECONDARY.
+
+processed: 25  ingested: 10  noSource: 15
+entryReady: 5  entryBlocked: AGE_UNKNOWN=5
+noSourceReasons: NO_QUOTE=20 UNUSABLE_QUOTE=7 NO_LIQUIDITY_REPORTED=5 LIQUIDITY_TOO_LOW=3
+```
+
+**`entryReady: 5`.** Zum ersten Mal ungleich null. Der Weg von einem Token bis
+zu einer Zahl, auf der entschieden werden darf, ist damit im Betrieb belegt und
+nicht nur im Test.
+
+### Die Zahlen gehen exakt auf
+
+Das ist bemerkenswert genug, um es festzuhalten — es heißt, dass die
+Instrumente stimmen:
+
+| | |
+|---|---|
+| 25 Token geprüft, Router auf allen | |
+| davon 5 mit Kurs | → `entryReady: 5` |
+| 20 ohne Kurs | → `NO_QUOTE: 20` |
+| von diesen 20 rettet DexScreener 5 | → `ingested: 10`, davon 5 `AGE_UNKNOWN` |
+| 15 bleiben übrig | → `noSource: 15` = 7 + 5 + 3 |
+
+`AGE_UNKNOWN=5` ist dabei **kein Fehler, sondern der Entwurf**: für diese
+Token fiel die Kette auf DexScreener zurück, und DexScreener nennt keinen
+Messzeitpunkt. Der Snapshot wird für die Historie geschrieben und für einen
+Einstieg abgelehnt. Genau so war es gedacht.
+
+### Der Befund, der jetzt zählt
+
+Von 25 Token liefert der Router für **20 keinen Kurs**. Vier von fünf. Im Log
+stand dazu genau ein Wort: `NO_QUOTE=20`.
+
+Das ist zu wenig, um irgendetwas zu tun. Drei völlig verschiedene Ursachen
+sehen darin gleich aus, und jede hat eine andere Gegenmaßnahme:
+
+| Ursache | Gegenmaßnahme |
+|---|---|
+| Router drosselt uns (25 Token alle 20 s = 75 Anfragen/Minute) | Takt oder Tokenzahl senken |
+| Kein Weg für dieses Paar in dieser Größe | Probesumme senken |
+| Anbieter sperrt oder antwortet nicht | Anbieter prüfen |
+
+Ich hätte raten können. In diesem Projekt haben zwei Vermutungen an genau
+dieser Stelle schon danebengelegen (§103), also wird gemessen: `fetchQuote`
+gibt keinen nackten `null` mehr zurück, sondern den Grund des Anbieters —
+`QUOTE_RATE_LIMITED`, `QUOTE_BAD_REQUEST`, `QUOTE_BLOCKED`,
+`QUOTE_UNAVAILABLE`, `QUOTE_SCHEMA_REJECTED`, `QUOTE_BAD_AMOUNT`. Der Grund
+wandert unverändert in `noSourceReasons`; das generische `NO_QUOTE` entsteht
+auf diesem Weg gar nicht mehr.
+
+Dieselbe Lehre wie bei `noSourceReasons` selbst (§100), eine Ebene tiefer: eine
+Sammelkategorie beantwortet die Frage nicht, für die man sie liest.
+
+### Nebenbefund, ausgeschrieben statt stillschweigend
+
+`RejectionCounts.tokens` hieß „wie viele Token ohne Markt blieben". Seit die
+Kette zwei Mitglieder hat, kann derselbe Token zweimal zählen — einmal für den
+Router, einmal für die Marktdatenquelle. Die Zahl ist dadurch nicht falsch,
+aber sie heißt etwas anderes: „wie viele Abrufe ohne Markt endeten". Genau die
+Sorte Drift, die eine Zahl still falsch macht, deshalb steht sie jetzt im Code.

@@ -82,7 +82,16 @@ export interface RejectionCounts {
   readonly reasons: Readonly<Record<string, number>>;
   /** Gegenwaehrung -> wie oft, nur fuer `UNUSABLE_QUOTE`. */
   readonly quotes: Readonly<Record<string, number>>;
-  /** Wie viele Token ueberhaupt ohne Markt blieben. */
+  /**
+   * Wie viele ABRUFE ohne Markt endeten.
+   *
+   * Seit die Kette zwei Mitglieder hat, kann derselbe Token hier zweimal
+   * zaehlen: einmal, weil der Router keinen Kurs lieferte, und einmal, weil
+   * anschliessend auch die Marktdatenquelle nichts Brauchbares hatte. Das ist
+   * kein Fehler, aber es heisst nicht mehr „so viele Token blieben leer" — und
+   * weil dieser Unterschied genau die Sorte ist, die eine Zahl still falsch
+   * macht, steht er hier ausgeschrieben.
+   */
   readonly tokens: number;
 }
 

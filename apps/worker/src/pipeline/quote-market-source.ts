@@ -3,7 +3,7 @@ import type { ProviderEnv } from "@sae/config";
 import type { MarketFields } from "@sae/pipeline";
 import { JupiterQuoteAdapter, SolanaBlockTimeAdapter, SolanaMintAdapter } from "@sae/providers";
 
-import type { QuoteMarketDeps } from "./quote-market-adapter";
+import type { QuoteFetchResult, QuoteMarketDeps } from "./quote-market-adapter";
 
 /**
  * Die Abrufe hinter dem Quote-Marktadapter.
@@ -124,22 +124,37 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
       return outcome.account.decimals;
     },
 
-    async fetchQuote(request) {
+    async fetchQuote(request): Promise<QuoteFetchResult> {
       const outcome = await quotes.fetchQuote({
         inputMint: request.inputMint,
         outputMint: request.outputMint,
         amountRaw: request.amountRaw,
         slippageBps: PROBE_SLIPPAGE_BPS,
       });
-      if (outcome.kind !== "OK") return null;
+
+      if (outcome.kind === "FAILED") {
+        // Der Grund des Anbieters, benannt statt eingeebnet.
+        //
+        // `QUOTE_RATE_LIMITED` heisst: Takt oder Tokenzahl senken.
+        // `QUOTE_BAD_REQUEST` heisst am ehesten: fuer dieses Paar in dieser
+        // Groesse gibt es keinen Weg — also Probesumme senken oder den Token
+        // abschreiben. `QUOTE_BLOCKED` heisst: jemand laesst uns nicht durch.
+        // Drei Probleme, drei Gegenmassnahmen, und vorher sahen alle drei
+        // gleich aus.
+        return { kind: "NONE", reason: `QUOTE_${outcome.failure}` };
+      }
+      if (outcome.kind === "SCHEMA_REJECTED") {
+        return { kind: "NONE", reason: "QUOTE_SCHEMA_REJECTED" };
+      }
 
       // `outAmount` kommt als Text, weil ein u64 nicht verlustfrei in eine
       // JSON-Zahl passt. Genau so wird er auch weitergereicht: als BigInt,
       // nie als `number`.
       const outAmountRaw = toBigInt(outcome.quote.outAmount);
-      if (outAmountRaw === null) return null;
+      if (outAmountRaw === null) return { kind: "NONE", reason: "QUOTE_BAD_AMOUNT" };
 
       return {
+        kind: "OK",
         outAmountRaw,
         // Fehlt der Slot, faellt der Token flussabwaerts mit
         // `NO_CONTEXT_SLOT` heraus. Kein Ersatz aus unserer Uhr.

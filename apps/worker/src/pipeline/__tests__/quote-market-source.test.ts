@@ -187,8 +187,78 @@ describe("buildQuoteMarketDeps", () => {
       outputMint: MEME,
       amountRaw: 100_000_000n,
     });
-    expect(quote?.outAmountRaw).toBe(BigInt(gross));
-    expect(quote?.contextSlot).toBe(SLOT);
+    if (quote.kind !== "OK") throw new Error("erwartet: Kurs");
+    expect(quote.outAmountRaw).toBe(BigInt(gross));
+    expect(quote.contextSlot).toBe(SLOT);
+  });
+
+  /**
+   * Der Grund, warum kein Kurs kam — benannt statt eingeebnet.
+   *
+   * Der Anlass steht im Betriebslog vom 2026-09-10: von 25 Token lieferten 20
+   * keinen Kurs, und dazu stand genau ein Wort da (`NO_QUOTE=20`). Ob der
+   * Router keinen Weg fand, uns drosselte oder gar nicht antwortete, sah alles
+   * gleich aus — drei Probleme mit drei verschiedenen Gegenmassnahmen.
+   */
+  it("nennt bei Drosselung die Drosselung und nicht nur 'kein Kurs'", async () => {
+    const deps = buildQuoteMarketDeps({
+      clock: new FixedClock(T0),
+      env: ENV,
+      fetchImpl: (async () => new Response("slow down", { status: 429 })) as unknown as typeof fetch,
+    })!;
+
+    const quote = await deps.fetchQuote({
+      inputMint: QUOTE_ANCHOR_MINT,
+      outputMint: MEME,
+      amountRaw: 100_000_000n,
+    });
+    expect(quote).toEqual({ kind: "NONE", reason: "QUOTE_RATE_LIMITED" });
+  });
+
+  it("unterscheidet eine Sperre von einer fehlenden Route", async () => {
+    const gesperrt = buildQuoteMarketDeps({
+      clock: new FixedClock(T0),
+      env: ENV,
+      fetchImpl: (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch,
+    })!;
+    expect(
+      await gesperrt.fetchQuote({
+        inputMint: QUOTE_ANCHOR_MINT,
+        outputMint: MEME,
+        amountRaw: 100_000_000n,
+      }),
+    ).toEqual({ kind: "NONE", reason: "QUOTE_BLOCKED" });
+
+    const keinWeg = buildQuoteMarketDeps({
+      clock: new FixedClock(T0),
+      env: ENV,
+      fetchImpl: (async () =>
+        new Response("no route", { status: 400 })) as unknown as typeof fetch,
+    })!;
+    expect(
+      await keinWeg.fetchQuote({
+        inputMint: QUOTE_ANCHOR_MINT,
+        outputMint: MEME,
+        amountRaw: 100_000_000n,
+      }),
+    ).toEqual({ kind: "NONE", reason: "QUOTE_BAD_REQUEST" });
+  });
+
+  it("meldet eine unlesbare Antwort als Vertragsproblem", async () => {
+    const deps = buildQuoteMarketDeps({
+      clock: new FixedClock(T0),
+      env: ENV,
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ inputMint: QUOTE_ANCHOR_MINT }), {
+          status: 200,
+        })) as unknown as typeof fetch,
+    })!;
+    const quote = await deps.fetchQuote({
+      inputMint: QUOTE_ANCHOR_MINT,
+      outputMint: MEME,
+      amountRaw: 100_000_000n,
+    });
+    expect(quote).toEqual({ kind: "NONE", reason: "QUOTE_SCHEMA_REJECTED" });
   });
 
   it("fragt mit der Probesumme in der kleinsten Einheit des Ankers", async () => {
