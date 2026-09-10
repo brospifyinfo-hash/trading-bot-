@@ -78,6 +78,13 @@
       "when": 1788683535525,
       "tag": "0011_tokens_decimals_nullable",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789073416167,
+      "tag": "0012_snapshot_volume_5m",
+      "breakpoints": true
     }
   ]
 }

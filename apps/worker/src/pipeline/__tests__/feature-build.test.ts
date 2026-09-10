@@ -54,6 +54,10 @@ async function snapshot(input: {
     liquidityUsd: 180_000,
     marketCapUsd: 2_100_000,
     volume24hUsd: 95_000,
+    volume5mUsd: 600,
+    buys5m: 30,
+    sells5m: 22,
+    priceImpactBps: 120,
     holders: input.holders ?? null,
     dataCompleteness: 0.4,
     sourceProviderId: "jupiter-quote",
@@ -179,6 +183,106 @@ describe("Feature-Vektor aus der Historie", () => {
     // anderes als "die Autoritaet ist abgegeben". Ein `false` hier waere eine
     // Sicherheitsaussage, die niemand geprueft hat.
     expect(mint.reason).toBe("NOT_YET_COLLECTED");
+  });
+
+  it("rechnet die Volumenbeschleunigung aus zwei gemessenen Fenstern", async () => {
+    const vector = await buildFeatureVector({
+      pit: reader(),
+      tokenId: asTokenId(tokenUuid),
+      asOf: T0,
+      firstSeenAt: null,
+    });
+    if (vector === null) throw new Error("erwartet: Vektor");
+
+    const beschleunigung = vector.momentum.volumeAcceleration;
+    if (!isPresent(beschleunigung)) throw new Error("erwartet: Beschleunigung");
+    // 95.000 am Tag sind im Schnitt 329,86 je Fuenf-Minuten-Fenster.
+    // Gemessene 600 sind davon das 1,819-fache.
+    expect(beschleunigung.value).toBeCloseTo(600 / (95_000 / 288), 6);
+  });
+
+  it("erfindet keine Beschleunigung ohne das Fuenf-Minuten-Fenster", async () => {
+    // Aeltere Zeilen tragen die Spalte nicht — und aus dem Tagesvolumen allein
+    // laesst sich die Groesse nicht bilden, nur eine aehnlich aussehende.
+    const [row] = await db
+      .insert(schema.tokens)
+      .values({
+        mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        discoverySource: "dexscreener",
+        state: "SCREENING",
+      })
+      .returning({ id: schema.tokens.id });
+    await db.insert(schema.tokenSnapshots).values({
+      tokenId: row!.id,
+      observedAt: T0,
+      priceUsd: 1,
+      volume24hUsd: 95_000,
+      dataCompleteness: 0.3,
+      sourceProviderId: "dexscreener",
+      sourceTier: "SECONDARY",
+      ingestKey: "test-ohne-m5",
+    });
+
+    const vector = await buildFeatureVector({
+      pit: reader(),
+      tokenId: asTokenId(row!.id),
+      asOf: T0,
+      firstSeenAt: null,
+    });
+    expect(isMissing(vector!.momentum.volumeAcceleration)).toBe(true);
+    // Und ohne Preiseinfluss auch keine Kostenschaetzung: die Annahmen allein
+    // ergaeben fuer jeden Token dieselbe Zahl.
+    expect(isMissing(vector!.execution.expectedCostBps)).toBe(true);
+  });
+
+  it("rechnet die Ausfuehrungskosten aus dem gemessenen Preiseinfluss", async () => {
+    const vector = await buildFeatureVector({
+      pit: reader(),
+      tokenId: asTokenId(tokenUuid),
+      asOf: T0,
+      firstSeenAt: null,
+    });
+    const kosten = vector!.execution.expectedCostBps;
+    if (!isPresent(kosten)) throw new Error("erwartet: Kosten");
+    // Groesser als der reine Preiseinfluss: Pool-Gebuehr, Kettenkosten und
+    // Latenzdrift kommen dazu. Die genaue Zahl gehoert dem Kostenmodell —
+    // hier wird geprueft, dass sie ueberhaupt daher kommt.
+    expect(kosten.value).toBeGreaterThan(120);
+
+    const impact = vector!.execution.priceImpactBps;
+    if (!isPresent(impact)) throw new Error("erwartet: Preiseinfluss");
+    expect(impact.value).toBe(120);
+  });
+
+  /**
+   * Der Beleg fuer die Wegentscheidung.
+   *
+   * Ein einziges Feld von aussen — `top10HolderSharePct` — macht den
+   * Sicherheits-Teilscore rechenbar und hebt die Gewichtsabdeckung von 0.50
+   * auf 0.70. Erst damit bildet die Engine ueberhaupt einen Endscore.
+   */
+  it("erreicht mit einem Sicherheitsbefund die Gewichtsabdeckung", async () => {
+    await db.insert(schema.tokenSecurity).values({
+      tokenId: tokenUuid,
+      observedAt: T0,
+      checkVersion: "test",
+      mintAuthorityActive: false,
+      freezeAuthorityActive: false,
+      top10HolderSharePct: 28.5,
+    });
+
+    const vector = await buildFeatureVector({
+      pit: reader(),
+      tokenId: asTokenId(tokenUuid),
+      asOf: T0,
+      firstSeenAt: new Date(T0.getTime() - 6 * 60 * 60 * 1_000),
+    });
+    const scores = computeScores(vector!);
+
+    expect(scores.weightCoverage).toBeCloseTo(0.7, 6);
+    expect(scores.notComputable).not.toContain("security");
+    // Die Zahl, die es vorher nie gab.
+    expect(scores.finalScore).not.toBeNull();
   });
 
   /**

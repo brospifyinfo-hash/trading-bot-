@@ -18,6 +18,10 @@ const market: MarketObservation = {
   liquidityUsd: 120_000,
   marketCapUsd: 1_800_000,
   volume24hUsd: 450_000,
+  volume5mUsd: null,
+  buys5m: null,
+  sells5m: null,
+  priceImpactBps: null,
   holders: 900,
 };
 

@@ -68,6 +68,7 @@ export class PostgresPitReader implements PitReader {
       freezeAuthorityActive: row.freezeAuthorityActive,
       lpBurnedOrLocked: row.lpBurnedOrLocked,
       top10HolderSharePct: row.top10HolderSharePct,
+      topHolderSharePct: row.topHolderSharePct,
       riskLevel: row.riskLevel,
       securityScore: row.securityScore,
     };
@@ -105,6 +106,10 @@ function mapSnapshot(row: SnapshotRow): PitSnapshot {
     marketCapUsd: row.marketCapUsd,
     liquidityUsd: row.liquidityUsd,
     volume24hUsd: row.volume24hUsd,
+    volume5mUsd: row.volume5mUsd,
+    buys5m: row.buys5m,
+    sells5m: row.sells5m,
+    priceImpactBps: row.priceImpactBps,
     holders: row.holders,
     finalScore: row.finalScore,
     dataCompleteness: row.dataCompleteness,

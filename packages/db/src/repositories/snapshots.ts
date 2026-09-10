@@ -101,6 +101,10 @@ export class SnapshotRepository {
         liquidityUsd: candidate.market.liquidityUsd,
         marketCapUsd: candidate.market.marketCapUsd,
         volume24hUsd: candidate.market.volume24hUsd,
+        volume5mUsd: candidate.market.volume5mUsd,
+        buys5m: candidate.market.buys5m,
+        sells5m: candidate.market.sells5m,
+        priceImpactBps: candidate.market.priceImpactBps,
         holders: candidate.market.holders,
         // Ohne berechnete Scores bleibt data_completeness die einzige ehrliche
         // Qualitaetsangabe: sie zaehlt, was tatsaechlich da war.
@@ -141,6 +145,10 @@ function completenessOf(market: MarketObservation): number {
     market.liquidityUsd,
     market.marketCapUsd,
     market.volume24hUsd,
+    market.volume5mUsd,
+    market.buys5m,
+    market.sells5m,
+    market.priceImpactBps,
     market.holders,
   ];
   const present = fields.filter((f) => f !== null && Number.isFinite(f)).length;
@@ -153,6 +161,10 @@ function missingOf(market: MarketObservation): Record<string, string> {
     liquidityUsd: market.liquidityUsd,
     marketCapUsd: market.marketCapUsd,
     volume24hUsd: market.volume24hUsd,
+    volume5mUsd: market.volume5mUsd,
+    buys5m: market.buys5m,
+    sells5m: market.sells5m,
+    priceImpactBps: market.priceImpactBps,
     holders: market.holders,
   })) {
     if (value === null) out[name] = "NOT_PROVIDED_BY_SOURCE";

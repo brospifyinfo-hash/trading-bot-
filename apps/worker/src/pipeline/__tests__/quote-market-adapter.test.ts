@@ -27,7 +27,7 @@ function deps(over: Partial<QuoteMarketDeps> = {}): QuoteMarketDeps {
     probeNotional: 100,
     decimalsOf: async () => 6,
     // Dafuer gibt es 25 Token (6 Stellen). Preis von Hand: 100 / 25 = 4,00.
-    fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 }),
+    fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 , priceImpactBps: 120}),
     fetchSlotTime: async () => new Date(T0.getTime() - 2_000),
     ...over,
   };
@@ -111,7 +111,7 @@ describe("Preis mit Zeitstempel", () => {
         decimalsOf: async (m) => (m === USDC ? 9 : 6),
         fetchQuote: async (input) => {
           gefragt.push(input.amountRaw);
-          return { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 };
+          return { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 , priceImpactBps: 120};
         },
       }),
     ).fetchMarket(MEME);
@@ -126,7 +126,7 @@ describe("Preis mit Zeitstempel", () => {
         probeNotional: 0,
         fetchQuote: async () => {
           gefragt += 1;
-          return { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 };
+          return { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 , priceImpactBps: 120};
         },
         onUnusable: (_m, r) => gruende.push(r),
       }),
@@ -142,7 +142,7 @@ describe("Preis mit Zeitstempel", () => {
     const gruende: string[] = [];
     const result = await quoteMarketAdapter(
       deps({
-        fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000n, contextSlot: null }),
+        fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000n, contextSlot: null , priceImpactBps: 120}),
         onUnusable: (_m, r) => gruende.push(r),
       }),
     ).fetchMarket(MEME);
@@ -154,7 +154,7 @@ describe("Preis mit Zeitstempel", () => {
     let gefragt = 0;
     await quoteMarketAdapter(
       deps({
-        fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000n, contextSlot: null }),
+        fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000n, contextSlot: null , priceImpactBps: 120}),
         fetchSlotTime: async () => {
           gefragt += 1;
           return T0;
@@ -188,7 +188,7 @@ describe("Preis mit Zeitstempel", () => {
       deps({
         fetchQuote: async (input) => {
           gefragt.push(input);
-          return { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 };
+          return { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 , priceImpactBps: 120};
         },
       }),
     ).fetchMarket(MEME);
@@ -213,7 +213,7 @@ describe("Preis mit Zeitstempel", () => {
         // Nur der gesuchte Token hat neun Stellen; der Anker behaelt sechs.
         decimalsOf: async (m) => (m === USDC ? 6 : 9),
         // 100 USDC -> 25 Token, diesmal mit 9 Stellen ausgedrueckt.
-        fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000_000n, contextSlot: 300_000_000 }),
+        fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000_000n, contextSlot: 300_000_000 , priceImpactBps: 120}),
       }),
     ).fetchMarket(MEME);
     if (result === null) throw new Error("erwartet: Ergebnis");
@@ -232,6 +232,7 @@ describe("Preis mit Zeitstempel", () => {
           kind: "OK",
           outAmountRaw: 400_000_000_000_000n,
           contextSlot: 300_000_000,
+          priceImpactBps: 120,
         }),
       }),
     ).fetchMarket(MEME);

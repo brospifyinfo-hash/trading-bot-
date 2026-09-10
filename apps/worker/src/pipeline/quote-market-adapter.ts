@@ -57,7 +57,20 @@ export const QUOTE_PROVIDER_ID: ProviderId = providerId("jupiter-quote");
  * tiefer.
  */
 export type QuoteFetchResult =
-  | { readonly kind: "OK"; readonly outAmountRaw: bigint; readonly contextSlot: number | null }
+  | {
+      readonly kind: "OK";
+      readonly outAmountRaw: bigint;
+      readonly contextSlot: number | null;
+      /**
+       * Preiseinfluss dieser Groessenordnung, wie ihn der Router meldet.
+       *
+       * Der einzige gemessene Eingang in die Ausfuehrungskosten. Ohne ihn
+       * muesste man ihn aus der Pool-Tiefe naehern — und eine Naeherung, die
+       * in eine Kostenrechnung geht, entscheidet am Ende ueber Kaufen oder
+       * Nicht-Kaufen.
+       */
+      readonly priceImpactBps: number | null;
+    }
   | { readonly kind: "NONE"; readonly reason: string };
 
 /** Was der Adapter fuer einen Token braucht, um ueberhaupt fragen zu koennen. */
@@ -189,6 +202,10 @@ export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
         liquidityUsd: companion.liquidityUsd ?? null,
         marketCapUsd: companion.marketCapUsd ?? null,
         volume24hUsd: companion.volume24hUsd ?? null,
+        priceImpactBps: raw.priceImpactBps,
+        volume5mUsd: companion.volume5mUsd ?? null,
+        buys5m: companion.buys5m ?? null,
+        sells5m: companion.sells5m ?? null,
         holders: companion.holders ?? null,
       });
 

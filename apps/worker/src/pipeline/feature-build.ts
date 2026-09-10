@@ -1,6 +1,10 @@
-import { missing, observed, providerId, type Maybe, type TokenId } from "@sae/core";
+import { missing, observed, providerId, type Maybe, type ProviderId, type TokenId } from "@sae/core";
 import type { PitReader, PitSecurity, PitSnapshot } from "@sae/db";
 import type { FeatureVector } from "@sae/scoring";
+import { bps, eur } from "@sae/core";
+import { DEFAULT_FEES, DEFAULT_LATENCY, estimateExecutionCosts } from "@sae/simulation";
+
+import { PAPER_NOTIONAL } from "./opportunity-pipeline";
 
 /**
  * Der Feature-Vektor aus der Historie.
@@ -98,11 +102,11 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
   // „jetzt". Der Unterschied ist das Alter der Daten, und es gehoert nicht
   // wegdefiniert.
   const asOf = latest.observedAt;
-  const from = (s: PitSnapshot) => providerId(s.sourceProviderId ?? "unknown");
-
   /** Ein Wert aus einem Snapshot, mit dessen Quelle und dessen Zeitpunkt. */
   const of = <T>(s: PitSnapshot, value: T | null): Maybe<T> =>
-    value === null ? missing("NO_DATA_FOR_TOKEN", s.observedAt, from(s)) : observed(value, from(s), s.observedAt);
+    value === null
+      ? missing("NO_DATA_FOR_TOKEN", s.observedAt, source(s))
+      : observed(value, source(s), s.observedAt);
 
   /** Etwas, das dieses System heute nirgends erhebt. */
   const notCollected = <T>(): Maybe<T> => missing("NOT_YET_COLLECTED", asOf, null);
@@ -134,16 +138,9 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
     momentum: {
       priceChange5m: relativeChange(latest, fiveMinutesAgo, (s) => s.priceUsd, asOf),
       priceChange1h: relativeChange(latest, anHourAgo, (s) => s.priceUsd, asOf),
-      // Bewusst NICHT genaehert. Das Feld verlangt „Volumen der letzten 5
-      // Minuten im Verhaeltnis zum Durchschnitt". Aus zwei Staenden eines
-      // rollenden 24-Stunden-Volumens laesst sich ein Zufluss schaetzen, aber
-      // das ist eine andere Groesse — und sie saehe der richtigen zum
-      // Verwechseln aehnlich.
-      volumeAcceleration: notCollected(),
-      // Die Spalten `buys_5m`/`sells_5m` gibt es in der Tabelle, geschrieben
-      // werden sie nie: `MarketFields` fuehrt keine Transaktionszahlen mit.
-      buys5m: notCollected(),
-      sells5m: notCollected(),
+      volumeAcceleration: volumeAcceleration(latest),
+      buys5m: of(latest, latest.buys5m),
+      sells5m: of(latest, latest.sells5m),
     },
     holder: {
       holders: of(latest, latest.holders),
@@ -152,9 +149,12 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
       largestClusterSharePct: notCollected(),
     },
     execution: {
-      expectedCostBps: notCollected(),
+      expectedCostBps: expectedCostBps(latest),
+      // Braucht die Token-Reserve des Pools, um zu sagen, wie oft die Position
+      // noch herausginge. Die liefert keine der heutigen Quellen — und aus der
+      // Dollar-Liquiditaet zurueckzurechnen hiesse, eine Poolform anzunehmen.
       exitCapacityRatio: notCollected(),
-      priceImpactBps: notCollected(),
+      priceImpactBps: of(latest, latest.priceImpactBps),
     },
     pending: {
       smartMoneyBuyers: notCollected(),
@@ -194,9 +194,9 @@ function securityFeatures(security: PitSecurity | null, asOf: Date): FeatureVect
     freezeAuthorityActive: of(security.freezeAuthorityActive),
     lpBurnedOrLocked: of(security.lpBurnedOrLocked),
     top10HolderSharePct: of(security.top10HolderSharePct),
-    // Der groesste EINZELNE Halter wird nicht erhoben — `top10` ist die Summe
-    // der zehn groessten und beantwortet eine andere Frage.
-    topHolderSharePct: missing("NOT_YET_COLLECTED", at, src),
+    // Eine andere Frage als `top10`: dort steht die Summe der zehn groessten,
+    // hier der eine, der allein verkaufen koennte.
+    topHolderSharePct: of(security.topHolderSharePct),
     riskLevel: of(security.riskLevel),
   };
 }
@@ -233,7 +233,7 @@ function relativeChange(
   // Ein Nenner von 0 ergaebe Unendlich, und Unendlich als Preisaenderung waere
   // eine Zahl, die durch jede Schwelle geht.
   if (then === 0) return missing("PARSE_FAILED", asOf, null);
-  return observed(now / then - 1, providerId(latest.sourceProviderId ?? "unknown"), latest.observedAt);
+  return observed(now / then - 1, source(latest), latest.observedAt);
 }
 
 function absoluteChange(
@@ -245,5 +245,89 @@ function absoluteChange(
   const now = pick(latest);
   const then = earlier === null ? null : pick(earlier);
   if (now === null || then === null) return missing("NOT_YET_COLLECTED", asOf, null);
-  return observed(now - then, providerId(latest.sourceProviderId ?? "unknown"), latest.observedAt);
+  return observed(now - then, source(latest), latest.observedAt);
 }
+
+/**
+ * Volumen der letzten fuenf Minuten im Verhaeltnis zum Durchschnitt.
+ *
+ * Eine MESSUNG, keine Schaetzung — und der Unterschied ist der Grund, warum
+ * dieses Feld lange leer blieb. Beide Fenster stehen in derselben
+ * Anbieterantwort und beziehen sich auf denselben Augenblick: `volume.m5` ist
+ * das Volumen der letzten fuenf Minuten, `volume.h24 / 288` das
+ * durchschnittliche Fuenf-Minuten-Volumen eines Tages (288 Fenster zu fuenf
+ * Minuten). Ihr Verhaeltnis ist genau das, was das Feld verspricht.
+ *
+ * Die verworfene Alternative war, die Differenz zweier Staende des rollenden
+ * 24-Stunden-Volumens als Zufluss zu lesen. Das haette bei jedem Takt eine
+ * Zahl geliefert, aber eine andere Groesse gemessen — und sie haette der
+ * richtigen zum Verwechseln aehnlich gesehen.
+ *
+ * `1` heisst „so viel wie ueblich", Werte darueber heissen Beschleunigung.
+ */
+function volumeAcceleration(latest: PitSnapshot): Maybe<number> {
+  const fiveMinutes = latest.volume5mUsd;
+  const day = latest.volume24hUsd;
+  if (fiveMinutes === null || day === null) {
+    return missing("NO_DATA_FOR_TOKEN", latest.observedAt, source(latest));
+  }
+  const average = day / WINDOWS_PER_DAY;
+  // Ein Tagesvolumen von 0 hiesse: an diesem Markt wurde nichts gehandelt.
+  // Dann gibt es keine Beschleunigung, sondern keinen Bezugspunkt.
+  if (average <= 0) return missing("NO_DATA_FOR_TOKEN", latest.observedAt, source(latest));
+  return observed(fiveMinutes / average, source(latest), latest.observedAt);
+}
+
+/** Fuenf-Minuten-Fenster eines Tages: 24 * 60 / 5. */
+const WINDOWS_PER_DAY = 288;
+
+/**
+ * Die Quelle eines Datenpunkts.
+ *
+ * `unknown` nur fuer Zeilen aus der Zeit vor der Herkunftsverfolgung — es ist
+ * eine ehrliche Angabe und kein Platzhalter, den jemand spaeter fuellt.
+ */
+function source(s: PitSnapshot): ProviderId {
+  return providerId(s.sourceProviderId ?? "unknown");
+}
+
+/**
+ * Erwartete Gesamtkosten einer Ausfuehrung, in Basispunkten.
+ *
+ * Gerechnet mit `estimateExecutionCosts` — demselben Kostenmodell, das auch
+ * der simulierte Ausfuehrer benutzt. Eine zweite Formel an dieser Stelle waere
+ * die teuerste Sorte Abweichung: der Score bewertete dann eine Ausfuehrung,
+ * die anders abgerechnet wird als sie stattfindet.
+ *
+ * Der einzige GEMESSENE Eingang ist der Preiseinfluss aus dem Quote. Alles
+ * andere sind erklaerte Annahmen (Gebuehren, Latenz, SOL-Preis, Einsatz) und
+ * stehen als Konstanten an einer Stelle. Ohne den gemessenen Teil gibt es
+ * keine Kostenschaetzung — die Annahmen allein ergaeben fuer jeden Token
+ * dieselbe Zahl, und eine Konstante als Feature ist keine Information.
+ */
+function expectedCostBps(latest: PitSnapshot): Maybe<number> {
+  const impact = latest.priceImpactBps;
+  if (impact === null) return missing("NOT_YET_COLLECTED", latest.observedAt, source(latest));
+
+  const estimate = estimateExecutionCosts({
+    notional: PAPER_NOTIONAL,
+    dexFeeBps: bps(DEX_FEE_BPS),
+    priceImpactBps: bps(Math.round(impact)),
+    solPrice: SOL_PRICE_ASSUMPTION,
+    fees: DEFAULT_FEES,
+    latency: DEFAULT_LATENCY,
+  });
+  return observed(estimate.totalBps, source(latest), latest.observedAt);
+}
+
+/**
+ * Annahmen der Kostenrechnung — SIMULATIONSPARAMETER, keine Messwerte.
+ *
+ * Sie stehen hier zusammen und nicht verstreut, weil sie zusammen gelesen
+ * werden muessen: wer den SOL-Preis anfasst, aendert jede Kostenschaetzung im
+ * System. Der Wert ist eine grobe Annahme und ausdruecklich kein Kurs; sobald
+ * ein SOL-Preis mit bekanntem Alter verfuegbar ist, gehoert er hierher.
+ */
+const SOL_PRICE_ASSUMPTION = eur(150);
+/** Uebliche Pool-Gebuehr auf Solana-DEXen. */
+const DEX_FEE_BPS = 25;

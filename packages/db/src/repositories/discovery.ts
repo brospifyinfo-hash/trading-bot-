@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 
 import type { Database } from "../client";
-import { tokens } from "../schema/tokens";
+import { tokens, tokenSecurity } from "../schema/tokens";
 
 /**
  * Die Datenbankseite der Token-Entdeckung.
@@ -219,4 +219,78 @@ export async function hasOpenWork(db: Database): Promise<boolean> {
   const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] }).rows ?? []);
   const first = list[0] as { any_open?: boolean } | undefined;
   return first?.any_open === true;
+}
+
+/**
+ * Was das Mint-Lesen ueber einen Token ergeben hat.
+ *
+ * Die Discovery liest fuer jeden Kandidaten Mint- und Freeze-Autoritaet und
+ * benutzt sie fuer das Vorsieb — danach wurde das Ergebnis weggeworfen. Damit
+ * fehlten zwei Felder im Sicherheitsteil des Feature-Vektors, obwohl sie
+ * bereits bezahlt waren.
+ */
+export interface AuthorityRecord {
+  readonly mint: string;
+  readonly mintAuthorityActive: boolean;
+  readonly freezeAuthorityActive: boolean;
+}
+
+/**
+ * Schreibt Autoritaeten fort — als Zeitreihe, aber nur bei AENDERUNG.
+ *
+ * Autoritaeten aendern sich selten und die Discovery laeuft alle 30 Sekunden.
+ * Bei jedem Takt eine Zeile zu schreiben ergaebe 2.880 identische Zeilen je
+ * Token und Tag — genau der Leerlauf, der im September das Datenkontingent
+ * aufgebraucht hat (DECISIONS §101), nur in Schreibrichtung.
+ *
+ * Eine neue Zeile entsteht deshalb nur, wenn es noch keine gibt oder sich
+ * etwas geaendert hat. Und eine Aenderung IST hier ein Ereignis: wer eine
+ * Mint-Autoritaet wieder aktiviert, hat gerade die Voraussetzung fuer
+ * beliebiges Nachpraegen geschaffen.
+ */
+export async function recordAuthorities(
+  db: Database,
+  records: readonly AuthorityRecord[],
+  checkVersion: string,
+  at: Date,
+): Promise<number> {
+  if (records.length === 0) return 0;
+
+  let written = 0;
+  for (const record of records) {
+    const [token] = await db
+      .select({ id: tokens.id })
+      .from(tokens)
+      .where(eq(tokens.mint, record.mint))
+      .limit(1);
+    if (token === undefined) continue;
+
+    const [latest] = await db
+      .select({
+        mintAuthorityActive: tokenSecurity.mintAuthorityActive,
+        freezeAuthorityActive: tokenSecurity.freezeAuthorityActive,
+      })
+      .from(tokenSecurity)
+      .where(eq(tokenSecurity.tokenId, token.id))
+      .orderBy(desc(tokenSecurity.observedAt))
+      .limit(1);
+
+    if (
+      latest !== undefined &&
+      latest.mintAuthorityActive === record.mintAuthorityActive &&
+      latest.freezeAuthorityActive === record.freezeAuthorityActive
+    ) {
+      continue;
+    }
+
+    await db.insert(tokenSecurity).values({
+      tokenId: token.id,
+      observedAt: at,
+      checkVersion,
+      mintAuthorityActive: record.mintAuthorityActive,
+      freezeAuthorityActive: record.freezeAuthorityActive,
+    });
+    written += 1;
+  }
+  return written;
 }

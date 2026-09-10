@@ -28,6 +28,10 @@ export interface PitSnapshot {
   readonly marketCapUsd: number | null;
   readonly liquidityUsd: number | null;
   readonly volume24hUsd: number | null;
+  readonly volume5mUsd: number | null;
+  readonly buys5m: number | null;
+  readonly sells5m: number | null;
+  readonly priceImpactBps: number | null;
   readonly holders: number | null;
   readonly finalScore: number | null;
   readonly dataCompleteness: number;
@@ -41,6 +45,8 @@ export interface PitSecurity {
   readonly freezeAuthorityActive: boolean | null;
   readonly lpBurnedOrLocked: boolean | null;
   readonly top10HolderSharePct: number | null;
+  /** Anteil des GROESSTEN einzelnen Halters — eine andere Frage als top10. */
+  readonly topHolderSharePct: number | null;
   readonly riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | null;
   readonly securityScore: number | null;
 }

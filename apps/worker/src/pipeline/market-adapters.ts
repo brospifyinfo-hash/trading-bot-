@@ -297,8 +297,17 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
           // bleibt es `null` — NOT_AVAILABLE, nicht 0.
           marketCapUsd: raw?.marketCapUsd ?? null,
           volume24hUsd: chosen.volume24hUsd,
+          // Die Fenster stehen seit jeher in jeder Antwort — sie wurden hier
+          // nur nie weitergereicht. `volume5mUsd` ist das Pflichtfeld des
+          // Momentum-Teilscores (Gewicht 0.15); ohne es war der Score nicht
+          // rechenbar, und niemand sah, dass die Daten dafuer schon da waren.
+          volume5mUsd: raw?.volumeUsd.m5 ?? null,
+          buys5m: raw?.txns.m5?.buys ?? null,
+          sells5m: raw?.txns.m5?.sells ?? null,
           // DexScreener liefert keine Halterzahl.
           holders: null,
+          // Und keinen Preiseinfluss: den kennt nur, wer eine Route rechnet.
+          priceImpactBps: null,
         },
         observedAt: null,
       };

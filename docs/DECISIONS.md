@@ -3657,3 +3657,87 @@ und sie sind unterschiedlich teuer:
 
 Ich habe keinen davon eingeschlagen. Schwellen zu senken, damit ein Tor aufgeht,
 ist genau die Bewegung, gegen die dieses ganze System gebaut ist.
+
+## §111 — Schritt A: fünf Felder, die längst bezahlt waren
+
+Datum: 2026-09-10
+
+Nach der Wegentscheidung (§110) zuerst das, was ohne einen einzigen neuen
+Anbieter geht. Die Prüfung vorher hat die Lage präzisiert, und zwar zu unseren
+Gunsten: das bindende Tor ist nicht `dataCompleteness`, sondern
+**`weightCoverage`** — und das hängt nicht an der Zahl der Felder, sondern
+daran, welche *Teilscores rechenbar* werden. Jeder verlangt nur wenige
+Pflichtfelder.
+
+| Teilscore | Gewicht | Pflichtfeld, das fehlte |
+|---|---|---|
+| Momentum | 0.15 | `volumeAcceleration` |
+| Ausführung | 0.10 | `expectedCostBps` |
+| Sicherheit | 0.20 | `top10HolderSharePct` (extern) |
+
+### Momentum: die Daten lagen seit jeher in der Antwort
+
+DexScreener liefert `volume.m5`, `volume.h24` und `txns.m5` in **jeder**
+Antwort — die gemessene Fixture vom 2026-09-03 zeigt sie ausgeschrieben.
+`MarketFields` kannte nur das Tagesvolumen, also wurden sie beim Übergang von
+der Anbieterantwort in die Kette verworfen.
+
+`volumeAcceleration` ist damit eine **Messung**, keine Schätzung: `volume.m5`
+gegen `volume.h24 / 288` (288 Fünf-Minuten-Fenster je Tag). Beide Zahlen
+stammen aus derselben Antwort und beziehen sich auf denselben Augenblick.
+
+Die verworfene Alternative war, die Differenz zweier Stände des rollenden
+24-Stunden-Volumens als Zufluss zu lesen. Das hätte bei jedem Takt eine Zahl
+geliefert — aber eine andere Größe gemessen, die der richtigen zum Verwechseln
+ähnlich sieht.
+
+### Ausführung: der Preiseinfluss kommt aus dem Quote
+
+`priceImpactPct` steht in jeder Jupiter-Antwort und wurde ebenfalls verworfen.
+Er ist der **einzige gemessene** Eingang der Kostenrechnung; alles andere
+(Gebühren, Latenz, SOL-Preis, Einsatz) sind erklärte Annahmen und stehen als
+Konstanten an einer Stelle.
+
+Gerechnet wird mit `estimateExecutionCosts` — demselben Modell, das der
+simulierte Ausführer benutzt. Eine zweite Formel hier wäre die teuerste Sorte
+Abweichung: der Score bewertete dann eine Ausführung, die anders abgerechnet
+wird als sie stattfindet.
+
+Ohne gemessenen Preiseinfluss gibt es **keine** Kostenschätzung. Die Annahmen
+allein ergäben für jeden Token dieselbe Zahl, und eine Konstante als Feature
+ist keine Information.
+
+### Sicherheit: gelesen, benutzt, weggeworfen
+
+Die Discovery liest für jeden Kandidaten Mint- und Freeze-Autorität und
+benutzt sie für das Vorsieb. Danach war das Ergebnis weg — `token_security`
+wurde von niemandem befüllt, obwohl die Abfrage längst bezahlt war.
+
+Sie wird jetzt fortgeschrieben, **aber nur bei Änderung**. Bei jedem Takt zu
+schreiben ergäbe 2.880 identische Zeilen je Token und Tag — derselbe Leerlauf
+wie §101, nur in Schreibrichtung. Eine Änderung dagegen ist ein Ereignis: wer
+eine Mint-Autorität wieder aktiviert, hat gerade die Voraussetzung für
+beliebiges Nachprägen geschaffen.
+
+### Gemessen, nicht gerechnet
+
+| Stand | `weightCoverage` | `dataCompleteness` | `finalScore` |
+|---|---|---|---|
+| vorher | 0.250 | 0.310 | — |
+| + Momentum | 0.400 | 0.414 | — |
+| + Ausführung | **0.500** | **0.483** | — |
+| + ein Sicherheitsbefund | **0.700** ✓ | 0.586 | **59** |
+
+Die letzte Zeile ist der Beleg für die Wegentscheidung: **ein einziges Feld von
+außen** — `top10HolderSharePct` — hebt die Gewichtsabdeckung über die Schwelle,
+und die Engine bildet zum ersten Mal einen Endscore.
+
+`dataCompleteness` bleibt mit 0.586 unter 0.7. Ein vollständiger
+Sicherheitsbefund (dazu `lpBurnedOrLocked`, `riskLevel`, `topHolderSharePct`)
+brächte 21/29 = **0.724** — beide Tore offen, mit einem Anbieter.
+
+### Migration
+
+Zwei Spalten in `token_snapshots`: `volume_5m_usd` und `price_impact_bps`.
+Beide nullable, beide additiv; alte Zeilen tragen sie nicht und liefern dann
+ehrlich `Missing` statt einer nachgerechneten Zahl.

@@ -52,7 +52,21 @@ export interface MarketFields {
   readonly liquidityUsd: number | null;
   readonly marketCapUsd: number | null;
   readonly volume24hUsd: number | null;
+  /**
+   * Volumen der letzten fuenf Minuten.
+   *
+   * Kam bisher in jeder DexScreener-Antwort mit und wurde hier weggeworfen —
+   * `MarketFields` kannte nur das Tagesvolumen. Zusammen mit `volume24hUsd`
+   * ergibt es die Volumenbeschleunigung, und die ist das eine Pflichtfeld, an
+   * dem der gesamte Momentum-Teilscore haengt (Gewicht 0.15).
+   */
+  readonly volume5mUsd: number | null;
+  /** Kaeufe der letzten fuenf Minuten. Ebenfalls schon geliefert, ebenfalls verworfen. */
+  readonly buys5m: number | null;
+  readonly sells5m: number | null;
   readonly holders: number | null;
+  /** Preiseinfluss aus einem Router-Quote. `null` bei jeder anderen Quelle. */
+  readonly priceImpactBps: number | null;
 }
 
 export interface ChainBuildInput {

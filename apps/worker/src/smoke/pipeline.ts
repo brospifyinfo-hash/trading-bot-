@@ -199,6 +199,10 @@ export async function runPipelineSmokeTest(input: {
         liquidityUsd: market.liquidityUsd,
         marketCapUsd: null,
         volume24hUsd: market.volume24hUsd,
+        volume5mUsd: null,
+        buys5m: null,
+        sells5m: null,
+        priceImpactBps: null,
         holders: null,
       },
       // Ohne Anbieterzeitpunkt ist der Abruf unser Wissenszeitpunkt: wir

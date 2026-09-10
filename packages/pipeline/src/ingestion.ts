@@ -28,7 +28,13 @@ export interface MarketObservation {
   readonly liquidityUsd: number | null;
   readonly marketCapUsd: number | null;
   readonly volume24hUsd: number | null;
+  /** Volumen der letzten fuenf Minuten — die zweite Haelfte der Beschleunigung. */
+  readonly volume5mUsd: number | null;
+  readonly buys5m: number | null;
+  readonly sells5m: number | null;
   readonly holders: number | null;
+  /** Preiseinfluss aus einem Router-Quote. `null` bei jeder anderen Quelle. */
+  readonly priceImpactBps: number | null;
 }
 
 export interface SnapshotProvenance {

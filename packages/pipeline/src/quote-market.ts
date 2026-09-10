@@ -41,7 +41,20 @@ export interface QuoteMarketInput {
   readonly liquidityUsd: number | null;
   readonly marketCapUsd: number | null;
   readonly volume24hUsd: number | null;
+  readonly volume5mUsd: number | null;
+  readonly buys5m: number | null;
+  readonly sells5m: number | null;
   readonly holders: number | null;
+  /**
+   * Preiseinfluss aus dem Quote — das eine Feld, das NUR ein Router liefern
+   * kann.
+   *
+   * Es geht in die Ausfuehrungskosten ein, und die entscheiden mit darueber,
+   * ob ein Vorteil nach Kosten noch einer ist. Eine Naeherung aus der
+   * Pool-Tiefe waere hier besonders teuer: sie saehe plausibel aus und wuerde
+   * genau dort danebenliegen, wo es weh tut — bei duennen Maerkten.
+   */
+  readonly priceImpactBps: number | null;
 }
 
 export type QuoteMarketResult =
@@ -98,7 +111,11 @@ export function quoteToMarket(input: QuoteMarketInput): QuoteMarketResult {
       liquidityUsd: input.liquidityUsd,
       marketCapUsd: input.marketCapUsd,
       volume24hUsd: input.volume24hUsd,
+      volume5mUsd: input.volume5mUsd,
+      buys5m: input.buys5m,
+      sells5m: input.sells5m,
       holders: input.holders,
+      priceImpactBps: input.priceImpactBps,
     },
     // Zurueckgerechnet aus dem gemessenen Alter: der Zeitpunkt, zu dem der
     // Anbieter gerechnet hat. Genau das erwartet `sourced()` als

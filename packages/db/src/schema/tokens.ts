@@ -105,6 +105,25 @@ export const tokenSnapshots = pgTable(
     marketCapUsd: doublePrecision("market_cap_usd"),
     liquidityUsd: doublePrecision("liquidity_usd"),
     volume24hUsd: doublePrecision("volume_24h_usd"),
+    /**
+     * Volumen der letzten fuenf Minuten.
+     *
+     * Zusammen mit `volume_24h_usd` ergibt es die Volumenbeschleunigung — und
+     * zwar als MESSUNG, nicht als Schaetzung: beide Fenster stehen in
+     * derselben Anbieterantwort und beziehen sich auf denselben Augenblick.
+     * Aus zwei Staenden des rollenden 24-Stunden-Volumens einen Zufluss zu
+     * rechnen waere eine andere Groesse mit demselben Namen.
+     */
+    volume5mUsd: doublePrecision("volume_5m_usd"),
+    /**
+     * Preiseinfluss der Sondengroesse, wie ihn der Router gemeldet hat.
+     *
+     * Das einzige Feld, das keine Marktdatenquelle liefern kann — es entsteht
+     * erst, wenn jemand eine Route rechnet. Aus ihm werden die erwarteten
+     * Ausfuehrungskosten, und die entscheiden mit, ob ein Vorteil nach Kosten
+     * noch einer ist.
+     */
+    priceImpactBps: doublePrecision("price_impact_bps"),
     holders: integer("holders"),
     buys5m: integer("buys_5m"),
     sells5m: integer("sells_5m"),

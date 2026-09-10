@@ -12,6 +12,8 @@ import {
   UNRECORDED_DISCOVERY_SOURCE,
   applyDiscoveryOutcomes,
   isTokenBlacklisted,
+  recordAuthorities,
+  type AuthorityRecord,
   type Database,
   type DiscoveryOutcome,
 } from "@sae/db";
@@ -21,7 +23,7 @@ import {
   type TokenAuthorities,
 } from "@sae/discovery";
 import { tally, type Logger } from "@sae/observability";
-import { statusAllowsUse, type ProviderStatus } from "@sae/providers";
+import { SOLANA_MINT_CONTRACT, statusAllowsUse, type ProviderStatus } from "@sae/providers";
 
 import { dexScreenerProfileDiscovery } from "./discovery-source";
 
@@ -107,6 +109,16 @@ export interface DiscoveryRunSummary {
   readonly failedSources: readonly string[];
   /** Tokens, die das Vorsieb ohne Autoritaetspruefung passiert haben. */
   readonly withoutAuthorityCheck: number;
+  /**
+   * Wie viele Sicherheitszeilen der Lauf geschrieben hat.
+   *
+   * Meist 0 — Autoritaeten aendern sich selten, und eine Zeile entsteht nur
+   * bei Aenderung. Eine Zahl groesser 0 heisst deshalb entweder „neuer Token"
+   * oder „an einem bekannten Token hat sich etwas geaendert", und das Zweite
+   * ist ein Ereignis: wer eine Mint-Autoritaet wieder aktiviert, hat gerade
+   * die Voraussetzung fuer beliebiges Nachpraegen geschaffen.
+   */
+  readonly authoritiesWritten: number;
   readonly reasons: Readonly<Record<string, number>>;
 }
 
@@ -120,6 +132,7 @@ const EMPTY_SUMMARY: DiscoveryRunSummary = {
   duplicates: 0,
   failedSources: [],
   withoutAuthorityCheck: 0,
+  authoritiesWritten: 0,
   reasons: {},
 };
 
@@ -230,12 +243,22 @@ export async function runTokenDiscovery(deps: DiscoveryRunDeps): Promise<Discove
   // Lesemodul kann fuer einen einzelnen Mint nichts liefern, und dann ist die
   // Luecke dieselbe.
   let withoutAuthorityCheck = 0;
+  // Was gelesen wurde, wird auch behalten. Vorher diente das Ergebnis nur dem
+  // Vorsieb und war danach weg — obwohl es zwei Felder des Sicherheitsteils
+  // im Feature-Vektor fuellt und laengst bezahlt war (DECISIONS §111).
+  const gelesen: AuthorityRecord[] = [];
   const checkAuthorities = async (mint: Mint): Promise<TokenAuthorities> => {
     const authorities = read === undefined ? unknownAuthorities : await read(mint);
     if (
-      !isPresent(authorities.mintAuthorityActive) ||
-      !isPresent(authorities.freezeAuthorityActive)
+      isPresent(authorities.mintAuthorityActive) &&
+      isPresent(authorities.freezeAuthorityActive)
     ) {
+      gelesen.push({
+        mint,
+        mintAuthorityActive: authorities.mintAuthorityActive.value,
+        freezeAuthorityActive: authorities.freezeAuthorityActive.value,
+      });
+    } else {
       withoutAuthorityCheck += 1;
     }
     return authorities;
@@ -290,6 +313,15 @@ export async function runTokenDiscovery(deps: DiscoveryRunDeps): Promise<Discove
 
   await applyDiscoveryOutcomes({ db: deps.db, outcomes: [...outcomes.values()] });
 
+  // Erst NACH den Zustaenden: `token_security` haengt am Token-Datensatz, und
+  // den gibt es fuer einen frisch entdeckten Mint vorher nicht.
+  const authoritiesWritten = await recordAuthorities(
+    deps.db,
+    gelesen,
+    SOLANA_MINT_CONTRACT.schemaVersion,
+    now,
+  );
+
   const reasons: Record<string, number> = {};
   for (const [reason, count] of result.rejected) reasons[reason] = count;
 
@@ -304,6 +336,7 @@ export async function runTokenDiscovery(deps: DiscoveryRunDeps): Promise<Discove
     duplicates: result.duplicatesSkipped,
     failedSources: result.failedSources,
     withoutAuthorityCheck,
+    authoritiesWritten,
     reasons,
   };
 

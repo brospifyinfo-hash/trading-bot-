@@ -1,7 +1,12 @@
 import type { Clock } from "@sae/core";
 import type { ProviderEnv } from "@sae/config";
 import type { MarketFields } from "@sae/pipeline";
-import { JupiterQuoteAdapter, SolanaBlockTimeAdapter, SolanaMintAdapter } from "@sae/providers";
+import {
+  decimalFractionToBps,
+  JupiterQuoteAdapter,
+  SolanaBlockTimeAdapter,
+  SolanaMintAdapter,
+} from "@sae/providers";
 
 import type { QuoteFetchResult, QuoteMarketDeps } from "./quote-market-adapter";
 
@@ -156,6 +161,9 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
       return {
         kind: "OK",
         outAmountRaw,
+        // `priceImpactPct` ist ein Anteil als Text ("0.0123"). Die Umrechnung
+        // liegt beim Anbietermodul, damit sie an einer Stelle steht.
+        priceImpactBps: impactBps(outcome.quote.priceImpactPct),
         // Fehlt der Slot, faellt der Token flussabwaerts mit
         // `NO_CONTEXT_SLOT` heraus. Kein Ersatz aus unserer Uhr.
         contextSlot: outcome.quote.contextSlot ?? null,
@@ -199,6 +207,21 @@ function toBigInt(raw: string): bigint | null {
   try {
     const value = BigInt(raw);
     return value > 0n ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Preiseinfluss als Basispunkte — oder `null`, wenn er nicht lesbar ist.
+ *
+ * `decimalFractionToBps` wirft bei Unsinn, und das waere hier falsch: ein
+ * unlesbarer Preiseinfluss macht den Kurs nicht wertlos, er kostet nur ein
+ * Feature. Geworfen wuerde er den ganzen Abruf mitreissen.
+ */
+function impactBps(raw: string): number | null {
+  try {
+    return decimalFractionToBps(raw);
   } catch {
     return null;
   }
