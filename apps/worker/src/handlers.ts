@@ -327,6 +327,10 @@ class EvaluateOpportunityHandler implements JobHandler {
         snapshotCount,
         providerReports: reports,
         quotes,
+        // Dieselbe Kette wie beim Auffrischen der Marktdaten. Hier stand
+        // vorher eine leere Map — siehe die Begruendung an `DecisionRunDeps`.
+        adapters: this.deps.adapters ?? new Map(),
+        statusOf: this.deps.statusOf ?? ((): ProviderStatus => "UNAVAILABLE"),
         liquidityUsd: null,
       });
       const seen = outcomes[result.outcome];

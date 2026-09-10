@@ -3,6 +3,8 @@ import { DEFAULT_STRATEGY_PARAMETERS } from "@sae/config";
 import { ensureActiveStrategyVersion, schema, type Database } from "@sae/db";
 import { createTestDatabase } from "@sae/db/testing";
 import { createLogger } from "@sae/observability";
+import { providerId } from "@sae/core";
+import type { MarketDataAdapter } from "@sae/pipeline";
 
 import { buildHandlers } from "../../handlers";
 
@@ -41,6 +43,32 @@ const job = {
   maxAttempts: 3,
   enqueuedAt: T0,
 };
+
+/**
+ * Eine Quelle, die tatsaechlich etwas liefert.
+ *
+ * Ohne Beobachtungszeitpunkt — wie DexScreener. Das reicht fuer diesen Test:
+ * geprueft wird, ob die Kette ueberhaupt angeschlossen ist, nicht ob die Daten
+ * eine Einstiegsentscheidung tragen.
+ */
+function arbeitenderAdapter(): MarketDataAdapter {
+  return {
+    providerId: providerId("dexscreener"),
+    capabilities: ["TOKEN_MARKET"],
+    async fetchMarket() {
+      return {
+        value: {
+          priceUsd: 0.00042,
+          liquidityUsd: 180_000,
+          marketCapUsd: 2_100_000,
+          volume24hUsd: 95_000,
+          holders: null,
+        },
+        observedAt: null,
+      };
+    },
+  };
+}
 
 function handlers() {
   return buildHandlers({
@@ -109,6 +137,43 @@ describe("Gelegenheitspruefung", () => {
     // richtige Auskunft — und sie steht jetzt da.
     expect(Object.keys(result.outcomes)).toHaveLength(1);
     expect(result.outcomes["NO_SOURCE"]).toBe(1);
+  });
+
+  /**
+   * Der Test, der gefehlt hat — und der Grund, warum er gefehlt hat.
+   *
+   * Der Test darueber erwartet `NO_SOURCE` und war die ganze Zeit gruen. Er
+   * konnte den Fehler nicht finden, weil er dieselbe Leere herstellte, die der
+   * Fehler erzeugte: kein Adapter, jeder Anbieter `UNAVAILABLE`. Unter diesen
+   * Bedingungen ist `NO_SOURCE` richtig — und es blieb auch dann richtig, als
+   * `runDecision` intern `adapters: new Map()` fest verdrahtet hatte.
+   *
+   * Ein Test, der die Bedingung mitliefert, unter der ein Fehler unsichtbar
+   * ist, prueft nichts. Dieser hier gibt der Kette eine ARBEITENDE Quelle und
+   * verlangt, dass sie am Marktdaten-Tor vorbeikommt.
+   */
+  it("kommt mit erreichbarem Anbieter am Marktdaten-Tor vorbei", async () => {
+    const registry = buildHandlers({
+      db,
+      logger,
+      env: {
+        DATABASE_URL: "postgres://test",
+        DEXSCREENER_BASE_URL: "https://api.example.invalid",
+      } as NodeJS.ProcessEnv,
+      adapters: new Map([["dexscreener", arbeitenderAdapter()]]),
+      statusOf: () => "CONNECTED",
+    });
+
+    const result = (await registry["EVALUATE_OPPORTUNITY"]?.handle(job)) as {
+      status: string;
+      outcomes: Record<string, number>;
+    };
+
+    // NICHT mehr NO_SOURCE: die Kette hat Marktdaten bekommen.
+    expect(result.outcomes["NO_SOURCE"]).toBeUndefined();
+    // Sie kommt bis zum naechsten ehrlichen Halt: der Feature-Vektor braucht
+    // Historie, und die gibt es in dieser leeren Testdatenbank nicht.
+    expect(result.outcomes["BLOCKED"]).toBe(1);
   });
 
   it("legt keine Gelegenheit und keine Position an", async () => {

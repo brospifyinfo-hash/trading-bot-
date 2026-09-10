@@ -1,12 +1,21 @@
 import { bps, eur, systemClock, tokenId as asTokenId, strategyVersionId as asStrategyVersionId, type Money } from "@sae/core";
-import { DEFAULT_STRATEGY_PARAMETERS, DEFAULT_SYSTEM_STATE } from "@sae/config";
+import {
+  DEFAULT_STRATEGY_PARAMETERS,
+  DEFAULT_SYSTEM_STATE,
+  type KnownProviderId,
+} from "@sae/config";
 import { estimateEv } from "@sae/decision";
 import { computePositionSize } from "@sae/risk";
 import { DEFAULT_FEES, DEFAULT_LATENCY } from "@sae/simulation";
 import { PaperExecutor, type QuoteSource } from "@sae/trading";
-import { summarizeFleet, type ProviderStatusReport } from "@sae/providers";
+import {
+  summarizeFleet,
+  type ProviderStatus,
+  type ProviderStatusReport,
+} from "@sae/providers";
 import type { Logger } from "@sae/observability";
 import type { Database } from "@sae/db";
+import type { MarketDataAdapter } from "@sae/pipeline";
 
 import { runOpportunityPipeline, PAPER_NOTIONAL, type PipelineDeps } from "./opportunity-pipeline";
 
@@ -65,6 +74,23 @@ export interface DecisionRunDeps {
   readonly strategyVersionId: string;
   readonly snapshotCount: number;
   readonly providerReports: readonly ProviderStatusReport[];
+  /**
+   * Die Anbieterkette — dieselbe, mit der auch die Marktdaten aufgefrischt
+   * werden.
+   *
+   * Hier stand `new Map()`, und daneben ein `statusOf`, das jeden Anbieter als
+   * `UNAVAILABLE` meldete. Beides fest verdrahtet. Der Entscheidungslauf
+   * konnte damit niemals an Marktdaten kommen: `resolveMarketInput` endete bei
+   * JEDEM Token in `NO_SOURCE`, und der Durchlauf brach ab, bevor irgendeine
+   * Regel geprueft wurde.
+   *
+   * Das ist dieselbe Luecke wie in DECISIONS §87 und §99 — gebaut, getestet,
+   * nur nicht angeschlossen. Sie faellt nicht auf, weil `NO_SOURCE` ein
+   * regulaeres Ergebnis ist und im Log genauso aussieht wie ein echter
+   * Anbieterausfall.
+   */
+  readonly adapters: ReadonlyMap<KnownProviderId, MarketDataAdapter>;
+  readonly statusOf: (id: KnownProviderId) => ProviderStatus;
   /**
    * Woher die simulierte Ausfuehrung ihre Kurse nimmt.
    *
@@ -162,8 +188,8 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
       kind: "LIVE",
       tokenId: asTokenId(deps.tokenId),
       mint: deps.mint,
-      adapters: new Map(),
-      statusOf: () => "UNAVAILABLE",
+      adapters: deps.adapters,
+      statusOf: deps.statusOf,
       env: deps.env,
       allowDegraded: false,
     },

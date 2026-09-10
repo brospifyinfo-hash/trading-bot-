@@ -3491,3 +3491,66 @@ Kette zwei Mitglieder hat, kann derselbe Token zweimal zählen — einmal für d
 Router, einmal für die Marktdatenquelle. Die Zahl ist dadurch nicht falsch,
 aber sie heißt etwas anderes: „wie viele Abrufe ohne Markt endeten". Genau die
 Sorte Drift, die eine Zahl still falsch macht, deshalb steht sie jetzt im Code.
+
+## §109 — Der Entscheidungspfad hatte eine leere Kette
+
+Datum: 2026-09-10
+
+Auf dem Weg zu `MONITOR_PAPER_POSITION` — Punkt 3 der Liste — stand in
+`runDecision`:
+
+```ts
+const result = await runOpportunityPipeline(
+  {
+    kind: "LIVE",
+    adapters: new Map(),
+    statusOf: () => "UNAVAILABLE",
+    ...
+```
+
+Fest verdrahtet. `runOpportunityPipeline` beginnt mit `resolveMarketInput`, und
+bei `NO_SOURCE` bricht der Durchlauf sofort ab. Der Entscheidungslauf konnte
+damit **niemals** an Marktdaten kommen — unabhängig davon, wie viele Snapshots
+in der Datenbank stehen und wie gut `entryReady` aussieht.
+
+Die ganze Arbeit an der Datenqualität wäre also am nächsten Tor verpufft. Der
+Auftrag `EVALUATE_OPPORTUNITY` lief, meldete `NO_SOURCE`, und das sah im Log
+exakt aus wie ein echter Anbieterausfall.
+
+Dieselbe Lücke wie in §87 und §99, zum dritten Mal: gebaut, getestet, nicht
+angeschlossen. Sie ist deshalb so zäh, weil ihr Symptom ein *reguläres
+Ergebnis* ist.
+
+### Warum der bestehende Test sie nicht gefunden hat
+
+`decision-wiring.test.ts` prüfte:
+
+```ts
+expect(result.outcomes["NO_SOURCE"]).toBe(1);
+```
+
+Und war grün. Zu Recht — denn der Test selbst stellte die Bedingung her, unter
+der der Fehler unsichtbar ist: keine Adapter, jeder Anbieter `UNAVAILABLE`.
+Unter diesen Voraussetzungen ist `NO_SOURCE` die richtige Antwort, und sie
+blieb richtig, als `runDecision` intern dieselbe Leere fest verdrahtete.
+
+**Ein Test, der die Bedingung mitliefert, unter der ein Fehler unsichtbar ist,
+prüft nichts.** Das ist die eigentliche Lehre, und sie ist allgemeiner als
+dieser eine Fall: die pessimistische Vorgabe (`?? "UNAVAILABLE"`,
+`?? new Map()`) ist überall im System richtig — aber ein Test, der sie
+übernimmt, kann eine fehlende Verdrahtung nicht von einer korrekten Ablehnung
+unterscheiden.
+
+Der neue Test gibt der Kette eine **arbeitende** Quelle und verlangt, dass sie
+am Marktdaten-Tor vorbeikommt. Gegen den alten Code schlägt er fehl
+(`expected 1 to be undefined` — `NO_SOURCE` war 1); das wurde vor dem Einchecken
+durch Zurückdrehen der Korrektur nachgewiesen, statt es anzunehmen.
+
+Er kommt jetzt bis `BLOCKED / NO_FEATURE_VECTOR` — der nächste ehrliche Halt:
+Marktdaten sind da, der Feature-Vektor braucht Historie.
+
+### Punkt 3 verschiebt sich
+
+`MONITOR_PAPER_POSITION` zu verdrahten, während keine Position entstehen kann,
+wäre Arbeit an einem Ende, das nie erreicht wird. Erst der Einstieg, dann die
+Überwachung.
