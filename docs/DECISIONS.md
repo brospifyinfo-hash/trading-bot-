@@ -2986,3 +2986,64 @@ Das Kontingent selbst. Es setzt sich mit dem Abrechnungszeitraum zurück oder
 wird mit einem größeren Tarif angehoben — beides eine Entscheidung des
 Betreibers. Bis dahin bleiben die Dienste unten; sie im Neustart-Kreis laufen
 zu lassen, verbraucht nur weiter.
+
+## §102 — Zwei Drittel der Last bewachten ein leeres Lager
+
+Nach §101 die Rechnung, ob die Sparmassnahme reicht. Sie reicht nicht.
+
+Gemessen: **6,1 GB in rund drei Tagen** — etwa 2.033 MB am Tag. Erlaubt sind
+5 GB im Monat, also **167 MB am Tag**. Der Faktor-11-Fix aus §101 landet bei
+rund 185 MB am Tag: immer noch darüber.
+
+### Der zweite Hebel lag offen
+
+| Takt | alle | Aufträge/Std | überwacht |
+|---|---|---|---|
+| POSITION_MONITOR | 10 s | 360 | **nichts** |
+| PAPER_MONITOR | 15 s | 240 | **nichts** |
+| OPPORTUNITY_EXPIRY | 30 s | 120 | **nichts** |
+
+**17.280 von 26.308 Aufträgen am Tag — zwei Drittel — fragten „hat sich an
+nichts etwas geändert?"** Es gibt keine Position, keine Paper-Position, keine
+Gelegenheit; es kann sie auch nicht geben, solange das Datentor schließt.
+
+Das ist nicht nur teuer, es ist falsch herum gedacht: ein Wächter, der über
+ein leeres Lager geht, meldet nicht Sicherheit — er verbraucht Schichten.
+
+### Die Korrektur ist kein Sparzwang
+
+`Cadence.requiresOpenWork` markiert die drei Takte, `planTick` überspringt sie
+mit der eigenen Entscheidung `NOTHING_TO_WATCH`, und der Scheduler stellt die
+Frage mit **einer** Abfrage auf dem Takt, den er ohnehin hat — eine zweite
+Schleife wäre genau die Sorte Zusatzverkehr, die hier abgestellt werden soll.
+`EXISTS` statt `COUNT`: die Zahl interessiert niemanden.
+
+Ohne Angabe wird **nichts** abgeschaltet. Wer die Lage nicht kennt, darf sie
+nicht als leer behaupten — sonst legt ein vergessener Parameter still die
+Positionsüberwachung lahm, und das fällt erst auf, wenn Geld darin liegt.
+
+### Und trotzdem: es reicht immer noch nicht
+
+Beide Maßnahmen zusammen — Leerlauf 11× dünner, Aufträge 2,9× weniger —
+landen je nach Aufteilung bei **340 bis 540 MB am Tag**. Erlaubt sind 167.
+
+Die Schätzung ist grob; die Aufteilung zwischen Leerlaufabfragen und
+Auftragsarbeit ist nicht gemessen. Aber selbst die günstigste Annahme liegt um
+den Faktor zwei darüber.
+
+**Der Befund ist damit kein Optimierungsproblem mehr, sondern eine
+Werkzeugfrage.** Ein Dienst, der rund um die Uhr alle paar Sekunden mit einer
+Datenbank spricht, passt nicht in ein Kontingent von 5 GB im Monat. Weiter zu
+optimieren hiesse, die Taktung so weit zu strecken, dass das System seinen
+Zweck verliert — und wäre am Ende immer noch knapp.
+
+Die Entscheidung darüber trifft der Betreiber, nicht dieser Commit. Beide
+Änderungen bleiben richtig, unabhängig davon: sie waren schon vorher zu teuer
+für das, was sie leisten.
+
+### Nicht gepusht
+
+Ein Push auf `main` löst bei allen drei Railway-Diensten sofort ein
+Deployment aus. Solange das Kontingent aufgebraucht ist, liefen sie unmittelbar
+wieder in die Absturzschleife. Der Commit liegt deshalb lokal und wartet auf
+das Signal des Betreibers.

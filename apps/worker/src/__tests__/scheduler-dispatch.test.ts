@@ -16,6 +16,7 @@ function loop(options: { marketData: boolean; clock: FixedClock; remaining?: num
     dispatcher,
     clock: options.clock,
     marketDataAvailable: () => options.marketData,
+    hasOpenWork: () => true,
     remainingRequests: () => options.remaining ?? null,
   });
   return { loop: l, dispatcher };
@@ -59,6 +60,7 @@ describe("Scheduler reiht Auftraege ein", () => {
       dispatcher,
       clock,
       marketDataAvailable: () => true,
+    hasOpenWork: () => true,
       remainingRequests: () => null,
     });
     await restarted.tick();

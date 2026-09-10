@@ -184,3 +184,70 @@ describe("Voreinstellungen", () => {
     expect(expiry.requiresMarketData).toBe(false);
   });
 });
+
+describe("Waechter ohne Bestand", () => {
+  /**
+   * Gemessen und nicht vermutet: von 26.308 Auftraegen am Tag entfielen
+   * 17.280 auf die Ueberwachung von Positionen, Paper-Positionen und
+   * Gelegenheiten, die es alle nicht gab. Zwei Drittel der Last fuer die
+   * Frage "hat sich an nichts etwas geaendert?", jede zehnte Sekunde
+   * gestellt. Das hat das Datenkontingent der Datenbank aufgebraucht.
+   */
+  const T0 = new Date("2026-09-09T12:00:00Z");
+
+  function plan(hasOpenWork: boolean | undefined) {
+    return planTick({
+      cadences: DEFAULT_CADENCES,
+      states: new Map(),
+      now: T0,
+      marketDataAvailable: true,
+      ...(hasOpenWork === undefined ? {} : { hasOpenWork }),
+      remainingRequests: null,
+    });
+  }
+
+  it("laesst die Waechter aus, wenn es nichts zu bewachen gibt", () => {
+    const ohne = plan(false);
+    expect(ohne.nothingToWatch).toContain("POSITION_MONITOR");
+    expect(ohne.nothingToWatch).toContain("PAPER_MONITOR");
+    expect(ohne.nothingToWatch).toContain("OPPORTUNITY_EXPIRY");
+    expect(ohne.toRun).not.toContain("POSITION_MONITOR");
+  });
+
+  it("laesst sie laufen, sobald es Bestand gibt", () => {
+    const mit = plan(true);
+    expect(mit.nothingToWatch).toEqual([]);
+    expect(mit.toRun).toContain("POSITION_MONITOR");
+    expect(mit.toRun).toContain("PAPER_MONITOR");
+  });
+
+  it("schaltet ohne Angabe NICHTS ab", () => {
+    // Wer die Lage nicht kennt, darf sie nicht als leer behaupten. Sonst
+    // schaltet ein vergessener Parameter still die Positionsueberwachung ab
+    // — und das faellt erst auf, wenn Geld darin liegt.
+    const unbekannt = plan(undefined);
+    expect(unbekannt.nothingToWatch).toEqual([]);
+    expect(unbekannt.toRun).toContain("POSITION_MONITOR");
+  });
+
+  it("beruehrt die uebrigen Takte nicht", () => {
+    // Discovery und Marktdaten haengen nicht an Bestand — sie erzeugen ihn.
+    const ohne = plan(false);
+    expect(ohne.toRun).toContain("FAST_DISCOVERY");
+    expect(ohne.toRun).toContain("MARKET_UPDATE");
+    expect(ohne.toRun).toContain("PROVIDER_HEALTH");
+  });
+
+  it("spart zwei Drittel der Auftraege", () => {
+    // Die Zahl, um die es geht: 3 von 9 Takten, aber sie stellen die
+    // haeufigsten.
+    const proStunde = (ids: readonly string[]): number =>
+      DEFAULT_CADENCES.filter((c) => ids.includes(c.id)).reduce(
+        (sum, c) => sum + 3_600_000 / c.intervalMs,
+        0,
+      );
+    const alle = proStunde(DEFAULT_CADENCES.map((c) => c.id));
+    const gespart = proStunde(plan(false).nothingToWatch);
+    expect(gespart / alle).toBeGreaterThan(0.6);
+  });
+});

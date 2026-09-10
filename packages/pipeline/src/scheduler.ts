@@ -45,6 +45,19 @@ export interface Cadence {
   readonly intervalMs: number;
   /** Ohne verbundene Marktdatenquelle wird dieser Takt nicht faellig. */
   readonly requiresMarketData: boolean;
+  /**
+   * Dieser Takt ueberwacht Bestand — ohne Bestand hat er nichts zu tun.
+   *
+   * Gemessen, nicht vermutet: von 26.308 Auftraegen am Tag entfielen 17.280
+   * auf die Ueberwachung von Positionen, Paper-Positionen und Gelegenheiten,
+   * die es alle nicht gab. Zwei Drittel der gesamten Last fuer die Frage
+   * „hat sich an nichts etwas geaendert?", jede zehnte Sekunde gestellt.
+   *
+   * Das ist nicht nur teuer, es ist auch falsch herum gedacht: ein Waechter,
+   * der ueber ein leeres Lager geht, meldet nicht Sicherheit, sondern
+   * verbraucht Schichten.
+   */
+  readonly requiresOpenWork?: boolean;
   /** Grobe Zahl der Anbieteranfragen je Lauf. Grundlage der Budgetpruefung. */
   readonly estimatedRequests: number;
   readonly description: string;
@@ -84,6 +97,7 @@ export const DEFAULT_CADENCES: readonly Cadence[] = [
     id: "POSITION_MONITOR",
     intervalMs: 10_000,
     requiresMarketData: true,
+    requiresOpenWork: true,
     estimatedRequests: 10,
     description: "Offene Live-Positionen. Kuerzester Takt, weil hier Geld liegt.",
   },
@@ -91,6 +105,7 @@ export const DEFAULT_CADENCES: readonly Cadence[] = [
     id: "PAPER_MONITOR",
     intervalMs: 15_000,
     requiresMarketData: true,
+    requiresOpenWork: true,
     estimatedRequests: 10,
     description: "Offene Paper-Positionen. Laeuft unabhaengig vom Live-Handel.",
   },
@@ -98,6 +113,7 @@ export const DEFAULT_CADENCES: readonly Cadence[] = [
     id: "OPPORTUNITY_EXPIRY",
     intervalMs: 30_000,
     requiresMarketData: false,
+    requiresOpenWork: true,
     estimatedRequests: 0,
     description: "Abgelaufene Gelegenheiten schliessen — zeitgesteuert, nicht beim naechsten Login.",
   },
@@ -137,6 +153,13 @@ export interface SchedulerInput {
   readonly now: Date;
   /** Ob mindestens eine Marktdatenquelle verwertbare Daten liefert. */
   readonly marketDataAvailable: boolean;
+  /**
+   * Ob es ueberhaupt Bestand zu ueberwachen gibt.
+   *
+   * Fehlt die Angabe, wird sie als `true` gelesen — der Aufrufer, der sie
+   * nicht kennt, soll nichts stillschweigend abschalten.
+   */
+  readonly hasOpenWork?: boolean;
   /** Verbleibende Anbieteranfragen im aktuellen Fenster. `null` = unbekannt. */
   readonly remainingRequests: number | null;
   /** Faktor fuer den Abstand nach Fehlschlaegen. */
@@ -148,6 +171,8 @@ export type CadenceDecision =
   | { readonly id: CadenceId; readonly kind: "RUN" }
   | { readonly id: CadenceId; readonly kind: "NOT_DUE"; readonly dueInMs: number }
   | { readonly id: CadenceId; readonly kind: "WAITING_FOR_MARKET_DATA" }
+  /** Es gibt nichts zu ueberwachen. Kein Fehler, sondern die Lage. */
+  | { readonly id: CadenceId; readonly kind: "NOTHING_TO_WATCH" }
   | { readonly id: CadenceId; readonly kind: "DEFERRED_BUDGET"; readonly needed: number };
 
 export interface SchedulerPlan {
@@ -156,6 +181,8 @@ export interface SchedulerPlan {
   /** Geschaetzte Anfragen aller startenden Takte. */
   readonly plannedRequests: number;
   readonly waitingForMarketData: readonly CadenceId[];
+  /** Takte, die uebersprungen wurden, weil es keinen Bestand gibt. */
+  readonly nothingToWatch: readonly CadenceId[];
 }
 
 /**
@@ -171,6 +198,10 @@ export function planTick(input: SchedulerInput): SchedulerPlan {
   const decisions: CadenceDecision[] = [];
   const toRun: CadenceId[] = [];
   const waitingForMarketData: CadenceId[] = [];
+  const nothingToWatch: CadenceId[] = [];
+  // Ohne Angabe nicht abschalten: wer die Lage nicht kennt, darf sie nicht
+  // als leer behaupten.
+  const hasOpenWork = input.hasOpenWork ?? true;
   let plannedRequests = 0;
   let remaining = input.remainingRequests;
 
@@ -184,6 +215,12 @@ export function planTick(input: SchedulerInput): SchedulerPlan {
     if (cadence.requiresMarketData && !input.marketDataAvailable) {
       decisions.push({ id: cadence.id, kind: "WAITING_FOR_MARKET_DATA" });
       waitingForMarketData.push(cadence.id);
+      continue;
+    }
+
+    if (cadence.requiresOpenWork === true && !hasOpenWork) {
+      decisions.push({ id: cadence.id, kind: "NOTHING_TO_WATCH" });
+      nothingToWatch.push(cadence.id);
       continue;
     }
 
@@ -218,7 +255,7 @@ export function planTick(input: SchedulerInput): SchedulerPlan {
     if (remaining !== null) remaining -= cadence.estimatedRequests;
   }
 
-  return { decisions, toRun, plannedRequests, waitingForMarketData };
+  return { decisions, toRun, plannedRequests, waitingForMarketData, nothingToWatch };
 }
 
 /**

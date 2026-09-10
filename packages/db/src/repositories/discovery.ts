@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 
 import type { Database } from "../client";
 import { tokens } from "../schema/tokens";
@@ -185,4 +185,30 @@ export async function selectTrackedTokens(
     .where(and(isNull(tokens.blacklistedAt), ne(tokens.state, "REJECTED")))
     .orderBy(desc(tokens.firstSeenAt))
     .limit(limit);
+}
+
+/**
+ * Gibt es ueberhaupt Bestand zu ueberwachen?
+ *
+ * Eine Abfrage fuer drei Fragen, und sie beantwortet die teuerste Zeile des
+ * Betriebs: von 26.308 Auftraegen am Tag entfielen 17.280 auf die
+ * Ueberwachung von Positionen, Paper-Positionen und Gelegenheiten, die es
+ * alle nicht gab.
+ *
+ * `EXISTS` statt `COUNT`: die Zahl interessiert niemanden, nur ob ueberhaupt
+ * etwas da ist — und `EXISTS` hoert beim ersten Treffer auf zu suchen.
+ *
+ * Alle drei Tabellen fuehren `closed_at`; offen heisst ueberall dasselbe.
+ */
+export async function hasOpenWork(db: Database): Promise<boolean> {
+  const rows = await db.execute<{ any_open: boolean }>(
+    sql`select (
+          exists (select 1 from positions where closed_at is null)
+          or exists (select 1 from paper_positions where closed_at is null)
+          or exists (select 1 from opportunities where closed_at is null)
+        ) as any_open`,
+  );
+  const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] }).rows ?? []);
+  const first = list[0] as { any_open?: boolean } | undefined;
+  return first?.any_open === true;
 }

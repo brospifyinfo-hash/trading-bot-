@@ -11,6 +11,7 @@ import {
 } from "@sae/pipeline";
 import { createDatabase, PostgresDispatcher, ProviderHealthStore,
   ensureWatchlistTokens,
+  hasOpenWork,
 } from "@sae/db";
 import { summarizeFleet } from "@sae/providers";
 
@@ -36,6 +37,8 @@ const TICK_MS = 5_000;
 export interface SchedulerDeps {
   readonly dispatcher: JobDispatcher;
   readonly marketDataAvailable: () => boolean;
+  /** Ob es Bestand zu ueberwachen gibt. Ohne ihn laufen die Waechter nicht. */
+  readonly hasOpenWork: () => boolean;
   readonly clock: Clock;
   /** Verbleibende Anbieteranfragen. `null` = unbekannt, dann wird nicht gedrosselt. */
   readonly remainingRequests: () => number | null;
@@ -58,6 +61,7 @@ export class SchedulerLoop {
       states: this.#states,
       now,
       marketDataAvailable: this.deps.marketDataAvailable(),
+      hasOpenWork: this.deps.hasOpenWork(),
       remainingRequests: this.deps.remainingRequests(),
     });
 
@@ -88,6 +92,12 @@ export class SchedulerLoop {
       }
     }
 
+    if (plan.nothingToWatch.length > 0) {
+      this.ctx.logger.debug(
+        { waiting: plan.nothingToWatch },
+        "Takte uebersprungen — es gibt keinen Bestand zu ueberwachen",
+      );
+    }
     if (plan.waitingForMarketData.length > 0) {
       this.ctx.logger.debug({ waiting: plan.waitingForMarketData }, "Takte warten auf Marktdaten");
     }
@@ -169,11 +179,27 @@ export const schedulerRole: RoleHandler = {
      * provider-health-Takt schreibt den Zustand fort, der Scheduler liest ihn.
      */
     let marketDataUsable = summarizeFleet(buildStatusReports(process.env)).anyMarketDataUsable;
+    /**
+     * Ob es Bestand zu ueberwachen gibt.
+     *
+     * Vorsichtiger Startwert `true`: bevor die erste Abfrage gelaufen ist,
+     * wissen wir es nicht — und Nichtwissen darf keine Ueberwachung
+     * abschalten. Nach dem ersten Durchlauf steht die Lage fest.
+     */
+    let openWork = true;
     const refreshMarketData = async (): Promise<void> => {
       const usable = await health.anyMarketDataUsable();
       if (usable !== marketDataUsable) {
         ctx.logger.info({ marketDataUsable: usable }, "Marktdatenlage geaendert");
         marketDataUsable = usable;
+      }
+      // Auf demselben Takt und nicht in einer eigenen Schleife: eine zweite
+      // Schleife waere genau die Sorte Zusatzverkehr, die hier abgestellt
+      // werden soll.
+      const open = await hasOpenWork(db);
+      if (open !== openWork) {
+        ctx.logger.info({ hasOpenWork: open }, "Bestandslage geaendert");
+        openWork = open;
       }
     };
     await refreshMarketData();
@@ -190,6 +216,7 @@ export const schedulerRole: RoleHandler = {
       dispatcher,
       clock: systemClock,
       marketDataAvailable: () => marketDataUsable,
+      hasOpenWork: () => openWork,
       remainingRequests: () => null,
     });
 

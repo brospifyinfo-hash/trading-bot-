@@ -62,6 +62,7 @@ describe("Scheduler und Consumer an derselben Queue", () => {
       dispatcher: new PostgresDispatcher(db),
       clock,
       marketDataAvailable: () => false,
+    hasOpenWork: () => true,
       remainingRequests: () => null,
     });
 
@@ -96,6 +97,7 @@ describe("Scheduler und Consumer an derselben Queue", () => {
       dispatcher: new PostgresDispatcher(db),
       clock,
       marketDataAvailable: () => false,
+    hasOpenWork: () => true,
       remainingRequests: () => null,
     });
     await scheduler.tick(T0);
