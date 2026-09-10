@@ -69,7 +69,19 @@ export const largestAccountsResultSchema = z
   })
   .passthrough();
 
-export interface HolderConcentration {
+/**
+ * Konzentration ueber KONTEN — bewusst nicht „Holder" im Namen.
+ *
+ * Der Unterschied zu `HolderConcentration` aus dem RugCheck-Modul ist keine
+ * Wortklauberei: dort werden Konten nach Besitzern zusammengefasst und Pools
+ * ausgeschlossen, hier ist beides unmoeglich, weil die Kette weder `owner`
+ * noch eine Liste bekannter Pools mitliefert. Beim gemessenen Memecoin ist das
+ * der Unterschied zwischen 95,7 % und 55,7 % (DECISIONS §113).
+ *
+ * Der Name sagt deshalb, was gemessen wurde. Wer diese Zahl als
+ * Halterkonzentration fuehrt, fuehrt sie falsch.
+ */
+export interface AccountConcentration {
   /** Anteil der zehn groessten KONTEN an der Gesamtmenge, in Prozent. */
   readonly top10SharePct: number;
   /** Anteil des groessten einzelnen KONTOS, in Prozent. */
@@ -111,7 +123,7 @@ export function toAmounts(raw: unknown): readonly bigint[] | null {
 export function concentrationOf(input: {
   readonly amounts: readonly bigint[];
   readonly totalSupplyRaw: bigint;
-}): HolderConcentration | null {
+}): AccountConcentration | null {
   const { amounts, totalSupplyRaw } = input;
   if (totalSupplyRaw <= 0n || amounts.length === 0) return null;
 

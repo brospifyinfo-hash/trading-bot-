@@ -3795,3 +3795,74 @@ API-Schlüssel im Klartext und zusätzlich in der URL. Er ist nirgends in dieses
 Repository gelangt — nicht in Code, nicht in Logs, nicht in die Dokumentation.
 Festgehalten wird nur die Regel, die daraus folgt: Zugangsdaten werden direkt
 beim Anbieter kopiert und direkt in Railway eingesetzt, ohne Zwischenstation.
+
+## §113 — 95,7 % oder 55,7 %: dieselbe Antwort, zwei Wahrheiten
+
+Datum: 2026-09-10
+
+Zwei echte RugCheck-Antworten liegen vor (USDC und ein Memecoin), der Vertrag
+ist damit gegen die Bytes geschrieben und `verified`. Der Befund darin ist
+wichtiger als der Vertrag.
+
+### Die naive Zahl ist doppelt falsch
+
+Roh gerechnet halten die zehn größten **Konten** des gemessenen Memecoins
+95,70 %, das größte allein 41,92 %. Beides führt in die Irre:
+
+1. Das größte Konto gehört `7ZYnU2wr…`, und der steht in `knownAccounts` als
+   **„Pump Fun AMM"** — der Liquiditätspool. Er hält nichts, er *ist* der
+   Markt.
+2. Konto 2 und Konto 3 haben denselben `owner` (`DZAvUwwv…`). Als zwei Halter
+   gezählt sind das 17,5 % und 11,4 %; als **ein Akteur** sind es 28,9 %.
+
+Nach Besitzern zusammengefasst und ohne Pool: **55,7 % statt 95,7 %**, größter
+Akteur **28,9 % statt 41,9 %**.
+
+Beide Korrekturen zeigen in **verschiedene** Richtungen — der Pool macht die
+Zahl zu hoch, die Mehrfachkonten machen sie zu niedrig. Sie heben sich nicht
+auf, und keine von beiden ist eine Kleinigkeit.
+
+### Damit ist §112 beantwortet
+
+Der Kettenweg (`getTokenLargestAccounts`) liefert weder `owner` noch eine
+Liste bekannter Pools. Er kann diese Korrektur **prinzipiell nicht** machen.
+Der Mehrwert von RugCheck ist also nicht die Prozentzahl, sondern die
+Zuordnung, die sie erst richtig macht.
+
+Der Kettenweg bleibt als Rückfall bestehen — falls Railway `api.rugcheck.xyz`
+nicht erreicht —, aber sein Typ heißt jetzt `AccountConcentration` statt
+`HolderConcentration`. Der Name sagt, was gemessen wurde; wer die Zahl als
+Halterkonzentration führt, führt sie falsch.
+
+### Der Ersteller wird NICHT herausgerechnet
+
+`knownAccounts` kennt den Typ `CREATOR`, und es wäre naheliegend gewesen, ihn
+wie `AMM` und `LOCKER` auszuschließen. Das wäre der teuerste Fehler dieser
+Datei: der Ersteller ist der risikoreichste Halter, nicht ein
+Infrastrukturkonto. Wer ihn ausblendet, blendet genau den aus, dessen Verkauf
+den Kurs zerlegt. Ausgeschlossen wird nur, was niemandem gehört.
+
+### Die Falle im Schema
+
+`mintAuthority` gibt es **zweimal**: unter `token` als Adresse oder `null`, auf
+oberster Ebene bei USDC als ganzes Konto-Objekt. Wer die obere Ebene als
+Wahrheitswert liest, hält USDC für sicher und den Memecoin für gefährlich —
+also genau verkehrt herum. Ein Test nagelt das fest.
+
+### Ein leerer Token ist der Normalfall
+
+Bei USDC sind `topHolders` und `markets` `null`, `totalHolders` ist `0`,
+`risks` ist leer. Ein etablierter, unbedenklicher Token liefert **nichts**.
+`holderConcentration` gibt dort `null` zurück und ausdrücklich nicht 0 % —
+daraus „keine Konzentration" zu machen wäre eine Sicherheitsaussage, die
+niemand geprüft hat, ausgerechnet für den unbedenklichsten Token.
+
+### Das Rate-Limit ändert die Architektur
+
+Gemessene Header: `x-rate-limit-limit: 15`, Fenster unbekannt. Der
+Marktdaten-Takt fragt 25 Token alle 20 Sekunden — 75 Anfragen je Minute.
+
+RugCheck gehört damit **nicht** in `REFRESH_MARKET_DATA`, sondern in einen
+eigenen, langsamen Anreicherungstakt mit Zwischenspeicher. Sicherheitsdaten
+ändern sich in Stunden, nicht in Sekunden. Das ist keine Optimierung, sondern
+die Bedingung, unter der der Anbieter überhaupt nutzbar ist.
