@@ -1,7 +1,7 @@
 import { describeShape } from "@sae/observability";
 
 import { classifyFailure, type FailureClass } from "../capability";
-import { unverifiedContract, type ContractResult, type ResponseContract } from "../contract";
+import { zodContract, type ContractResult, type ResponseContract } from "../contract";
 import { quoteResponseSchema, type JupiterQuoteResponse } from "./schema";
 
 /**
@@ -25,13 +25,29 @@ import { quoteResponseSchema, type JupiterQuoteResponse } from "./schema";
 
 export const JUPITER_QUOTE_ENDPOINT = "/quote";
 
-export const JUPITER_QUOTE_CONTRACT: ResponseContract<JupiterQuoteResponse> = unverifiedContract({
-  provider: "jupiter",
-  endpoint: JUPITER_QUOTE_ENDPOINT,
-  needed:
-    "Eine echte Antwort von GET /quote. Entscheidend ist, ob `contextSlot` " +
-    "enthalten ist — ohne ihn gibt es kein Datenalter und damit keine " +
-    "Einstiegsentscheidung.",
+/**
+ * Der geprüfte Vertrag.
+ *
+ * `verified: true`, abgeleitet aus einer echten Antwort vom 2026-09-10 —
+ * gemessen vom laufenden Worker, nicht aus der Spezifikation abgeschrieben.
+ *
+ * **Die Frage, an der alles hing, ist beantwortet: `contextSlot` ist da.**
+ * Damit traegt ein Quote einen Messzeitpunkt, und ein Preis bekommt zum
+ * ersten Mal ein bekanntes Alter (DECISIONS §96/§97).
+ *
+ * Die Messung hat ausserdem einen Fehler im Schema aufgedeckt, der jede
+ * Antwort abgelehnt haette: `routePlan[].bps` kommt als `null`, und
+ * `optional()` erlaubt nur ein FEHLENDES Feld. Siehe `schema.ts`.
+ *
+ * Die echte Antwort traegt deutlich mehr Felder als die Spezifikation nennt
+ * (`swapUsdValue`, `mostReliableAmmsQuoteReport`, `loadedLongtailToken` und
+ * weitere). `z.object` verwirft Unbekanntes stillschweigend, statt daran zu
+ * scheitern — ein Anbieter, der ein Feld ERGAENZT, hat nichts gebrochen.
+ */
+export const JUPITER_QUOTE_CONTRACT: ResponseContract<JupiterQuoteResponse> = zodContract({
+  schema: quoteResponseSchema,
+  schemaVersion: "jupiter-quote-v1@2026-09-10",
+  verified: true,
 });
 
 export type QuoteFetchOutcome =

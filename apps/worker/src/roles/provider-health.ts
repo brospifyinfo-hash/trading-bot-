@@ -379,7 +379,22 @@ export async function probeMintContract(input: {
   );
 }
 
-/** USDC — oeffentlich, unveraenderlich, Freeze-Authority abgegeben. */
+/**
+ * Die Sondenadresse: USDC.
+ *
+ * Oeffentlich, unveraenderlich, auf jedem Endpunkt vorhanden — als
+ * Erreichbarkeitssonde also richtig gewaehlt.
+ *
+ * BERICHTIGUNG zur urspruenglichen Begruendung: hier stand, USDC habe seine
+ * Freeze-Authority abgegeben, und die Sonde pruefe damit den `null`-Fall. Die
+ * Messung vom 2026-09-10 zeigt das Gegenteil — `mintAuthority` UND
+ * `freezeAuthority` sind beide gesetzt (Circle behaelt beide). Die Sonde
+ * beruehrt den `null`-Fall also gar nicht.
+ *
+ * Fuer die Erreichbarkeit ist das ohne Belang, fuer die Vertragspruefung
+ * nicht: dass `null` richtig gelesen wird, belegt kein Anbieter, sondern der
+ * Test in `authorities.test.ts`.
+ */
 export const CONTRACT_PROBE_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /** Wrapped SOL — die Eingabeseite der Quote-Sonde. */
@@ -433,15 +448,21 @@ export async function probeFreshnessContracts(input: {
 }): Promise<void> {
   const rpcUrl = input.env["SOLANA_RPC_URL"];
   if (rpcUrl !== undefined && rpcUrl.trim() !== "") {
-    const result = await shapeOf(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      // Ohne Slot-Argument antwortet getBlockTime nicht; der zuletzt
-      // bestaetigte Slot ist der einzige, von dem wir sicher wissen, dass es
-      // ihn gibt.
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [] }),
-    });
-    logShape(input.logger, "solana-rpc:getSlot", result);
+    // Zwei Anfragen, und die zweite ist die eigentliche: `getSlot` liefert
+    // einen Slot, den es sicher gibt, und `getBlockTime` macht daraus die
+    // Uhrzeit. Nur der zweite Vertrag fehlt noch — der erste ist mit der
+    // Messung vom 2026-09-10 belegt.
+    const slot = await currentSlot(rpcUrl);
+    if (slot === null) {
+      input.logger.warn({ provider: "solana-rpc:getSlot" }, "Antwortform nicht messbar");
+    } else {
+      const result = await shapeOf(rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBlockTime", params: [slot] }),
+      });
+      logShape(input.logger, "solana-rpc:getBlockTime", result);
+    }
   }
 
   const jupiterUrl = input.env["JUPITER_BASE_URL"];
@@ -456,6 +477,31 @@ export async function probeFreshnessContracts(input: {
     const result = await shapeOf(`${jupiterUrl.replace(/\/$/, "")}/quote?${query.toString()}`);
     // Die eine Frage, an der alles haengt: steht `contextSlot` in der Antwort?
     logShape(input.logger, "jupiter:quote", result);
+  }
+}
+
+/**
+ * Der zuletzt bestaetigte Slot.
+ *
+ * `getBlockTime` braucht ein Argument, und ein geratener Slot waere entweder
+ * zu alt (der Knoten hat ihn nicht mehr) oder zu neu (es gibt ihn noch nicht).
+ * Beide Faelle antworten mit `null` und saehen dann wie ein Vertragsproblem
+ * aus, obwohl nur die Frage falsch war.
+ */
+async function currentSlot(rpcUrl: string): Promise<number | null> {
+  try {
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [] }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const parsed: unknown = JSON.parse(await response.text());
+    const result = (parsed as { result?: unknown }).result;
+    return typeof result === "number" ? result : null;
+  } catch {
+    return null;
   }
 }
 

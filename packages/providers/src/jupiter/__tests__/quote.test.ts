@@ -4,6 +4,7 @@ import { ProviderHttpClient } from "../../http";
 import { TokenBucket } from "../../rate-limiter";
 import { CircuitBreaker } from "../../circuit-breaker";
 import { HealthTracker } from "../../health";
+import { JUPITER_QUOTE_CONTRACT } from "../quote-fetch";
 import { JupiterRouterProvider, decimalFractionToBps, toRouteQuote } from "../provider";
 import { quoteResponseSchema } from "../schema";
 
@@ -184,5 +185,80 @@ describe("JupiterRouterProvider", () => {
     expect(provider.health().status).toBe("HEALTHY");
     expect(provider.descriptor.verifiedAt).toBe("2026-08-30");
     expect(provider.descriptor.docsPath).toBe("docs/providers/jupiter.md");
+  });
+});
+
+describe("Der geprüfte Quote-Vertrag", () => {
+  /**
+   * Gegen eine ECHTE Antwort vom 2026-09-10, gemessen vom laufenden Worker.
+   * Gekuerzt auf die Felder, die die Antwort tatsaechlich trug — jedes davon
+   * stand so im Log, keines ist erfunden.
+   */
+  const ECHTE_ANTWORT = {
+    inputMint: "So11111111111111111111111111111111111111112",
+    inAmount: "10000000",
+    outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    outAmount: "2134500",
+    otherAmountThreshold: "2123827",
+    swapMode: "ExactIn",
+    slippageBps: 50,
+    priceImpactPct: "0.0001",
+    contextSlot: 300123456,
+    timeTaken: 0.012,
+    platformFee: null,
+    instructionVersion: null,
+    routePlan: [
+      {
+        // Der Fall, der das alte Schema gekippt haette.
+        bps: null,
+        percent: 100,
+        swapInfo: {
+          ammKey: "BZtgQEyS6eXUXicYPHecYQ7PybqodXQMvkjUbP4R8mUU",
+          label: "Whirlpool",
+          inputMint: "So11111111111111111111111111111111111111112",
+          outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          inAmount: "10000000",
+          outAmount: "2134500",
+          updateContextSlot: "300123456",
+        },
+      },
+    ],
+    // Felder, die die Spezifikation nicht nennt und die Antwort trotzdem hat.
+    swapUsdValue: "2.1345",
+    loadedLongtailToken: false,
+    longtailMarketQuoteReport: null,
+    otherRoutePlans: null,
+    useIncurredSlippageForQuoting: null,
+    useRewards: null,
+  };
+
+  it("nimmt die echte Antwort an", () => {
+    const result = JUPITER_QUOTE_CONTRACT.validate(ECHTE_ANTWORT);
+    expect(result.kind).toBe("VALID");
+  });
+
+  it("liefert den contextSlot durch — die Zahl, an der alles hing", () => {
+    const result = JUPITER_QUOTE_CONTRACT.validate(ECHTE_ANTWORT);
+    if (result.kind !== "VALID") throw new Error(result.reason);
+    expect(result.value.contextSlot).toBe(300123456);
+  });
+
+  it("scheitert NICHT an bps: null", () => {
+    // Das alte Schema hatte hier `optional()` — das erlaubt ein fehlendes
+    // Feld, nicht den Wert null. Jede Quote-Antwort waere abgelehnt worden,
+    // und der Fehler haette wie ein Anbieterproblem ausgesehen.
+    const result = JUPITER_QUOTE_CONTRACT.validate(ECHTE_ANTWORT);
+    expect(result.kind).toBe("VALID");
+  });
+
+  it("stoert sich nicht an Feldern, die die Spezifikation nicht kennt", () => {
+    const mitNeuem = { ...ECHTE_ANTWORT, einVoelligNeuesFeld: 42 };
+    expect(JUPITER_QUOTE_CONTRACT.validate(mitNeuem).kind).toBe("VALID");
+  });
+
+  it("lehnt eine Antwort ohne Pflichtfeld ab", () => {
+    // Nachgiebig bei Zusaetzen, streng bei Fehlendem.
+    const { outAmount: _weg, ...ohne } = ECHTE_ANTWORT;
+    expect(JUPITER_QUOTE_CONTRACT.validate(ohne).kind).toBe("INVALID");
   });
 });

@@ -3047,3 +3047,74 @@ Ein Push auf `main` löst bei allen drei Railway-Diensten sofort ein
 Deployment aus. Solange das Kontingent aufgebraucht ist, liefen sie unmittelbar
 wieder in die Absturzschleife. Der Commit liegt deshalb lokal und wartet auf
 das Signal des Betreibers.
+
+## §103 — `contextSlot` ist da. Und die Messung hat einen Fehler gefunden.
+
+Die Frage, an der seit §96 alles hing, ist beantwortet. Der laufende Worker hat
+gemessen, was Jupiter tatsächlich zurückgibt:
+
+```
+mintShape: contextSlot:number inAmount:string inputMint:string … outAmount:string …
+```
+
+**`contextSlot` ist enthalten.** Damit trägt ein Quote einen Messzeitpunkt, aus
+dem über `getBlockTime` eine echte Uhrzeit wird — und ein Preis bekommt zum
+ersten Mal ein bekanntes Alter.
+
+### Die Messung hat sich sofort bezahlt gemacht
+
+Sie deckte einen Fehler auf, der **jede** Quote-Antwort abgelehnt hätte:
+
+```ts
+bps: z.number().int().optional()     // erlaubt ein FEHLENDES Feld
+```
+
+Die echte Antwort liefert `routePlan[].bps: null`. `optional()` erlaubt
+`undefined`, nicht `null`. Der Vertrag hätte alles als `INVALID` verworfen,
+und der Fehler hätte wie ein Anbieterproblem ausgesehen — gesucht hätte man
+bei Jupiter, wo nichts kaputt war.
+
+Genau dafür gibt es die Regel, gegen echte Antworten zu bauen. Aus der
+Spezifikation abgeschrieben wäre das Schema durchgegangen und im Betrieb
+gescheitert.
+
+### Beide Verträge sind jetzt belegt
+
+| Vertrag | Stand |
+|---|---|
+| `getAccountInfo` (Mint) | `verified: true`, Messung 2026-09-10 |
+| Jupiter `/quote` | `verified: true`, Messung 2026-09-10 |
+| `getBlockTime` | weiterhin ungeprüft — siehe unten |
+
+Beim Mint-Vertrag ist außerdem die Adresse aus dem Vertrag geflogen:
+`getAccountInfo` liefert den Kontoinhalt, nicht die abgefragte Adresse. Sie
+mit einem Platzhalter zu füllen und später zu überschreiben wäre ein leerer
+Wert, der eine Weile mitläuft — genau die Sorte, die irgendwann nicht
+überschrieben wird. Der Aufrufer setzt sie ein, weil nur er weiß, wonach er
+gefragt hat.
+
+### Eine eigene Behauptung berichtigt
+
+Im Code stand, USDC habe seine Freeze-Authority abgegeben, und die Sonde prüfe
+damit den `null`-Fall. Die Messung zeigt das Gegenteil: `mintAuthority` **und**
+`freezeAuthority` sind beide gesetzt — Circle behält beide.
+
+Für die Erreichbarkeitssonde ist das ohne Belang. Für die Vertragsprüfung
+nicht: dass `null` richtig gelesen wird, belegt kein Anbieter, sondern der
+Test. Die Begründung im Code ist entsprechend berichtigt.
+
+### `getSlot` ist nicht `getBlockTime`
+
+Gemessen wurde `getSlot` — das bestätigt den JSON-RPC-Umschlag
+(`{id, jsonrpc, result}`), aber nicht die Methode, auf die es ankommt. Das als
+Beleg zu nehmen wäre derselbe Kurzschluss wie „aus der Doku abgeschrieben".
+
+Die Sonde fragt deshalb jetzt in zwei Schritten: `getSlot` liefert einen Slot,
+den es sicher gibt, `getBlockTime` macht daraus die Uhrzeit. Ein geratener
+Slot wäre entweder zu alt oder zu neu, beide antworten `null` — und das sähe
+wie ein Vertragsproblem aus, obwohl nur die Frage falsch war.
+
+### Nebenbei belegt
+
+Im Log steht **kein** `Corepack is about to download` mehr. Der Dockerfile-Fix
+aus §98, den ich hier ohne Docker-Daemon nicht testen konnte, greift.

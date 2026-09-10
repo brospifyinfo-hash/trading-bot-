@@ -2,7 +2,7 @@ import { isBase58Address, providerId, type Clock, type ProviderId } from "@sae/c
 import { describeShape } from "@sae/observability";
 
 import { classifyFailure, type FailureClass } from "../capability";
-import { unverifiedContract, type ContractResult, type ResponseContract } from "../contract";
+import { zodContract, type ContractResult, type ResponseContract } from "../contract";
 import {
   MINT_ACCOUNT_TYPE,
   SPL_TOKEN_2022_PROGRAM_ID,
@@ -63,13 +63,39 @@ export interface MintAccount {
  * `needed` beschreibt, was fehlt, damit jemand ohne Kenntnis dieses Codes
  * weiss, was zu tun ist.
  */
-export const SOLANA_MINT_CONTRACT: ResponseContract<MintAccount | null> = unverifiedContract({
-  provider: "solana-rpc",
-  endpoint: GET_ACCOUNT_INFO,
-  needed:
-    "Eine echte Antwort von getAccountInfo mit encoding=jsonParsed fuer einen SPL-Mint. " +
-    "Dann wird aus unverifiedContract() ein zodContract({verified: true}).",
+/**
+ * Der geprüfte Vertrag.
+ *
+ * `verified: true`, abgeleitet aus einer echten Antwort vom 2026-09-10 —
+ * gemessen vom laufenden Worker gegen den konfigurierten RPC-Endpunkt, nicht
+ * aus der Dokumentation abgeschrieben.
+ *
+ * Gegen die Vermutung bestaetigt: `result.context.slot`,
+ * `result.value.data.parsed.type`, `result.value.data.parsed.info` mit
+ * `decimals`, `supply`, `isInitialized`, `mintAuthority`, `freezeAuthority`,
+ * dazu `result.value.owner`.
+ *
+ * Die Antwort traegt mehr, als das Schema nennt — `apiVersion`, `lamports`,
+ * `rentEpoch`, `space`, ein `id` auf oberster Ebene. `passthrough()` laesst
+ * sie durch, statt an ihnen zu scheitern: ein Anbieter, der ein Feld
+ * ERGAENZT, hat nichts gebrochen.
+ */
+export const SOLANA_MINT_CONTRACT: ResponseContract<MintAccountData | null> = zodContract({
+  schema: solanaAccountInfoResultSchema.transform(toMintAccountData),
+  schemaVersion: "solana-getaccountinfo-mint-v1@2026-09-10",
+  verified: true,
 });
+
+/**
+ * Was in der Antwort steht — ohne die Adresse.
+ *
+ * `getAccountInfo` liefert den Kontoinhalt, nicht die abgefragte Adresse. Der
+ * Vertrag kann sie also gar nicht kennen; nur der Aufrufer weiss, wonach er
+ * gefragt hat. Sie hier mit einem Platzhalter zu fuellen und spaeter zu
+ * ueberschreiben waere ein leerer Wert, der eine Weile mitlaeuft — genau die
+ * Sorte, die irgendwann nicht ueberschrieben wird.
+ */
+export type MintAccountData = Omit<MintAccount, "mint">;
 
 export type MintFetchOutcome =
   | { readonly kind: "OK"; readonly account: MintAccount | null; readonly latencyMs: number }
@@ -113,7 +139,7 @@ export type MintFetchOutcome =
 export interface SolanaMintDeps {
   readonly clock: Clock;
   readonly rpcUrl: string;
-  readonly contract?: ResponseContract<MintAccount | null>;
+  readonly contract?: ResponseContract<MintAccountData | null>;
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
 }
@@ -123,7 +149,7 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 export class SolanaMintAdapter {
   readonly providerId = SOLANA_RPC_PROVIDER_ID;
   readonly #deps: SolanaMintDeps;
-  readonly #contract: ResponseContract<MintAccount | null>;
+  readonly #contract: ResponseContract<MintAccountData | null>;
 
   constructor(deps: SolanaMintDeps) {
     this.#deps = deps;
@@ -224,7 +250,7 @@ export class SolanaMintAdapter {
       return { kind: "RPC_ERROR", code: asError.code, message: asError.message, latencyMs };
     }
 
-    const validated: ContractResult<MintAccount | null> = this.#contract.validate(parsed);
+    const validated: ContractResult<MintAccountData | null> = this.#contract.validate(parsed);
     if (validated.kind !== "VALID") {
       return {
         kind: "SCHEMA_REJECTED",
@@ -233,7 +259,9 @@ export class SolanaMintAdapter {
         shape: describeShape(parsed),
       };
     }
-    return { kind: "OK", account: validated.value, latencyMs };
+    // Die Adresse kommt vom Aufrufer, weil sie nicht in der Antwort steht.
+    const account = validated.value === null ? null : { mint, ...validated.value };
+    return { kind: "OK", account, latencyMs };
   }
 }
 
@@ -244,7 +272,7 @@ export class SolanaMintAdapter {
  * `zodContract` als Transformation benutzen kann — ohne dass die Umwandlung an
  * zwei Stellen steht und auseinanderlaeuft.
  */
-export function toMintAccount(mint: string, raw: unknown): MintAccount | null {
+export function toMintAccountData(raw: unknown): MintAccountData | null {
   // Ausdruecklich gegen den ERFOLGSAST und nicht gegen die Union: `passthrough()`
   // gibt jedem Ast eine Index-Signatur, und damit grenzt `"result" in x` die
   // Union nicht ein. Der Fehlerast ist eine Zeile vorher schon behandelt.
@@ -264,7 +292,6 @@ export function toMintAccount(mint: string, raw: unknown): MintAccount | null {
 
   const info = value.data.parsed.info;
   return {
-    mint,
     // `null` heisst ausdruecklich „abgegeben" und ist die gute Nachricht.
     mintAuthorityActive: info.mintAuthority !== null,
     freezeAuthorityActive: info.freezeAuthority !== null,

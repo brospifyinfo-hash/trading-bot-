@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isPresent, mint as toMint, type Clock } from "@sae/core";
-import { SolanaMintAdapter, toMintAccount } from "@sae/providers";
+import { SolanaMintAdapter, toMintAccountData } from "@sae/providers";
 
 import { buildAuthorityReader } from "../authorities";
 
@@ -79,9 +79,9 @@ describe("Ausfaelle kommen als Nichtwissen an", () => {
     expect(ohne.mintAuthorityActive.reason).toBe("NOT_YET_COLLECTED");
   });
 
-  it("liefert auch bei gueltiger Antwort nichts, solange der Vertrag ungeprueft ist", async () => {
-    // Der Zwischenzustand, der Absicht ist: die Anfrage findet messbar statt,
-    // aber es wird nichts behauptet.
+  it("liest eine gueltige Antwort jetzt aus, weil der Vertrag belegt ist", async () => {
+    // Bis zur Messung vom 2026-09-10 lehnte der Vertrag jede Antwort mit
+    // SCHEMA_UNVERIFIED ab. Jetzt traegt er.
     const gueltig = JSON.stringify({
       jsonrpc: "2.0",
       result: {
@@ -94,8 +94,11 @@ describe("Ausfaelle kommen als Nichtwissen an", () => {
       },
     });
     const result = await mit(antwortet(gueltig));
-    if (isPresent(result.mintAuthorityActive)) throw new Error("erwartet: noch unbekannt");
-    expect(result.mintAuthorityActive.reason).toBe("PARSE_FAILED");
+    if (!isPresent(result.mintAuthorityActive)) {
+      throw new Error("erwartet: jetzt bekannt");
+    }
+    // mintAuthority: null im Fixture heisst "niemand kann nachpraegen".
+    expect(result.mintAuthorityActive.value).toBe(false);
   });
 });
 
@@ -127,7 +130,7 @@ describe("Umwandlung der Antwort", () => {
   }
 
   it("liest abgegebene Autoritaeten als inaktiv", () => {
-    const account = toMintAccount(MEME, antwort());
+    const account = toMintAccountData(antwort());
     expect(account?.mintAuthorityActive).toBe(false);
     expect(account?.freezeAuthorityActive).toBe(false);
     expect(account?.decimals).toBe(6);
@@ -137,14 +140,14 @@ describe("Umwandlung der Antwort", () => {
   });
 
   it("liest eine gesetzte Mint-Authority als aktiv", () => {
-    const account = toMintAccount(MEME, antwort({}, { mintAuthority: MEME }));
+    const account = toMintAccountData(antwort({}, { mintAuthority: MEME }));
     expect(account?.mintAuthorityActive).toBe(true);
   });
 
   it("haelt den Supply als Text", () => {
     // u64 passt nicht verlustfrei in eine JSON-Zahl. Ihn zu parsen hiesse,
     // bei grossen Supplies still falsche Werte zu fuehren.
-    expect(toMintAccount(MEME, antwort())?.supplyRaw).toBe("1000000000000000");
+    expect(toMintAccountData(antwort())?.supplyRaw).toBe("1000000000000000");
   });
 
   it("verwirft einen Token-Account, der wie ein Mint aussieht", () => {
@@ -161,16 +164,15 @@ describe("Umwandlung der Antwort", () => {
         },
       },
     };
-    expect(toMintAccount(MEME, alsToken)).toBeNull();
+    expect(toMintAccountData(alsToken)).toBeNull();
   });
 
   it("verwirft einen Account, der einem fremden Programm gehoert", () => {
-    expect(toMintAccount(MEME, antwort({ owner: "11111111111111111111111111111111" }))).toBeNull();
+    expect(toMintAccountData(antwort({ owner: "11111111111111111111111111111111" }))).toBeNull();
   });
 
   it("nimmt Token-2022 an", () => {
-    const account = toMintAccount(
-      MEME,
+    const account = toMintAccountData(
       antwort({ owner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }),
     );
     expect(account?.tokenProgram).toBe("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -178,6 +180,6 @@ describe("Umwandlung der Antwort", () => {
 
   it("meldet eine leere Adresse als kein Account", () => {
     const leer = { jsonrpc: "2.0", result: { context: { slot: 1 }, value: null } };
-    expect(toMintAccount(MEME, leer)).toBeNull();
+    expect(toMintAccountData(leer)).toBeNull();
   });
 });

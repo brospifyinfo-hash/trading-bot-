@@ -39,7 +39,16 @@ export const swapInfoSchema = z.object({
 export const routePlanStepSchema = z.object({
   swapInfo: swapInfoSchema,
   percent: z.number().int().nullable().optional(),
-  bps: z.number().int().optional(),
+  /**
+   * `nullable`, nicht nur `optional` — und der Unterschied haette die
+   * Validierung gekippt.
+   *
+   * `optional()` erlaubt ein FEHLENDES Feld, nicht ein Feld mit dem Wert
+   * `null`. Die echte Antwort vom 2026-09-10 liefert `bps: null`. Mit dem
+   * alten Schema waere jede Quote-Antwort als INVALID abgelehnt worden — und
+   * der Fehler haette wie ein Anbieterproblem ausgesehen.
+   */
+  bps: z.number().int().nullable().optional(),
 });
 
 export const quoteResponseSchema = z.object({
