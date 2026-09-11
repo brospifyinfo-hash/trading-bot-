@@ -4427,3 +4427,92 @@ gesetzter Wechselkurs von 1:1. Er stand schon vorher so im System
 (`QUOTE_PROBE_NOTIONAL = 100` neben `PAPER_NOTIONAL = eur(100)`) und wird hier
 nicht eingeführt, sondern nur sichtbar. Ihn zu beheben verlangt eine
 Kursquelle; ihn zu verschweigen wäre schlechter, als ihn zu benennen.
+
+## §121 — Eine Kennzahl, die den Fahrplan gemessen hat
+
+Datum: 2026-09-11
+
+Nach §119 und §120 blieb ein Tor zu: `dataCompleteness` lag bei 0,655, die
+Schwelle bei 0,70. Die naheliegende Reaktion wäre gewesen, die Schwelle zu
+senken, bis es passt. Das wäre eine Zahl gewesen, die nichts bedeutet außer
+„damit geht es durch".
+
+Die Frage davor ist die richtige: **misst diese Kennzahl überhaupt, was das Tor
+wissen will?**
+
+### Zwei Fragen unter einem Namen
+
+```ts
+const dataCompleteness = 1 - missingFields.length / countFields(vector);
+```
+
+`countFields` zählt alle 29 Felder — einschließlich der sechs in `pending`.
+Die Gruppe heißt nicht zufällig so: sie sammelt Felder, für die es **keine
+Quelle gibt**. Smart Money, Social, Dev, Narrative. Kein Anbieter, kein
+Adapter, kein Abruf.
+
+Damit beantwortete die Zahl zwei verschiedene Fragen gleichzeitig:
+
+1. *Wie gut kennen wir DIESEN Token?* — die Frage, die ein Einstiegstor
+   stellt.
+2. *Wie viel von diesem SYSTEM ist gebaut?* — eine Frage an den Fahrplan.
+
+Solange die sechs Felder mitzählen, bekommt **jeder** Token denselben Abzug von
+rund zwanzig Punkten, unabhängig von seinen Daten. Ein perfekt dokumentierter
+Token und ein halb bekannter verlieren gleich viel. Das Tor prüfte damit den
+Entwicklungsstand und nannte ihn Datenqualität.
+
+### Die zweite Frage geht nicht verloren
+
+Sie hat bereits ein eigenes Instrument: `weightCoverage`. Die vier fehlenden
+Teilscores wiegen zusammen exakt 0,30 — security 0,20 + liquidity 0,15 +
+momentum 0,15 + smartMoney 0,12 + holder 0,10 + execution 0,10 + dev 0,07 +
+social 0,06 + narrative 0,05, davon fehlen smartMoney, dev, social, narrative.
+Gemessen wird deshalb 0,70, und das Tor dafür steht bei 0,6.
+
+Die strukturelle Lücke ist also nicht verschwunden. Sie steht am richtigen
+Instrument, mit eigener Schwelle, und wurde vorher **doppelt** gezählt.
+
+### Was geändert wurde — und was ausdrücklich nicht
+
+`dataCompleteness` zählt seit jetzt nur die fünf erhebbaren Gruppen.
+Gemessen: **0,655 → 0,739**, über der Schwelle.
+
+`minDataCompleteness` steht unverändert auf **0,70**. Die Schwelle wurde nicht
+angefasst; geändert hat sich, was gezählt wird. Der Unterschied ist wichtig:
+eine gesenkte Schwelle wäre ein nachgebendes Sicherheitsnetz, eine korrigierte
+Kennzahl ist ein repariertes Messgerät.
+
+`missingFields` bleibt **vollständig**. Alle zehn fehlenden Felder stehen
+weiterhin namentlich in jedem Gelegenheits-Snapshot, `pending` eingeschlossen.
+Geändert hat sich, was gezählt wird — nicht, was berichtet wird. Eine Lücke
+wegzudefinieren wäre das Gegenteil dessen, was hier passiert ist.
+
+### Die Version ist gestiegen, und warum das nötig war
+
+`SCORE_ENGINE_VERSION` geht von 1.0.0 auf **1.1.0**. Nicht weil die Rechnung
+aufwendiger wurde, sondern weil sich die **Bedeutung einer gespeicherten Zahl**
+geändert hat. In `data_completeness` stünden sonst zwei verschiedene Größen
+unter einem Namen, und jede Auswertung über den Umstellungszeitpunkt hinweg
+wäre still falsch — genau die Sorte Fehler, die dieses Projekt an anderer
+Stelle teuer bezahlt hat.
+
+Alte Zeilen behalten ihre 1.0.0 und bleiben damit erkennbar. Es wird nichts
+nachträglich umgeschrieben.
+
+### Der Test, der die Trennung festhält
+
+Vorher stand in `engine.test.ts`:
+
+```ts
+expect(result.dataCompleteness).toBeLessThan(1);
+```
+
+bei einem Token, dem **nur** die nicht erhebbaren Felder fehlten. Das war das
+Protokoll des Problems: eine vollständige Datenlage wurde als unvollständig
+ausgewiesen. Heute steht dort, dass `dataCompleteness` 1 ist, `weightCoverage`
+unter 1 bleibt und `pending.devScore` weiterhin namentlich unter den fehlenden
+Feldern auftaucht — die drei Aussagen zusammen sind die Trennung.
+
+Dazu die Gegenprobe: fehlt ein Feld, das dieses System sehr wohl erhebt, sinkt
+die Kennzahl weiterhin. Sie ist nicht stumpf geworden, sie ist genauer.

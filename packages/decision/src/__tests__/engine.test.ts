@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeScores } from "@sae/scoring";
+import { computeScores, SCORE_ENGINE_VERSION } from "@sae/scoring";
 import { decide } from "../engine";
 import { emptyEv, goodFeatures, makeContext, solidButNotEnoughFeatures, val } from "./fixtures";
 
@@ -16,7 +16,10 @@ describe("Entscheidung: ENTER", () => {
     const decision = decide(makeContext());
     expect(decision.reasons.length).toBeGreaterThan(0);
     expect(decision.reasons.map((r) => r.code)).toContain("POSITIVE_EV");
-    expect(decision.scoreEngineVersion).toBe("1.0.0");
+    // Gegen die Konstante, nicht gegen eine abgeschriebene Zahl: geprueft
+    // wird, DASS die Entscheidung ihre Engine-Version traegt — welche das
+    // ist, gehoert nicht in diesen Test.
+    expect(decision.scoreEngineVersion).toBe(SCORE_ENGINE_VERSION);
   });
 });
 

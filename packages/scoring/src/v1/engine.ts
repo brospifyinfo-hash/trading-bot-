@@ -1,5 +1,10 @@
 import { score, type Reason, type Score, type TokenId } from "@sae/core";
-import { collectMissing, countFields, type FeatureVector, type MissingField } from "../features";
+import {
+  collectibleCompleteness,
+  collectMissing,
+  type FeatureVector,
+  type MissingField,
+} from "../features";
 import { isScored, type SubScoreResult } from "../sub-score";
 import {
   devScore,
@@ -25,7 +30,16 @@ import {
  * das Research-Dashboard: es soll zeigen, welche Faktoren tatsaechlich
  * Erwartungswert erzeugen — und die Gewichte danach korrigieren, nicht umgekehrt.
  */
-export const SCORE_ENGINE_VERSION = "1.0.0";
+/**
+ * 1.1.0 seit §121: `dataCompleteness` zaehlt nur noch erhebbare Felder.
+ *
+ * Die Version ist gestiegen, weil sich die BEDEUTUNG einer gespeicherten Zahl
+ * geaendert hat, nicht ihre Berechnung im Detail. Ohne diesen Schritt stuenden
+ * in `data_completeness` zwei verschiedene Groessen unter einem Namen, und
+ * jede spaetere Auswertung ueber den Umstellungszeitpunkt hinweg waere still
+ * falsch.
+ */
+export const SCORE_ENGINE_VERSION = "1.1.0";
 
 export const WEIGHTS = {
   security: 0.2,
@@ -105,8 +119,11 @@ export function computeScores(vector: FeatureVector): ScoringResult {
   const finalScore =
     coveredWeight >= MIN_WEIGHT_COVERAGE ? score(weightedSum / coveredWeight) : null;
 
+  // Vollstaendig gemeldet, damit die Luecke namentlich bleibt.
   const missingFields = collectMissing(vector);
-  const dataCompleteness = 1 - missingFields.length / countFields(vector);
+  // Gemessen unter dem, was dieses System erhebt — nicht ueber den Fahrplan
+  // (§121). Die strukturelle Luecke steht in `weightCoverage`.
+  const dataCompleteness = collectibleCompleteness(vector);
 
   return {
     tokenId: vector.tokenId,

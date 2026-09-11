@@ -109,6 +109,62 @@ export function collectMissing(vector: FeatureVector): MissingField[] {
   return out;
 }
 
+/**
+ * Die Gruppen, die dieses System tatsaechlich ERHEBT.
+ *
+ * `pending` fehlt hier, und das ist der ganze Punkt. Die Gruppe heisst nicht
+ * zufaellig so: sie sammelt Felder, fuer die es noch KEINE Quelle gibt —
+ * Smart Money, Social, Dev, Narrative. Sie sind kein Datenloch bei diesem
+ * Token, sondern ein Stueck System, das noch nicht gebaut ist.
+ */
+const COLLECTIBLE_GROUPS = ["security", "market", "momentum", "holder", "execution"] as const;
+
+/**
+ * Vollstaendigkeit unter dem, was erhebbar IST.
+ *
+ * ### Warum nicht ueber alle Felder
+ *
+ * `1 - fehlend / alle` beantwortet zwei Fragen auf einmal und vermengt sie:
+ *
+ * 1. „Wie gut kennen wir DIESEN Token?" — die Frage eines Einstiegstors.
+ * 2. „Wie viel von diesem SYSTEM ist gebaut?" — eine Frage an den Fahrplan.
+ *
+ * Solange die sechs `pending`-Felder mitzaehlen, sieht **jeder** Token um rund
+ * zwanzig Punkte unvollstaendiger aus, als er ist — und zwar alle gleich, weil
+ * der Abzug nichts mit ihm zu tun hat. Ein Tor, das darauf prueft, misst den
+ * Fortschritt der Entwicklung und nennt ihn Datenqualitaet.
+ *
+ * Die zweite Frage geht dabei nicht verloren: `weightCoverage` misst sie
+ * getrennt und mit eigenem Tor. Die vier fehlenden Teilscores schlagen dort
+ * mit exakt 0.30 Gewicht zu Buche — die strukturelle Luecke ist also weiterhin
+ * sichtbar, nur am richtigen Instrument.
+ *
+ * `missingFields` bleibt ausdruecklich VOLLSTAENDIG: was fehlt, steht
+ * weiterhin namentlich da, `pending` eingeschlossen. Geaendert hat sich, was
+ * gezaehlt wird — nicht, was berichtet wird.
+ */
+export function collectibleCompleteness(vector: FeatureVector): number {
+  const gruppen: Record<string, unknown> = {
+    security: vector.security,
+    market: vector.market,
+    momentum: vector.momentum,
+    holder: vector.holder,
+    execution: vector.execution,
+  };
+
+  let gesamt = 0;
+  let fehlend = 0;
+  for (const name of COLLECTIBLE_GROUPS) {
+    const werte = gruppen[name] as unknown as Record<string, Maybe<unknown>>;
+    for (const value of Object.values(werte)) {
+      gesamt += 1;
+      if (value.kind === "MISSING") fehlend += 1;
+    }
+  }
+  // Kein Sonderfall noetig: die Gruppen sind im Typ festgelegt und nie leer.
+  return 1 - fehlend / gesamt;
+}
+
 export function countFields(vector: FeatureVector): number {
   return (
     Object.keys(vector.security).length +

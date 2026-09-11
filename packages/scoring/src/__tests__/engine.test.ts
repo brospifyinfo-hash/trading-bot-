@@ -22,6 +22,12 @@ describe("Score-Engine v1", () => {
   it("liefert einen stabilen Endscore (Golden File)", () => {
     // Aendert sich dieser Wert unbeabsichtigt, sind alte und neue Scores nicht
     // mehr vergleichbar — und jede Faktoranalyse darueber waere falsch.
+    //
+    // `dataCompleteness` stand hier auf 0.7931 und steht jetzt auf 1. Der
+    // Unterschied ist keine bessere Datenlage, sondern eine andere Frage:
+    // gezaehlt wird seit §121 nur noch, was dieses System erhebt. Deshalb
+    // traegt jedes Ergebnis `scoreEngineVersion` 1.1.0 — sonst stuenden zwei
+    // Groessen unter einem Namen.
     const result = computeScores(healthyToken());
     expect({
       finalScore: result.finalScore,
@@ -30,7 +36,7 @@ describe("Score-Engine v1", () => {
       notComputable: [...result.notComputable].sort(),
     }).toMatchInlineSnapshot(`
       {
-        "dataCompleteness": 0.7931,
+        "dataCompleteness": 1,
         "finalScore": 80,
         "notComputable": [
           "dev",
@@ -104,10 +110,40 @@ describe("Score-Engine v1", () => {
     expect(result.finalScore).toBeLessThan(computeScores(v).finalScore!);
   });
 
-  it("zaehlt fehlende Felder in die Datenvollstaendigkeit", () => {
+  /**
+   * Die Trennung der beiden Fragen (§121).
+   *
+   * `healthyToken()` hat alles, was dieses System erhebt — und nichts von dem,
+   * was es noch nicht erhebt. Genau daran zeigt sich, ob die Kennzahlen
+   * auseinandergehalten werden:
+   *
+   * - `dataCompleteness` beantwortet „wie gut kennen wir DIESEN Token?" und
+   *   ist damit 1. Vorher stand hier `< 1`, und der Abzug kam ausschliesslich
+   *   aus `pending` — also aus Quellen, die es nicht gibt. Jeder Token bekam
+   *   denselben Abzug, unabhaengig von seinen Daten.
+   * - `weightCoverage` beantwortet „wie viel von diesem SYSTEM ist gebaut?"
+   *   und bleibt unter 1. Die Luecke ist also nicht verschwunden, sie steht
+   *   nur am richtigen Instrument.
+   * - `missingFields` bleibt vollstaendig: was fehlt, steht weiterhin
+   *   namentlich da.
+   */
+  it("trennt die Kenntnis ueber den Token von der Reife des Systems", () => {
     const result = computeScores(healthyToken());
-    expect(result.dataCompleteness).toBeLessThan(1);
+
+    expect(result.dataCompleteness).toBe(1);
+    expect(result.weightCoverage).toBeLessThan(1);
     expect(result.missingFields.map((m) => m.field)).toContain("pending.devScore");
+  });
+
+  it("laesst ein fehlendes ERHEBBARES Feld weiterhin durchschlagen", () => {
+    // Die Gegenprobe: die Kennzahl ist nicht stumpf geworden. Fehlt etwas,
+    // das dieses System sehr wohl erhebt, sinkt sie.
+    const v = healthyToken();
+    const ohne = computeScores({
+      ...v,
+      market: { ...v.market, volume24hUsd: gone() },
+    });
+    expect(ohne.dataCompleteness).toBeLessThan(1);
   });
 
   it("ist deterministisch", () => {

@@ -295,17 +295,22 @@ describe("Feature-Vektor aus der Historie", () => {
    * Sie beantwortet nicht "funktioniert der Bauer", sondern "reicht das, was
    * dieses System erhebt, ueberhaupt fuer eine Einstiegsentscheidung".
    *
-   * ### Was die gemessene Ausstiegsfaehigkeit geaendert hat — und was nicht
+   * ### Der Weg dieser Zahl
    *
-   * Sie hat das harte Tor `!isPresent(exitCapacityRatio)` beseitigt, an dem
-   * bis §119 JEDER Token scheiterte, und sie hat den Endscore gehoben (der
-   * Liquiditaets-Teilscore war ohne sie bei 60 gedeckelt).
+   * Sie stand lange unter der Schwelle, und zwar aus zwei Gruenden, die erst
+   * getrennt sichtbar wurden:
    *
-   * Sie hat die Datenvollstaendigkeit NICHT ueber die Schwelle gebracht. Das
-   * stand zwischenzeitlich als Erwartung im Raum und war eine Fehlrechnung;
-   * hier steht der gemessene Wert, damit sie nicht wiederkommt.
+   * 1. Die Ausstiegsfaehigkeit wurde nie erhoben (§119). Das war ein echtes
+   *    Datenloch und ist behoben — gemessen, nicht geraten.
+   * 2. Die Kennzahl zaehlte sechs `pending`-Felder mit, fuer die es KEINE
+   *    Quelle gibt (§121). Dieser Abzug traf jeden Token gleich und sagte
+   *    nichts ueber ihn aus; er hat den Fortschritt der Entwicklung gemessen
+   *    und Datenqualitaet dazu gesagt.
+   *
+   * Was dabei NICHT passiert ist: die Schwelle wurde nicht angefasst. Sie
+   * steht unveraendert auf 0.7 — geaendert hat sich, was gezaehlt wird.
    */
-  it("hebt die Vollstaendigkeit, reicht aber noch nicht ueber die Schwelle", async () => {
+  it("reicht mit den erhebbaren Feldern ueber die Schwelle", async () => {
     const vector = await buildFeatureVector({
       pit: reader(),
       tokenId: asTokenId(tokenUuid),
@@ -317,20 +322,15 @@ describe("Feature-Vektor aus der Historie", () => {
     const scores = computeScores(vector);
     const schwelle = DEFAULT_STRATEGY_PARAMETERS.entryGates.minDataCompleteness;
 
-    // Das Feld ist da — das harte Tor, das es verlangt, ist damit passiert.
     expect(isPresent(vector.execution.exitCapacityRatio)).toBe(true);
+    expect(scores.dataCompleteness).toBeGreaterThanOrEqual(schwelle);
 
-    // Und die Vollstaendigkeit reicht trotzdem nicht. Kein Wunschwert,
-    // sondern der gemessene: sie zaehlt Felder, und sechs der fehlenden
-    // gehoeren zu Quellen, die dieses System bewusst noch nicht hat.
-    expect(scores.dataCompleteness).toBeLessThan(schwelle);
-
-    // Namentlich, damit die Luecke eine Liste ist und kein Gefuehl.
+    // Und die Luecke bleibt namentlich sichtbar — sie ist nicht
+    // wegdefiniert, sondern an das richtige Instrument verschoben.
     const fehlend = scores.missingFields.map((m) => m.field);
-    expect(fehlend).toContain("holder.distinctActors");
     expect(fehlend).toContain("pending.smartMoneyBuyers");
-    // Aber ausdruecklich NICHT mehr dieses hier.
     expect(fehlend).not.toContain("execution.exitCapacityRatio");
+    expect(scores.weightCoverage).toBeLessThan(1);
   });
 
   it("waere ohne die Ausstiegsfaehigkeit noch ein Feld aermer", async () => {
