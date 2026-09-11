@@ -4345,3 +4345,85 @@ Entscheidung, keine Implementierung:
 
 Eine erfundene Schwelle wäre der billigste Weg und genau der, den dieses
 Projekt nicht geht. Die Frage gehört dem Betreiber vorgelegt.
+
+## §120 — Ein Auftrag, den es nicht geben kann
+
+Datum: 2026-09-11
+
+Das letzte Glied der Kette war doppelt falsch. In `decision-run.ts`:
+
+```ts
+inputMint: deps.mint,
+outputMint: deps.mint,
+```
+
+Ein- und Ausgabe derselbe Token. **Ein Tausch von X nach X ist keine Order**,
+und kein Router bepreist ihn. Jupiter bekam eine Anfrage, die keine Frage war.
+
+Und darunter:
+
+```ts
+inAmount: PAPER_NOTIONAL.minor,
+```
+
+`PAPER_NOTIONAL` ist `eur(100)`, `.minor` sind also **10.000 Euro-Cent**. Die
+Schnittstelle verlangt ausdrücklich „Menge in kleinster Einheit des
+Eingabe-Mints" — bei USDC wären 100 Dollar **100.000.000**. Der Auftrag war um
+den Faktor 10⁴ zu klein: eine Staubmenge, deren Preis mit dem Markt nichts zu
+tun hat.
+
+Folge: Die Ausführung konnte nicht gelingen. Kein Fill, keine Papier-Position
+— unabhängig davon, wie gut ein Token war, unabhängig von allen Toren davor.
+Zusammen mit §118 und §119 ergibt das drei voneinander unabhängige Gründe,
+warum dieses System noch nie einen simulierten Trade gemacht hat.
+
+### Warum 1.456 Tests das nicht gesehen haben
+
+`packages/trading/src/__tests__/paper-executor.test.ts` macht es **richtig**:
+SOL → TOKEN, `1_000_000_000n` in Lamports. Der Executor ist also korrekt
+spezifiziert und geprüft.
+
+Die Attrappe des Workers, `harness.ts`, trug denselben Fehler wie der
+Produktivcode: `inputMint: MINT, outputMint: MINT`. Beide Seiten sagten
+dasselbe Falsche, also widersprach sich nichts. Eine Attrappe, die den Fehler
+der Produktion spiegelt, prüft nicht — sie bestätigt.
+
+Der Verkaufspfad in `position-monitor.ts` war von Anfang an korrekt: Token
+hinein, Anker heraus, `position.remainingAmountRaw` als Rohmenge. Dieselbe
+Frage, im selben Verzeichnis, einmal richtig und einmal falsch beantwortet.
+
+### Die Menge wird gelesen, nicht abgeschrieben
+
+Dass USDC sechs Dezimalstellen hat, ist bekannt. Die Zahl trotzdem in den Code
+zu schreiben wäre genau die Annahme, die dieses System nicht trifft, solange
+sie ablesbar ist — und der Fehler wäre beim Handeln eine Zehnerpotenz.
+
+`buildDecimalsReader` ist deshalb aus `buildQuoteMarketDeps` herausgezogen und
+wird jetzt von beiden benutzt: vom Marktdaten-Adapter und von der Ausführung.
+Eine Umsetzung, ein Speicher, ein Verhalten.
+
+Sind die Dezimalstellen nicht lesbar, wird **entschieden, aber nicht
+ausgeführt** (`NO_ORDER_SIZE`). Der erste Entwurf brach den ganzen Lauf ab; das
+war zu grob. Ein WATCH oder REJECT ist auch ohne Ausführbarkeit ein Befund, und
+die Gelegenheiten sind Forschungsmaterial — dieselbe Haltung wie beim
+fehlgeschlagenen Quote, der die Entscheidung ebenfalls stehen lässt.
+
+### Der Wächter, der beim Schreiben sofort zugeschlagen hat
+
+Die neue Prüfung sieht sich den **Plan** an, nicht das Ergebnis: zwei
+verschiedene Mints, der Token auf der Ausgabeseite, und eine Menge, die nicht
+der Euro-Cent-Betrag ist. Sie kann nicht dadurch grün werden, dass Attrappe und
+Produktion sich einig sind.
+
+Ihren Wert hat sie sofort bewiesen: ein Skript hatte die Korrektur der
+Ordergröße gar nicht erst geschrieben (Abbruch vor dem Speichern), und die
+Prüfung meldete `expected 10000n not to be 10000n`. Ohne sie wäre die Hälfte
+dieser Reparatur unbemerkt liegen geblieben.
+
+### Eine benannte Vereinfachung
+
+Gekauft wird für 100 USDC, verbucht wird `eur(100)`. Das ist ein stillschweigend
+gesetzter Wechselkurs von 1:1. Er stand schon vorher so im System
+(`QUOTE_PROBE_NOTIONAL = 100` neben `PAPER_NOTIONAL = eur(100)`) und wird hier
+nicht eingeführt, sondern nur sichtbar. Ihn zu beheben verlangt eine
+Kursquelle; ihn zu verschweigen wäre schlechter, als ihn zu benennen.

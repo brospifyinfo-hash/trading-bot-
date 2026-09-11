@@ -167,6 +167,58 @@ export interface QuoteSourceInput {
  * bei jedem Token dieselbe Ablehnung heraus, und eine Kette voller Mitglieder,
  * die zuverlaessig nichts liefern, verschleiert genau das.
  */
+/**
+ * Dezimalstellen eines Mint, gemerkt.
+ *
+ * Eigenstaendig, weil nicht nur der Marktdaten-Adapter sie braucht: auch die
+ * AUSFUEHRUNG muss wissen, wie viele kleinste Einheiten 100 Anker-Einheiten
+ * sind. Sie dort abzuschreiben — „USDC hat sechs Stellen" — waere genau die
+ * Annahme, die dieses System nicht trifft, solange die Zahl ablesbar ist.
+ *
+ * `null`, wenn kein RPC konfiguriert ist. Eine Menge zu raten ist keine
+ * Ausweichmoeglichkeit: der Fehler waere ein Faktor 10^n und beim Handeln der
+ * teuerste, den es gibt.
+ */
+export function buildDecimalsReader(input: {
+  readonly env: ProviderEnv;
+  readonly clock: Clock;
+  readonly fetchImpl?: typeof fetch;
+}): ((mint: string) => Promise<number | null>) | null {
+  const rpcUrl = input.env.SOLANA_RPC_URL;
+  if (rpcUrl === undefined) return null;
+
+  const seam = input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl };
+  const mints = new SolanaMintAdapter({ clock: input.clock, rpcUrl, ...seam });
+  const memo = new Map<string, number>();
+
+  return async (mint: string): Promise<number | null> => {
+    const gemerkt = memo.get(mint);
+    if (gemerkt !== undefined) return gemerkt;
+
+    const outcome = await mints.fetchMint(mint);
+    // `OK` mit `account: null` heisst: die Adresse ist kein Mint. Das ist
+    // eine Auskunft und wird trotzdem nicht gemerkt — sie sagt nichts
+    // darueber, ob der naechste Versuch dasselbe ergibt.
+    if (outcome.kind !== "OK" || outcome.account === null) return null;
+
+    remember(memo, mint, outcome.account.decimals);
+    return outcome.account.decimals;
+  };
+}
+
+/**
+ * Ganze Anker-Einheiten in die kleinste Einheit.
+ *
+ * Dieselbe Rechnung wie im Adapter, hier fuer die Ausfuehrung. Ganzzahlig und
+ * nicht ueber `10 ** decimals`: ein um eine Einheit danebenliegender Faktor
+ * verschiebt die Ordergroesse um eine Zehnerpotenz.
+ */
+export function anchorUnitsToRaw(units: number, decimals: number): bigint | null {
+  if (!Number.isInteger(units) || units <= 0) return null;
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 32) return null;
+  return BigInt(units) * 10n ** BigInt(decimals);
+}
+
 export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps | null {
   const baseUrl = input.env.JUPITER_BASE_URL;
   const rpcUrl = input.env.SOLANA_RPC_URL;
@@ -175,9 +227,10 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
   const seam = input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl };
   const quotes = new JupiterQuoteAdapter({ clock: input.clock, baseUrl, ...seam });
   const blockTime = new SolanaBlockTimeAdapter({ clock: input.clock, rpcUrl, ...seam });
-  const mints = new SolanaMintAdapter({ clock: input.clock, rpcUrl, ...seam });
 
-  const decimalsMemo = new Map<string, number>();
+  const decimalsOf = buildDecimalsReader(input);
+  // `rpcUrl` ist oben geprueft, der Leser kann hier nicht fehlen.
+  if (decimalsOf === null) return null;
   const slotTimeMemo = new Map<number, Date>();
 
   const pacer = new AdaptivePacer({
@@ -193,19 +246,7 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
     quoteMint: QUOTE_ANCHOR_MINT,
     probeNotional: QUOTE_PROBE_NOTIONAL,
 
-    async decimalsOf(mint: string): Promise<number | null> {
-      const gemerkt = decimalsMemo.get(mint);
-      if (gemerkt !== undefined) return gemerkt;
-
-      const outcome = await mints.fetchMint(mint);
-      // `OK` mit `account: null` heisst: die Adresse ist kein Mint. Das ist
-      // eine Auskunft und wird trotzdem nicht gemerkt — sie sagt nichts
-      // darueber, ob der naechste Versuch dasselbe ergibt.
-      if (outcome.kind !== "OK" || outcome.account === null) return null;
-
-      remember(decimalsMemo, mint, outcome.account.decimals);
-      return outcome.account.decimals;
-    },
+    decimalsOf,
 
     async fetchQuote(request): Promise<QuoteFetchResult> {
       // Warten, bevor gefragt wird — nicht erst, wenn der Anbieter „nein"

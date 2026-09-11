@@ -19,7 +19,12 @@ import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
 import { enrichSecurity } from "./pipeline/security-enrichment";
 import { monitorPaperPositions } from "./pipeline/position-monitor";
-import { QUOTE_ANCHOR_MINT } from "./pipeline/quote-market-source";
+import {
+  anchorUnitsToRaw,
+  buildDecimalsReader,
+  QUOTE_ANCHOR_MINT,
+  QUOTE_PROBE_NOTIONAL,
+} from "./pipeline/quote-market-source";
 import { runDecision } from "./pipeline/decision-run";
 import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
@@ -317,7 +322,30 @@ class EvaluateOpportunityHandler implements JobHandler {
     // ist die richtige Antwort und kein Notbehelf: ein geschaetzter
     // Einstiegskurs erzeugte Papier-Positionen mit erfundenen Einstiegen, und
     // die spaetere Statistik haette keine Chance, das noch zu bemerken.
-    const quotes = buildQuoteSource(loadEnv(providerEnvSchema, this.deps.env));
+    const providerEnv = loadEnv(providerEnvSchema, this.deps.env);
+    const quotes = buildQuoteSource(providerEnv);
+
+    // Die Ordergroesse in der kleinsten Einheit des Ankers — GELESEN, nicht
+    // abgeschrieben. Dass USDC sechs Stellen hat, ist bekannt; eine bekannte
+    // Zahl in den Code zu schreiben ist trotzdem die Sorte Annahme, die beim
+    // Handeln einen Faktor 10^n kostet, sobald der Anker wechselt.
+    //
+    // Einmal je Lauf: der Leser merkt sich das Ergebnis, und der Anker ist
+    // fuer alle Token derselbe.
+    const decimalsOf = buildDecimalsReader({ env: providerEnv, clock: systemClock });
+    const ankerStellen = decimalsOf === null ? null : await decimalsOf(QUOTE_ANCHOR_MINT);
+    const entryAmountRaw =
+      ankerStellen === null ? null : anchorUnitsToRaw(QUOTE_PROBE_NOTIONAL, ankerStellen);
+    if (entryAmountRaw === null) {
+      // Kein Abbruch: entschieden wird trotzdem, nur nicht ausgefuehrt. Ein
+      // WATCH oder REJECT ist auch ohne Ausfuehrbarkeit ein Befund, und die
+      // Gelegenheiten sind Forschungsmaterial. Zurueckgehalten wird genau
+      // das, was ohne gelesene Menge nicht ehrlich ginge: die Order.
+      this.deps.logger.warn(
+        { role: "decision", anchor: QUOTE_ANCHOR_MINT },
+        "Dezimalstellen des Ankers nicht lesbar — es wird entschieden, aber nicht ausgefuehrt",
+      );
+    }
 
     const outcomes: Record<string, number> = {};
     for (const token of tokens) {
@@ -337,6 +365,8 @@ class EvaluateOpportunityHandler implements JobHandler {
         statusOf: this.deps.statusOf ?? ((): ProviderStatus => "UNAVAILABLE"),
         firstSeenAt: token.firstSeenAt,
         liquidityUsd: null,
+        quoteMint: QUOTE_ANCHOR_MINT,
+        entryAmountRaw,
       });
       const seen = outcomes[result.outcome];
       outcomes[result.outcome] = seen === undefined ? 1 : seen + 1;

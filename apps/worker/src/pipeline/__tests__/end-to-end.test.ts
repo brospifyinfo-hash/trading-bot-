@@ -3,11 +3,11 @@ import { eq } from "drizzle-orm";
 import { schema, type Database } from "@sae/db";
 import { bps, eur } from "@sae/core";
 import { DEFAULT_FEES, DEFAULT_LATENCY } from "@sae/simulation";
-import { PaperExecutor } from "@sae/trading";
+import { PaperExecutor, type Executor, type ExecutionPlan } from "@sae/trading";
 
 import { runOpportunityPipeline, PAPER_NOTIONAL } from "../opportunity-pipeline";
 import { testFixtureRequest } from "../test-fixture";
-import { NoQuoteSource, createHarness, type Harness } from "./harness";
+import { MINT, NoQuoteSource, createHarness, type Harness } from "./harness";
 
 /**
  * Der ganze Weg, mit einem ausdruecklich gekennzeichneten TEST FIXTURE.
@@ -145,6 +145,55 @@ describe("TEST_FIXTURE → Decision → Opportunity → Auto Paper + Manual", ()
     expect(await db.select().from(schema.paperPositions)).toHaveLength(0);
     // Die Gelegenheiten bleiben trotzdem stehen — sie sind Forschungsmaterial.
     expect(await db.select().from(schema.opportunities)).toHaveLength(2);
+  });
+
+  /**
+   * Der Auftrag, den der Router je zu sehen bekommt.
+   *
+   * Bis §120 stand im Plan zweimal derselbe Mint und als Menge der
+   * Euro-Cent-Betrag: ein Tausch von X nach X, um den Faktor 10^4 zu klein.
+   * Beides haette jede Ausfuehrung scheitern lassen — es gab also nie eine
+   * Papier-Position, gleich wie gut ein Token war.
+   *
+   * Aufgefallen ist es keinem der Tests, weil die Attrappe denselben Fehler
+   * trug. Diese Pruefung sieht sich deshalb den PLAN an und nicht das
+   * Ergebnis: sie kann nicht dadurch gruen werden, dass beide Seiten dasselbe
+   * Falsche sagen.
+   */
+  it("legt dem Router einen Auftrag vor, den es wirklich gibt", async () => {
+    const gesehen: ExecutionPlan[] = [];
+    const echt = new PaperExecutor({
+      clock: h.clock,
+      quotes: new NoQuoteSource(),
+      fees: DEFAULT_FEES,
+      latency: DEFAULT_LATENCY,
+      solPrice: eur(150),
+      dexFeeBps: bps(25),
+      random: () => 1,
+      driftSample: () => 0,
+    });
+    const executor: Executor = {
+      mode: "paper",
+      async execute(plan) {
+        gesehen.push(plan);
+        return echt.execute(plan);
+      },
+    };
+
+    await runOpportunityPipeline(request(), h.deps({ executor }));
+
+    const plan = gesehen[0];
+    if (plan === undefined) throw new Error("erwartet: ein Ausfuehrungsplan");
+
+    // Zwei verschiedene Mints. Kein Router bepreist X nach X.
+    expect(plan.inputMint).not.toBe(plan.outputMint);
+    // Gekauft wird der Token, bezahlt mit dem Anker — nicht umgekehrt.
+    expect(plan.outputMint).toBe(MINT);
+    // Die Menge ist die kleinste Einheit des EINGABE-Mints und ausdruecklich
+    // nicht der Euro-Cent-Betrag des Gegenwerts. Bei sechs Stellen liegen
+    // zwischen beiden vier Zehnerpotenzen.
+    expect(plan.inAmount).not.toBe(PAPER_NOTIONAL.minor);
+    expect(plan.inAmount).toBeGreaterThan(PAPER_NOTIONAL.minor);
   });
 
   it("laesst die MANUAL-Gelegenheit unausgefuehrt warten", async () => {

@@ -71,7 +71,23 @@ export interface PipelineDeps {
   /** Simulierte Ausfuehrung. Derselbe Executor wie im Backtest. */
   readonly executor: Executor;
   readonly outputMint: string;
+  /**
+   * Womit gekauft wird — der Anker, NICHT der Token selbst.
+   *
+   * Der Aufrufer setzte hier zweimal denselben Mint. Ein Tausch von X nach X
+   * ist keine Order, und kein Router bepreist ihn; die Ausfuehrung scheiterte
+   * damit zwangslaeufig, und ohne Ausfuehrung entsteht keine Papier-Position.
+   * Der Verkaufspfad in `position-monitor.ts` hat es von Anfang an richtig
+   * gemacht — auf der Kaufseite war es falsch (§120).
+   */
   readonly inputMint: string;
+  /**
+   * Ordergroesse in der kleinsten Einheit von `inputMint`.
+   *
+   * `null`, wenn die Dezimalstellen des Ankers nicht lesbar waren. Dann wird
+   * entschieden, aber nicht ausgefuehrt.
+   */
+  readonly entryAmountRaw: bigint | null;
   /** Wie lange eine Manual-Gelegenheit auf Antwort wartet. */
   readonly manualRespondMs: number;
   /** Zusatzangaben, die der Live-Pfad nicht selbst herleiten kann. */
@@ -121,7 +137,20 @@ export type AutoPaperResult =
   | { readonly kind: "ALREADY_OPEN"; readonly positionId: string }
   /** Die simulierte Ausfuehrung ist gescheitert — kein Fill, keine Position. */
   | { readonly kind: "NOT_FILLED"; readonly outcome: ExecutionOutcome }
-  | { readonly kind: "NOT_OFFERED"; readonly actualState: string | null };
+  | { readonly kind: "NOT_OFFERED"; readonly actualState: string | null }
+  /**
+   * Die Ordergroesse ist unbekannt — es wurde nichts an den Router geschickt.
+   *
+   * Sie haengt an den Dezimalstellen des Ankers, und die werden gelesen, nicht
+   * angenommen. Sind sie nicht lesbar, wird NICHT ausgefuehrt: eine geratene
+   * Menge waere um Zehnerpotenzen daneben, und der Fehler taeuchte als
+   * echter Fill in der Statistik auf.
+   *
+   * Die Entscheidung selbst faellt trotzdem und wird festgehalten — genau wie
+   * bei einem fehlgeschlagenen Quote. Ein WATCH oder REJECT ist auch ohne
+   * Ausfuehrbarkeit ein Befund.
+   */
+  | { readonly kind: "NO_ORDER_SIZE" };
 
 function hashFeatures(vector: FeatureVector, engineVersion: string): string {
   // Stabil ueber denselben Vektor: derselbe Eingang ergibt denselben Schluessel,
@@ -391,12 +420,22 @@ async function openAutoPaperPosition(input: {
 }): Promise<AutoPaperResult> {
   const { deps } = input;
 
+  const entryAmountRaw = deps.entryAmountRaw;
+  if (entryAmountRaw === null) return { kind: "NO_ORDER_SIZE" };
+
   const plan: ExecutionPlan = {
     intentId: `auto-${input.opportunityId}`,
     side: "buy",
     inputMint: deps.inputMint as ExecutionPlan["inputMint"],
     outputMint: deps.outputMint as ExecutionPlan["outputMint"],
-    inAmount: PAPER_NOTIONAL.minor,
+    // Die kleinste Einheit des EINGABE-Mints, wie die Schnittstelle es
+    // verlangt — nicht `PAPER_NOTIONAL.minor`. Dort standen Euro-Cent, also
+    // 10_000 statt 100_000_000: ein Auftrag um den Faktor 10^4 zu klein, den
+    // kein Router sinnvoll bepreist. Die Zahl kommt aus den GELESENEN
+    // Dezimalstellen des Ankers (§120).
+    inAmount: entryAmountRaw,
+    // Der Gegenwert in Portfoliowaehrung bleibt die Grundlage der
+    // Kostenrechnung — das war hier immer richtig.
     notional: PAPER_NOTIONAL,
     maxSlippageBps: bps(deps.parameters.risk.maxSlippageBps),
     plannedAt: input.decidedAt,

@@ -71,6 +71,17 @@ export interface Harness {
 }
 
 const MINT = "So11111111111111111111111111111111111111112";
+/**
+ * Der Anker, mit dem gekauft wird — ein ANDERER Mint als der gehandelte.
+ *
+ * Hier stand `inputMint: MINT, outputMint: MINT`, also ein Tausch von X nach
+ * X. Die Attrappe hat damit denselben Fehler getragen wie der Produktivcode
+ * (§120), und genau deshalb ist er keinem Test aufgefallen: beide Seiten
+ * sagten dasselbe Falsche, also widersprach sich nichts.
+ */
+const ANKER = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+/** 100 USDC in der kleinsten Einheit — sechs Dezimalstellen. */
+const ANKER_ROH = 100_000_000n;
 
 export async function createHarness(at: Date): Promise<Harness> {
   const { db, close } = await createTestDatabase();
@@ -126,8 +137,9 @@ export async function createHarness(at: Date): Promise<Harness> {
         snapshotCount: 0,
         minSnapshotsForAnalysis: 100,
         executor,
-        inputMint: MINT,
+        inputMint: ANKER,
         outputMint: MINT,
+        entryAmountRaw: ANKER_ROH,
         manualRespondMs: 300_000,
         decisionContext: {
           executionMode: "paper",

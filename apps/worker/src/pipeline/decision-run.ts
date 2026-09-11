@@ -71,6 +71,16 @@ export interface DecisionRunDeps {
   readonly env: NodeJS.ProcessEnv;
   readonly tokenId: string;
   readonly mint: string;
+  /** Der Anker, mit dem gekauft wird. */
+  readonly quoteMint: string;
+  /**
+   * Ordergroesse in der kleinsten Einheit des Ankers.
+   *
+   * Vom Aufrufer aus den GELESENEN Dezimalstellen gerechnet, nicht hier aus
+   * einer bekannten Zahl abgeschrieben. Ein Faktor 10^n daneben waere beim
+   * Handeln der teuerste Fehler ueberhaupt.
+   */
+  readonly entryAmountRaw: bigint | null;
   readonly strategyVersionId: string;
   readonly snapshotCount: number;
   readonly providerReports: readonly ProviderStatusReport[];
@@ -166,8 +176,10 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
       random: Math.random,
       driftSample: () => 0,
     }),
-    inputMint: deps.mint,
+    // Gekauft wird MIT dem Anker, nicht mit dem Token selbst (§120).
+    inputMint: deps.quoteMint,
     outputMint: deps.mint,
+    entryAmountRaw: deps.entryAmountRaw,
     manualRespondMs: MANUAL_RESPOND_MS,
     decisionContext: {
       executionMode: "paper",
