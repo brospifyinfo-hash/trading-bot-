@@ -3993,3 +3993,68 @@ Der Tausch: **weniger Anfragen, mehr Antworten.** Die genaue Grenze des
 Anbieters steht nirgends; die Werte sind vorsichtig gewählt und werden an
 derselben Log-Zeile nachgeprüft, an der das Problem sichtbar wurde. Steht dort
 weiterhin `QUOTE_RATE_LIMITED`, ist es noch zu schnell.
+
+## §116 — Eine Position, die niemand ansieht
+
+Datum: 2026-09-11
+
+`MONITOR_PAPER_POSITION` zeigte auf den generischen Marktdaten-Handler: er
+holte Daten und warf sie weg. Eine eröffnete Papier-Position wäre also nie
+überwacht und nie geschlossen worden — sie hätte dagelegen, während Stop Loss
+und Take Profit fertig und getestet daneben lagen.
+
+Die vierte Lücke derselben Bauart, und die letzte, die Bestand betrifft.
+
+### Der Preis kommt aus der Historie, nicht vom Router
+
+Zwei Gründe, und der zweite wiegt schwerer:
+
+1. **Kontingent.** Der Router drosselt (§115). Bei jedem Takt für jede offene
+   Position zu fragen wäre genau der Stoß, der dort gerade abgestellt wurde.
+2. **Vergleichbarkeit.** Der Einstiegspreis stammt aus der Snapshot-Reihe, der
+   aktuelle muss aus derselben stammen. Wäre der eine vom Router und der andere
+   aus der Historie, misst das Verhältnis auch den Unterschied zwischen zwei
+   Anbietern — und ausgerechnet dieses Verhältnis löst Stop Loss und Take
+   Profit aus.
+
+Der Router wird trotzdem gefragt, aber nur beim **Verkauf**: dort geht es um
+Ausführungskosten, und die kennt nur, wer eine Route rechnet. Verkäufe sind
+selten, das Kontingent trägt sie.
+
+### Der Einstiegspreis ist der Marktpreis, nicht der gefüllte
+
+Genommen wird der Snapshot-Preis zum Eröffnungszeitpunkt. Für die
+Ausstiegsregeln ist das richtig: sie fragen „wie weit hat sich der MARKT seit
+dem Einstieg bewegt", nicht „was habe ich bezahlt". Der gefüllte Preis gehört
+in die Gewinnrechnung, und die entsteht beim Verkauf über den simulierten
+Ausführer.
+
+### Was NICHT geschlossen wird
+
+Sagen die Regeln „aussteigen" und der Ausführer liefert keinen Fill, bleibt die
+Position **offen**. Sie zu schließen hieße, einen Ausstiegspreis zu erfinden —
+und damit einen Gewinn, den es nie gab. Eine erfundene Zahl in der
+Papier-Statistik macht die gesamte spätere Forschung wertlos; das ist der
+Grund, warum es diesen ganzen Papierhandel gibt.
+
+Ebenso ohne Preise: kein Verhältnis, keine Entscheidung. Ein geschätztes wäre
+hier besonders teuer, weil es genau die Schwellen auslöst.
+
+### MAE und MFE bei jedem Takt
+
+Der tiefste und der höchste Punkt liegen **zwischen** Einstieg und Ausstieg.
+Wer sie erst beim Schließen ausliest, misst nur den Schluss — und die
+Exit-Effizienz, die daraus entsteht, wäre eine andere Zahl mit demselben Namen.
+
+### Zwei Regeln haben wieder gegriffen
+
+`sae/no-numeric-fallback` hat ein `(buys ?? 0) + (sells ?? 0)` abgelehnt. Zu
+Recht: aus „unbekannt" wäre „niemand hat verkauft" geworden, und der
+Unterschied entscheidet mit über den Ausstieg. Die Rechnung läuft jetzt nur,
+wenn beide Zahlen da sind.
+
+Der Test `laesst die unverdrahteten nicht als fertig durchgehen` ist
+fehlgeschlagen, weil `MONITOR_PAPER_POSITION` nicht mehr auf dem generischen
+Handler liegt. Genau dafür steht er da. Es bleiben vier: `SCORE_TOKEN`,
+`RECONCILE`, `STRATEGY_HEALTH`, `RESEARCH_BATCH` — keiner davon betrifft
+offenen Bestand.

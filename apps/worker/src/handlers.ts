@@ -18,6 +18,8 @@ import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProv
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
 import { enrichSecurity } from "./pipeline/security-enrichment";
+import { monitorPaperPositions } from "./pipeline/position-monitor";
+import { QUOTE_ANCHOR_MINT } from "./pipeline/quote-market-source";
 import { runDecision } from "./pipeline/decision-run";
 import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
@@ -420,6 +422,30 @@ class EnrichSecurityHandler implements JobHandler {
   }
 }
 
+/**
+ * Offene Papier-Positionen ueberwachen.
+ *
+ * Zeigte bis hierher auf den generischen Marktdaten-Handler: eine eroeffnete
+ * Position waere nie ueberwacht und nie geschlossen worden. Siehe
+ * DECISIONS §116.
+ */
+class MonitorPaperPositionHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
+  constructor(private readonly deps: HandlerDeps) {}
+
+  async handle(job: ClaimedJob): Promise<unknown> {
+    void job;
+    const env = loadEnv(providerEnvSchema, this.deps.env);
+    return monitorPaperPositions({
+      db: this.deps.db,
+      logger: this.deps.logger,
+      // Derselbe Anker, gegen den auch der Marktpreis gemessen wird.
+      quoteMint: QUOTE_ANCHOR_MINT,
+      quotes: buildQuoteSource(env),
+    });
+  }
+}
+
 export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
   const market = (what: string): JobHandler => new MarketDataHandler(deps, what);
   return {
@@ -429,7 +455,7 @@ export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
     DISCOVER_TOKENS: new DiscoverTokensHandler(deps),
     SCORE_TOKEN: market("Bewertung"),
     EVALUATE_OPPORTUNITY: new EvaluateOpportunityHandler(deps),
-    MONITOR_PAPER_POSITION: market("Positionsueberwachung"),
+    MONITOR_PAPER_POSITION: new MonitorPaperPositionHandler(deps),
     RECONCILE: market("Abgleich"),
     STRATEGY_HEALTH: market("Strategie-Gesundheit"),
     RESEARCH_BATCH: market("Forschungslauf"),

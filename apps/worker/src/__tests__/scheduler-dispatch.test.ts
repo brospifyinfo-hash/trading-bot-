@@ -139,7 +139,6 @@ describe("Was die Auftragsarten tatsaechlich tun", () => {
       .map(([kind]) => kind)
       .sort();
     expect(offen).toEqual([
-      "MONITOR_PAPER_POSITION",
       "RECONCILE",
       "RESEARCH_BATCH",
       "SCORE_TOKEN",
