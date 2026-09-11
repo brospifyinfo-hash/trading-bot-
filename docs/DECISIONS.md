@@ -4058,3 +4058,90 @@ fehlgeschlagen, weil `MONITOR_PAPER_POSITION` nicht mehr auf dem generischen
 Handler liegt. Genau dafür steht er da. Es bleiben vier: `SCORE_TOKEN`,
 `RECONCILE`, `STRATEGY_HEALTH`, `RESEARCH_BATCH` — keiner davon betrifft
 offenen Bestand.
+
+## §117 — Die Bremse, die ihre eigene Grenze sucht
+
+Datum: 2026-09-11
+
+Die feste Bremse aus §115 hat gewirkt und reichte nicht. Zweite Messung,
+gebremst auf eine Anfrage je Sekunde, zehn Token je Lauf:
+
+```
+processed: 10  ingested: 5  entryReady: 5  noSourceReasons: QUOTE_RATE_LIMITED=5
+```
+
+Von 25 auf 10 Anfragen, von 16 % auf 50 % Trefferquote. Und trotzdem: **die
+Hälfte aller Anfragen ging weiterhin ins Leere.**
+
+### Warum ich den festen Wert nicht einfach kleiner mache
+
+Das wäre der naheliegende Schritt und der falsche. Die Grenze, gegen die wir
+laufen, steht in keiner Dokumentation von Jupiter — sie ist weder als Zahl
+veröffentlicht noch stabil, weil sie plausibel von Last, Endpunkt und
+Tageszeit abhängt. Sie lässt sich also nur durch Ausprobieren finden.
+
+Ausprobieren heißt hier: raten, einen Commit bauen, deployen, den Betreiber
+nach einer Log-Zeile fragen, aus der Antwort das nächste Raten ableiten. Jede
+Runde kostet einen halben Arbeitstag und einen Menschen als Botengänger. Und
+selbst wenn eine Runde die richtige Zahl trifft, steht sie danach fest,
+während die Grenze es nicht ist.
+
+Der zweite Fehler wäre subtiler: ein fester Wert, der sicher unter der Grenze
+liegt, ist **immer** zu langsam, auch wenn gerade viel Luft wäre. Vorsicht,
+die dauerhaft bezahlt wird.
+
+### Additive Erhöhung, multiplikative Absenkung
+
+`AdaptivePacer` (`packages/providers/src/adaptive-pacer.ts`) sucht die Grenze
+selbst, nach dem Muster, das die Staukontrolle von TCP seit Jahrzehnten
+benutzt:
+
+- Start bei 2 s Abstand — bewusst vorsichtiger als die gemessene, noch zu
+  schnelle Sekunde.
+- Ein HTTP 429 multipliziert den Abstand mit 1,5, gedeckelt bei 4 s.
+  **Multiplikativ, weil ein Abweisen bedeutet, dass man die Grenze schon
+  überschritten hat; dann ist Zurückweichen in kleinen Schritten das falsche
+  Tempo.**
+- Fünf erfolgreiche Anfragen in Folge senken den Abstand um 250 ms, Boden bei
+  1 s. **Additiv, weil Erfolg nur beweist, dass der aktuelle Takt geht — nicht,
+  dass der doppelte auch ginge.**
+
+Die Asymmetrie ist der ganze Punkt: schnell nachgeben, langsam vortasten. Der
+Takt pendelt sich damit knapp unter der jeweils geltenden Grenze ein, ohne
+dass die Zahl irgendwo steht.
+
+### Das Ziel ist null verlorene Anfragen, nicht mehr Durchsatz
+
+Der Verlockung, die Bremse als Durchsatzproblem zu lesen, ist hier zu
+widerstehen. `DEFAULT_INGEST_SETTINGS.maxAgeSeconds` steht auf 120: ein
+Preis gilt zwei Minuten. Ein Token, das einmal je Minute aufgefrischt wird,
+ist durchgehend frisch genug für eine Einstiegsentscheidung. Mehr Anfragen je
+Token kaufen also **nichts** — sie ersetzen nur einen frischen Preis durch
+einen etwas frischeren.
+
+Eine abgewiesene Anfrage dagegen kostet dasselbe wie eine erlaubte und liefert
+nichts. Deshalb: `MAX_TOKENS_PER_RUN` von zehn auf **fünf**. Gebremst auf bis
+zu 2 s passen fünf Anfragen sicher in den Zwanzig-Sekunden-Takt, zehn nicht.
+Und wie schon in §115 geht kein Token verloren — `runResumable` setzt beim
+nächsten Takt dort fort, wo dieser aufhörte.
+
+### Was daran nachprüfbar ist
+
+`waitMs()` rückt den internen Zeitpunkt mit vor. Ohne das sähe eine Schleife
+immer denselben freien Platz und die Bremse bremste nie — ein Fehler, der im
+Betrieb exakt wie eine funktionierende Bremse aussieht, die zu schnell steht.
+Der Test dazu ist der Grund, dass die Methode nicht `nextWaitMs()` heißt: sie
+hat eine Wirkung, und der Name soll nicht das Gegenteil behaupten.
+
+Geprüft wird an derselben Log-Zeile wie zuvor. Steht bei `noSourceReasons`
+kein `QUOTE_RATE_LIMITED` mehr und liegt `ingested` bei fünf von fünf, hat die
+Bremse ihre Grenze gefunden.
+
+### Die Grenze, die das nicht löst
+
+Fünf Token je zwanzig Sekunden sind rund 15 Token je Minute. Das ist die Decke
+des kostenlosen Jupiter-Zugangs, und keine Bremse hebt sie — sie sorgt nur
+dafür, dass die 15 auch ankommen. Wer mehr Token gleichzeitig beobachten will,
+braucht einen bezahlten Zugang. Das ist eine Entscheidung des Betreibers, keine
+technische, und sie steht hier, damit sie nicht als technisches Rätsel
+missverstanden wird.

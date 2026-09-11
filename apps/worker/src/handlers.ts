@@ -387,12 +387,17 @@ class MarketRefreshHandler implements JobHandler {
  * Quote-Pfad selbst auf eine Anfrage je Sekunde — und zehn Token passen damit
  * in den Zwanzig-Sekunden-Takt, fuenfundzwanzig nicht.
  *
+ * Von 10 auf 5 nachgezogen, wieder gemessen: mit einer Anfrage je Sekunde
+ * liefen immer noch 5 von 10 in die Drosselung. Fuenf Token bei hoechstens
+ * vier Sekunden Abstand dauern 20 Sekunden — genau ein Takt, also nie
+ * ueberlappend.
+ *
  * Kein Token geht dadurch verloren: `runResumable` setzt beim naechsten Takt
  * dort fort, wo dieser aufgehoert hat. Ein Token wird damit rund einmal je
  * Minute aufgefrischt statt dreimal — bei vier brauchbaren Antworten je Lauf
  * war die hoehere Frequenz ohnehin eine Illusion.
  */
-const MAX_TOKENS_PER_RUN = 10;
+const MAX_TOKENS_PER_RUN = 5;
 const MAX_TOKENS_TRACKED = 500;
 
 /**

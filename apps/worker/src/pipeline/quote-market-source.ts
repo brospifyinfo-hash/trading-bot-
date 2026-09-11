@@ -4,7 +4,7 @@ import type { MarketFields } from "@sae/pipeline";
 import {
   decimalFractionToBps,
   JupiterQuoteAdapter,
-  TokenBucket,
+  AdaptivePacer,
   SolanaBlockTimeAdapter,
   SolanaMintAdapter,
 } from "@sae/providers";
@@ -93,8 +93,23 @@ const MEMO_LIMIT = 5_000;
  * fuenfundzwanzig, von denen einundzwanzig leer ausgehen. Die Zahl der
  * Anfragen sinkt, die Zahl der brauchbaren Antworten steigt.
  */
-const QUOTE_REQUESTS_PER_SECOND = 1;
-const QUOTE_BURST = 2;
+/**
+ * Startwert, Boden und Decke des Abstands zwischen zwei Quote-Anfragen.
+ *
+ * Feste Werte waren der erste Versuch und haben nicht gereicht: eine Anfrage
+ * je Sekunde liess immer noch 5 von 10 in die Drosselung laufen. Die Grenze
+ * des Anbieters steht nirgends, also wird sie nicht geraten, sondern gesucht
+ * (siehe `AdaptivePacer`).
+ *
+ * Die Decke ist die wichtigere der beiden Grenzen: bei fuenf Token je Lauf und
+ * vier Sekunden Abstand dauert ein Lauf hoechstens 20 Sekunden — genau ein
+ * Takt. Ohne sie koennte eine anhaltende Stoerung den Auftrag ueber sein
+ * Zeitfenster ziehen, und dann liegt nicht der Anbieter brach, sondern die
+ * Queue.
+ */
+const QUOTE_START_INTERVAL_MS = 2_000;
+const QUOTE_MIN_INTERVAL_MS = 1_000;
+const QUOTE_MAX_INTERVAL_MS = 4_000;
 
 export interface QuoteSourceInput {
   readonly env: ProviderEnv;
@@ -140,10 +155,11 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
   const decimalsMemo = new Map<string, number>();
   const slotTimeMemo = new Map<number, Date>();
 
-  const bucket = new TokenBucket({
-    capacity: QUOTE_BURST,
-    refillPerSecond: QUOTE_REQUESTS_PER_SECOND,
+  const pacer = new AdaptivePacer({
     clock: input.clock,
+    startIntervalMs: QUOTE_START_INTERVAL_MS,
+    minIntervalMs: QUOTE_MIN_INTERVAL_MS,
+    maxIntervalMs: QUOTE_MAX_INTERVAL_MS,
   });
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
@@ -170,9 +186,8 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
       // Warten, bevor gefragt wird — nicht erst, wenn der Anbieter „nein"
       // sagt. Eine abgewiesene Anfrage kostet dasselbe wie eine erlaubte und
       // liefert nichts.
-      const warten = bucket.waitMs(1);
+      const warten = pacer.waitMs();
       if (warten > 0) await sleep(warten);
-      bucket.tryTake(1);
 
       const outcome = await quotes.fetchQuote({
         inputMint: request.inputMint,
@@ -180,6 +195,14 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
         amountRaw: request.amountRaw,
         slippageBps: PROBE_SLIPPAGE_BPS,
       });
+
+      // Der Takt lernt aus jeder Antwort. Eine Drosselung heisst sofort
+      // deutlich langsamer; Erfolge heben das Tempo erst nach einer Reihe.
+      if (outcome.kind === "FAILED" && outcome.failure === "RATE_LIMITED") {
+        pacer.onRateLimited();
+      } else if (outcome.kind === "OK") {
+        pacer.onSuccess();
+      }
 
       if (outcome.kind === "FAILED") {
         // Der Grund des Anbieters, benannt statt eingeebnet.

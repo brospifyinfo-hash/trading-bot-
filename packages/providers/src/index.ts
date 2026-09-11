@@ -2,6 +2,7 @@ export * from "./capability";
 export * from "./status-report";
 export * from "./types";
 export * from "./rate-limiter";
+export * from "./adaptive-pacer";
 export * from "./circuit-breaker";
 export * from "./budget";
 export * from "./health";

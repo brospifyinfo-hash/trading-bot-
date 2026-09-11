@@ -99,17 +99,30 @@ interface Aufzeichnung {
  * hinausgingen — der einzige Weg, „gemerkt" von „erneut gefragt" zu
  * unterscheiden.
  */
-function fakeNet(over: { decimals?: number; outAmount?: string; blockTime?: number | null } = {}): {
+function fakeNet(
+  over: {
+    decimals?: number;
+    outAmount?: string;
+    blockTime?: number | null;
+    /** So viele Quote-Anfragen antworten zuerst mit HTTP 429. */
+    rateLimitFirst?: number;
+  } = {},
+): {
   readonly fetchImpl: typeof fetch;
   readonly log: Aufzeichnung;
 } {
   const log: Aufzeichnung = { calls: [], rpcMethods: [] };
+  let abgewiesen = 0;
 
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
     const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
     log.calls.push(href);
 
     if (href.startsWith(ENV.JUPITER_BASE_URL)) {
+      if (abgewiesen < (over.rateLimitFirst ?? 0)) {
+        abgewiesen += 1;
+        return new Response("rate limit exceeded", { status: 429 });
+      }
       const slot = new URL(href).searchParams.get("kein-slot") === null ? SLOT : undefined;
       return new Response(JSON.stringify(quoteResponse(over.outAmount ?? "25000000", slot)), {
         status: 200,
@@ -290,9 +303,16 @@ describe("Selbstbremse gegen die Drosselung", () => {
    * mit `QUOTE_RATE_LIMITED`. Die Anfragen gingen als Stoss hinaus, so
    * schnell wie die Schleife sie stellte.
    */
-  it("wartet zwischen den Anfragen, statt sie abweisen zu lassen", async () => {
+  /**
+   * Laesst eine Reihe von Anfragen laufen und gibt zurueck, wie lange vor
+   * jeder einzelnen gewartet wurde.
+   */
+  async function wartezeiten(
+    anzahl: number,
+    over: { rateLimitFirst?: number } = {},
+  ): Promise<number[]> {
     const clock = new FixedClock(T0);
-    const { fetchImpl } = fakeNet();
+    const { fetchImpl } = fakeNet(over);
     const gewartet: number[] = [];
 
     const deps = buildQuoteMarketDeps({
@@ -301,7 +321,7 @@ describe("Selbstbremse gegen die Drosselung", () => {
       fetchImpl,
       sleep: async (ms) => {
         gewartet.push(ms);
-        // Die Uhr mitziehen — sonst fuellt sich der Eimer nie und der Test
+        // Die Uhr mitziehen — sonst rueckt der Takt nie vor und der Test
         // pruefte eine Bremse, die in Wahrheit blockiert.
         clock.advance(ms);
       },
@@ -312,16 +332,34 @@ describe("Selbstbremse gegen die Drosselung", () => {
       outputMint: MEME,
       amountRaw: 100_000_000n,
     };
-    for (let i = 0; i < 5; i += 1) await deps.fetchQuote(frage);
+    for (let i = 0; i < anzahl; i += 1) await deps.fetchQuote(frage);
+    return gewartet.filter((ms) => ms > 0);
+  }
 
-    // Die ersten beiden gehen sofort hinaus (Puffer), danach wird gewartet.
-    expect(gewartet.filter((ms) => ms > 0)).toHaveLength(3);
-    // Rund eine Sekunde je Anfrage — nicht auf die Millisekunde, weil der
-    // Eimer stetig nachfuellt.
-    for (const ms of gewartet.filter((v) => v > 0)) {
-      expect(ms).toBeGreaterThan(500);
-      expect(ms).toBeLessThanOrEqual(1_000);
-    }
+  it("laesst nur die erste Anfrage ungebremst hinaus", async () => {
+    const gewartet = await wartezeiten(5);
+
+    // Kein Stoss-Puffer: nach der ersten Anfrage wartet jede weitere. Ein
+    // Puffer waere hier die falsche Grosszuegigkeit — er schickt zum
+    // Lauf-Beginn mehrere Anfragen gleichzeitig hinaus, und genau dieser
+    // Stoss hat die Drosselung ausgeloest.
+    expect(gewartet).toHaveLength(4);
+    // Mindestens der Boden des Taktgebers. Die genaue Zahl steht bewusst
+    // nicht hier — sie ist ein Stellwert, den die Bremse selbst nachfuehrt.
+    for (const ms of gewartet) expect(ms).toBeGreaterThanOrEqual(1_000);
+    // Ohne Abweisung bleibt der Takt, wo er ist: nichts zieht ihn an.
+    expect(new Set(gewartet).size).toBe(1);
+  });
+
+  it("wartet nach einer Abweisung laenger als vorher", async () => {
+    // Der eigentliche Zweck der Bremse. Dass die Klasse rechnen kann, steht
+    // in `adaptive-pacer.test.ts`; hier wird geprueft, dass das HTTP 429
+    // ueberhaupt bei ihr ankommt. Ohne diese Naht bliebe der Takt starr —
+    // und starr war er schon, als 21 von 25 Anfragen abgewiesen wurden.
+    const ruhig = await wartezeiten(5);
+    const abgewiesen = await wartezeiten(5, { rateLimitFirst: 1 });
+
+    expect(abgewiesen[0]).toBeGreaterThan(ruhig[0]!);
   });
 
   it("bremst den ersten Abruf nicht", async () => {
