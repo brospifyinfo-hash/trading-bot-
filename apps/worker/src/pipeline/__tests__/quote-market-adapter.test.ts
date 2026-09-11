@@ -25,6 +25,8 @@ function deps(over: Partial<QuoteMarketDeps> = {}): QuoteMarketDeps {
     quoteMint: USDC,
     // 100 USDC — die Summe, fuer die gefragt wird, auf der ANKER-Seite.
     probeNotional: 100,
+    // Ausstieg wird beim Fuenffachen der Position gefragt, gegen 200 bp.
+    exitProbe: { multiple: 5, maxImpactBps: 200 },
     decimalsOf: async () => 6,
     // Dafuer gibt es 25 Token (6 Stellen). Preis von Hand: 100 / 25 = 4,00.
     fetchQuote: async () => ({ kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000 , priceImpactBps: 120}),
@@ -115,7 +117,11 @@ describe("Preis mit Zeitstempel", () => {
         },
       }),
     ).fetchMarket(MEME);
-    expect(gefragt).toEqual([100_000_000_000n]);
+    // Die Kaufmenge folgt den ANKERstellen (hier neun), die Verkaufsmenge dem
+    // gemessenen Gegenwert. Dass beide verschiedenen Groessen folgen, ist der
+    // Punkt: eine gemeinsame Konstante waere bei jedem Dezimalstellen-Paar
+    // still um Zehnerpotenzen daneben.
+    expect(gefragt).toEqual([100_000_000_000n, 125_000_000n]);
   });
 
   it("fragt gar nicht erst mit einer unsinnigen Probemenge", async () => {
@@ -194,7 +200,14 @@ describe("Preis mit Zeitstempel", () => {
     ).fetchMarket(MEME);
 
     expect(gefragt).toEqual([
+      // Der Kauf: Anker hinein, Token heraus.
       { inputMint: USDC, outputMint: MEME, amountRaw: 100_000_000n },
+      // Die Verkaufssonde: dieselben Mints andersherum, und die Menge ist das
+      // Fuenffache dessen, was der Kauf tatsaechlich einbrachte
+      // (5 × 25_000_000). Aus dem GEMESSENEN Gegenwert gerechnet und nicht aus
+      // dem Preis zurueck — sonst haenge die Ausstiegsfrage an genau der Zahl,
+      // die sie pruefen soll.
+      { inputMint: MEME, outputMint: USDC, amountRaw: 125_000_000n },
     ]);
     if (result === null) throw new Error("erwartet: Ergebnis");
     expect(result.value.priceUsd).toBeCloseTo(4, 9);
@@ -252,5 +265,91 @@ describe("Preis mit Zeitstempel", () => {
     // Der Grund des Anbieters, unveraendert — nicht das generische NO_QUOTE,
     // das vorher jede Ursache eingeebnet hat.
     expect(gruende).toEqual(["QUOTE_BAD_REQUEST"]);
+  });
+});
+
+
+/**
+ * Die Ausstiegsfaehigkeit — das Feld, an dem bis §119 JEDER Token scheiterte.
+ *
+ * Sie ist ein HARTES Tor: fehlt sie, lehnt `evaluateHardGates` mit
+ * `DATA_INCOMPLETE` ab, und kein Score kommt daran vorbei. Sie stand auf
+ * `notCollected()`, weil der vorhandene Rechner die Pool-Reserve verlangt, die
+ * keine Quelle liefert. Gemessen wird sie deshalb dort, wo sie wirklich
+ * entsteht: an einer zweiten Anfrage in der Gegenrichtung.
+ */
+describe("Ausstiegsfaehigkeit", () => {
+  /** Kauf wie im Helfer, Verkauf mit frei waehlbarem Impact. */
+  function mitAusstieg(exitImpactBps: number | null, over: Partial<QuoteMarketDeps> = {}) {
+    return deps({
+      fetchQuote: async (input) =>
+        input.inputMint === USDC
+          ? { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000, priceImpactBps: 120 }
+          : { kind: "OK", outAmountRaw: 95_000_000n, contextSlot: 300_000_000, priceImpactBps: exitImpactBps },
+      ...over,
+    });
+  }
+
+  it("meldet nie mehr Kapazitaet, als tatsaechlich abgefragt wurde", async () => {
+    // 40 bp bei fuenffacher Position, Grenze 200 bp: rechnerisch ginge weit
+    // mehr. Behauptet wird trotzdem nur das, was geroutet wurde.
+    const result = await quoteMarketAdapter(mitAusstieg(40)).fetchMarket(MEME);
+    if (result === null) throw new Error("erwartet: Ergebnis");
+    expect(result.value.exitCapacityRatio).toBe(5);
+  });
+
+  it("skaliert herunter, wenn der Ausstieg die Grenze reisst", async () => {
+    // Doppelter Impact heisst grob halbe Menge — vom GEMESSENEN Punkt nach
+    // unten, nicht von einer kleinen Probe nach oben hochgerechnet.
+    const result = await quoteMarketAdapter(mitAusstieg(400)).fetchMarket(MEME);
+    if (result === null) throw new Error("erwartet: Ergebnis");
+    expect(result.value.exitCapacityRatio).toBeCloseTo(2.5, 9);
+  });
+
+  it("bleibt an der Grenze genau beim abgefragten Vielfachen", async () => {
+    const result = await quoteMarketAdapter(mitAusstieg(200)).fetchMarket(MEME);
+    if (result === null) throw new Error("erwartet: Ergebnis");
+    expect(result.value.exitCapacityRatio).toBe(5);
+  });
+
+  it("laesst den Preis stehen, wenn nur die Sonde scheitert", async () => {
+    // Der wichtigste Fall. Ein gedrosselter Verkaufsabruf ist kein Grund, eine
+    // gemessene Preisbeobachtung wegzuwerfen — sonst kostet eine Nebenfrage
+    // den Hauptbefund.
+    const gruende: string[] = [];
+    const result = await quoteMarketAdapter(
+      deps({
+        fetchQuote: async (input) =>
+          input.inputMint === USDC
+            ? { kind: "OK", outAmountRaw: 25_000_000n, contextSlot: 300_000_000, priceImpactBps: 120 }
+            : { kind: "NONE", reason: "QUOTE_RATE_LIMITED" },
+        onExitProbe: (_m, r) => gruende.push(r),
+      }),
+    ).fetchMarket(MEME);
+
+    if (result === null) throw new Error("erwartet: Ergebnis");
+    expect(result.value.priceUsd).toBeCloseTo(4, 9);
+    // Nicht gemessen — und ausdruecklich nicht 0. Eine Null hier waere ein
+    // Markturteil aus einem Anbieterproblem.
+    expect(result.value.exitCapacityRatio).toBeNull();
+    expect(gruende).toEqual(["QUOTE_RATE_LIMITED"]);
+  });
+
+  it("erfindet nichts, wenn der Router keinen Impact nennt", async () => {
+    const gruende: string[] = [];
+    const result = await quoteMarketAdapter(
+      mitAusstieg(null, { onExitProbe: (_m: string, r: string) => gruende.push(r) }),
+    ).fetchMarket(MEME);
+    if (result === null) throw new Error("erwartet: Ergebnis");
+    expect(result.value.exitCapacityRatio).toBeNull();
+    expect(gruende).toEqual(["NO_EXIT_IMPACT"]);
+  });
+
+  it("wertet fehlenden Einfluss als volle abgefragte Kapazitaet", async () => {
+    // 0 bp heisst: bei dieser Menge war nichts messbar. Das ist eine Auskunft
+    // ueber den Markt und kein fehlender Wert.
+    const result = await quoteMarketAdapter(mitAusstieg(0)).fetchMarket(MEME);
+    if (result === null) throw new Error("erwartet: Ergebnis");
+    expect(result.value.exitCapacityRatio).toBe(5);
   });
 });

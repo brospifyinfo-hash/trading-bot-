@@ -66,6 +66,7 @@ function arbeitenderAdapter(): MarketDataAdapter {
           buys5m: 30,
           sells5m: 22,
           priceImpactBps: null,
+          exitCapacityRatio: null,
           holders: null,
         },
         observedAt: null,

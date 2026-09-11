@@ -71,6 +71,7 @@ class StaleAdapter implements MarketDataAdapter {
         buys5m: null,
         sells5m: null,
         priceImpactBps: null,
+        exitCapacityRatio: null,
         holders: null,
       },
       // Zwei Stunden alt. Formal eine Antwort, fuer eine Einstiegsentscheidung

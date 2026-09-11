@@ -22,6 +22,7 @@ const market: MarketObservation = {
   buys5m: null,
   sells5m: null,
   priceImpactBps: null,
+  exitCapacityRatio: null,
   holders: 900,
 };
 

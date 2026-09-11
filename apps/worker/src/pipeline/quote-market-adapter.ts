@@ -123,8 +123,40 @@ export interface QuoteMarketDeps {
   readonly fetchSlotTime: (slot: number) => Promise<Date | null>;
   /** Ergaenzende Felder aus der Marktdatenquelle. Fehlend bleibt fehlend. */
   readonly companion?: (mint: string) => Promise<Partial<MarketFields>>;
+  /**
+   * Die Verkaufssonde — der zweite Abruf, und der einzige Weg zur
+   * Ausstiegsfaehigkeit.
+   *
+   * Nicht optional, und das ist Absicht. Ein weggelassenes Feld haette hier
+   * still dazu gefuehrt, dass die Kennzahl nie entsteht — genau der Fehler
+   * aus DECISIONS §118, wo ein fertiger Handler mangels Aufruf nie lief. Wer
+   * diesen Adapter baut, muss die Sonde bewusst einstellen.
+   */
+  readonly exitProbe: ExitProbeSettings;
   /** Fuer die Aufzeichnung, warum nichts herauskam. */
   readonly onUnusable?: (mint: string, reason: string) => void;
+  /**
+   * Ausgang der Verkaufssonde, getrennt vom Marktdaten-Ergebnis.
+   *
+   * Eine misslungene Sonde macht den Preis nicht wertlos — der Snapshot wird
+   * geschrieben, nur ohne Ausstiegszahl. Sie in `onUnusable` zu melden hiesse,
+   * den Token als quellenlos zu zaehlen, obwohl eine Quelle geantwortet hat.
+   */
+  readonly onExitProbe?: (mint: string, outcome: string) => void;
+}
+
+export interface ExitProbeSettings {
+  /**
+   * Das Vielfache der Position, das probeweise verkauft wird.
+   *
+   * Gefragt wird bei dem Vielfachen, bei dem die Bewertung ihre Obergrenze
+   * hat (`rampUp(ratio, 1, 5)`). So ist der gemessene Punkt genau dort, wo
+   * die Aussage gebraucht wird — und die Zahl, die herauskommt, ist nie
+   * groesser als das, was tatsaechlich geroutet wurde.
+   */
+  readonly multiple: number;
+  /** Die Impact-Obergrenze, gegen die gemessen wird (`risk.maxPriceImpactBps`). */
+  readonly maxImpactBps: number;
 }
 
 export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
@@ -190,6 +222,11 @@ export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
         contextSlot: raw.contextSlot,
       };
 
+      // Die Gegenrichtung. `raw.outAmountRaw` ist die Menge, die unsere
+      // Probesumme tatsaechlich kauft — also die Position in Token-Einheiten,
+      // gemessen und nicht aus einem Preis zurueckgerechnet.
+      const exitCapacityRatio = await measureExitCapacity(deps, mint, raw.outAmountRaw);
+
       const slotTime =
         quote.contextSlot === null ? null : await deps.fetchSlotTime(quote.contextSlot);
 
@@ -203,6 +240,7 @@ export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
         marketCapUsd: companion.marketCapUsd ?? null,
         volume24hUsd: companion.volume24hUsd ?? null,
         priceImpactBps: raw.priceImpactBps,
+        exitCapacityRatio,
         volume5mUsd: companion.volume5mUsd ?? null,
         buys5m: companion.buys5m ?? null,
         sells5m: companion.sells5m ?? null,
@@ -218,6 +256,105 @@ export function quoteMarketAdapter(deps: QuoteMarketDeps): MarketDataAdapter {
       return { value: result.value, observedAt: result.observedAt };
     },
   };
+}
+
+/**
+ * Ausstiegsfaehigkeit, gemessen statt modelliert.
+ *
+ * ### Warum ueberhaupt eine zweite Anfrage
+ *
+ * Der vorhandene Rechner `assessExitCapacity` verlangt die Token-Reserve des
+ * Pools. Die liefert keine unserer Quellen, und sie aus der Dollar-Liquiditaet
+ * zurueckzurechnen hiesse, eine Poolform anzunehmen — deshalb stand das Feld
+ * bis hierher auf `notCollected()`. Der Preis dafuer war hoch: die
+ * Ausstiegsfaehigkeit ist ein HARTES Tor, und ein hartes Tor ohne Daten lehnt
+ * jeden Token ab. Kein Score kam daran vorbei.
+ *
+ * `price-impact.ts` sagt es selbst: „Im Live- und Paper-Betrieb ist das echte
+ * Quote immer vorzuziehen, weil es die tatsaechliche Route ueber mehrere Pools
+ * beruecksichtigt." Genau das passiert hier.
+ *
+ * ### Was gemessen wird, und was daraus folgt
+ *
+ * Gefragt wird: „was bekomme ich fuer das `multiple`-fache der Position?" Der
+ * Router antwortet mit einem Preiseinfluss fuer GENAU diese Menge, ueber die
+ * Wege, die es wirklich gibt.
+ *
+ * Daraus wird die Kennzahl:
+ *
+ * ```
+ * ratio = multiple × min(1, maxImpactBps / gemessenerImpact)
+ * ```
+ *
+ * Zwei Eigenschaften, auf die es ankommt:
+ *
+ * 1. **Gedeckelt bei `multiple`.** Faellt der Impact unter die Grenze, ist
+ *    bewiesen, dass das Vielfache herausgeht — mehr behaupten wir nicht, auch
+ *    wenn die Formel mehr hergaebe. Eine Kapazitaet, die nie jemand abgefragt
+ *    hat, wird hier nicht ausgerechnet.
+ * 2. **Nach unten skaliert, nicht extrapoliert.** Liegt der Impact ueber der
+ *    Grenze, wird vom gemessenen Punkt HERUNTER gerechnet. Das ist die sichere
+ *    Richtung: eine Hochrechnung von einer kleinen Probe auf eine grosse Menge
+ *    ueberschaetzt bei konzentrierter Liquiditaet genau das, wovor dieses Tor
+ *    schuetzen soll.
+ *
+ * Die lineare Skalierung ist eine Naeherung erster Ordnung — sie stimmt exakt,
+ * solange der Impact klein gegen 1 ist, und das ist er im Bereich, um den es
+ * geht (Grenze 200 bp = 2 %). Sie steht hier ausgeschrieben, damit niemand sie
+ * spaeter fuer eine Messung haelt.
+ *
+ * `null` heisst „nicht gemessen". Ausdruecklich NICHT „keine Kapazitaet": das
+ * eine ist eine Wissensluecke, das andere ein Befund ueber den Markt, und sie
+ * zu vermengen hiesse, ein Anbieterproblem als Markturteil zu verkaufen.
+ */
+async function measureExitCapacity(
+  deps: QuoteMarketDeps,
+  mint: string,
+  positionRaw: bigint,
+): Promise<number | null> {
+  const { multiple, maxImpactBps } = deps.exitProbe;
+  if (!Number.isFinite(multiple) || multiple <= 0 || !Number.isFinite(maxImpactBps) || maxImpactBps <= 0) {
+    deps.onExitProbe?.(mint, "BAD_EXIT_SETTINGS");
+    return null;
+  }
+  if (positionRaw <= 0n) {
+    deps.onExitProbe?.(mint, "NO_POSITION_AMOUNT");
+    return null;
+  }
+
+  const probeRaw = positionRaw * BigInt(Math.round(multiple));
+  const raw = await deps.fetchQuote({
+    inputMint: mint,
+    outputMint: deps.quoteMint,
+    amountRaw: probeRaw,
+  });
+
+  if (raw.kind !== "OK") {
+    // Der Grund des Routers, unveraendert. „Kein Weg fuer diese Menge" ist
+    // ein Hinweis auf einen duennen Ausstieg — aber ein Hinweis, kein Beweis:
+    // eine Drosselung sieht an dieser Stelle genauso aus. Daraus eine
+    // Kapazitaet von null zu machen waere ein erfundener Messwert.
+    deps.onExitProbe?.(mint, raw.reason);
+    return null;
+  }
+
+  const impact = raw.priceImpactBps;
+  if (impact === null) {
+    deps.onExitProbe?.(mint, "NO_EXIT_IMPACT");
+    return null;
+  }
+
+  // Kein messbarer Einfluss bei dieser Menge: der Ausstieg ist mindestens so
+  // gross wie das Gefragte. Mehr sagt die Messung nicht, also steht hier das
+  // Vielfache und keine Hochrechnung.
+  if (impact <= 0) {
+    deps.onExitProbe?.(mint, "OK");
+    return multiple;
+  }
+
+  const ratio = multiple * Math.min(1, maxImpactBps / impact);
+  deps.onExitProbe?.(mint, "OK");
+  return ratio;
 }
 
 /**

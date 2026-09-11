@@ -150,15 +150,15 @@ describe("buildQuoteMarketDeps", () => {
     // Ein halbfertiges Kettenmitglied waere schlimmer als keins: es lieferte
     // bei jedem Token dieselbe Ablehnung und saehe im Dashboard nach einem
     // Anbieterproblem aus.
-    expect(buildQuoteMarketDeps({ clock, env: { JUPITER_BASE_URL: ENV.JUPITER_BASE_URL } })).toBeNull();
-    expect(buildQuoteMarketDeps({ clock, env: { SOLANA_RPC_URL: ENV.SOLANA_RPC_URL } })).toBeNull();
-    expect(buildQuoteMarketDeps({ clock, env: {} })).toBeNull();
-    expect(buildQuoteMarketDeps({ clock, env: ENV })).not.toBeNull();
+    expect(buildQuoteMarketDeps({ maxImpactBps: 200, clock, env: { JUPITER_BASE_URL: ENV.JUPITER_BASE_URL } })).toBeNull();
+    expect(buildQuoteMarketDeps({ maxImpactBps: 200, clock, env: { SOLANA_RPC_URL: ENV.SOLANA_RPC_URL } })).toBeNull();
+    expect(buildQuoteMarketDeps({ maxImpactBps: 200, clock, env: {} })).toBeNull();
+    expect(buildQuoteMarketDeps({ maxImpactBps: 200, clock, env: ENV })).not.toBeNull();
   });
 
   it("liest die Dezimalstellen vom Knoten und fragt sie danach nicht erneut", async () => {
     const { fetchImpl, log } = fakeNet({ decimals: 9 });
-    const deps = buildQuoteMarketDeps({ clock: new FixedClock(T0), env: ENV, fetchImpl })!;
+    const deps = buildQuoteMarketDeps({ maxImpactBps: 200, clock: new FixedClock(T0), env: ENV, fetchImpl })!;
 
     expect(await deps.decimalsOf(MEME)).toBe(9);
     expect(await deps.decimalsOf(MEME)).toBe(9);
@@ -170,7 +170,7 @@ describe("buildQuoteMarketDeps", () => {
 
   it("liest die Uhrzeit eines Slots und fragt sie danach nicht erneut", async () => {
     const { fetchImpl, log } = fakeNet();
-    const deps = buildQuoteMarketDeps({ clock: new FixedClock(T0), env: ENV, fetchImpl })!;
+    const deps = buildQuoteMarketDeps({ maxImpactBps: 200, clock: new FixedClock(T0), env: ENV, fetchImpl })!;
 
     const at = await deps.fetchSlotTime(SLOT);
     expect(at).toEqual(new Date(SLOT_SECONDS * 1_000));
@@ -180,7 +180,7 @@ describe("buildQuoteMarketDeps", () => {
 
   it("merkt sich einen NICHT verfuegbaren Slot nicht", async () => {
     const { fetchImpl, log } = fakeNet({ blockTime: null });
-    const deps = buildQuoteMarketDeps({ clock: new FixedClock(T0), env: ENV, fetchImpl })!;
+    const deps = buildQuoteMarketDeps({ maxImpactBps: 200, clock: new FixedClock(T0), env: ENV, fetchImpl })!;
 
     expect(await deps.fetchSlotTime(SLOT)).toBeNull();
     expect(await deps.fetchSlotTime(SLOT)).toBeNull();
@@ -193,7 +193,7 @@ describe("buildQuoteMarketDeps", () => {
     // gelaufen waere der Wert hier still gerundet.
     const gross = "123456789012345678";
     const { fetchImpl } = fakeNet({ outAmount: gross });
-    const deps = buildQuoteMarketDeps({ clock: new FixedClock(T0), env: ENV, fetchImpl })!;
+    const deps = buildQuoteMarketDeps({ maxImpactBps: 200, clock: new FixedClock(T0), env: ENV, fetchImpl })!;
 
     const quote = await deps.fetchQuote({
       inputMint: QUOTE_ANCHOR_MINT,
@@ -215,6 +215,7 @@ describe("buildQuoteMarketDeps", () => {
    */
   it("nennt bei Drosselung die Drosselung und nicht nur 'kein Kurs'", async () => {
     const deps = buildQuoteMarketDeps({
+      maxImpactBps: 200,
       clock: new FixedClock(T0),
       env: ENV,
       fetchImpl: (async () => new Response("slow down", { status: 429 })) as unknown as typeof fetch,
@@ -230,6 +231,7 @@ describe("buildQuoteMarketDeps", () => {
 
   it("unterscheidet eine Sperre von einer fehlenden Route", async () => {
     const gesperrt = buildQuoteMarketDeps({
+      maxImpactBps: 200,
       clock: new FixedClock(T0),
       env: ENV,
       fetchImpl: (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch,
@@ -243,6 +245,7 @@ describe("buildQuoteMarketDeps", () => {
     ).toEqual({ kind: "NONE", reason: "QUOTE_BLOCKED" });
 
     const keinWeg = buildQuoteMarketDeps({
+      maxImpactBps: 200,
       clock: new FixedClock(T0),
       env: ENV,
       fetchImpl: (async () =>
@@ -259,6 +262,7 @@ describe("buildQuoteMarketDeps", () => {
 
   it("meldet eine unlesbare Antwort als Vertragsproblem", async () => {
     const deps = buildQuoteMarketDeps({
+      maxImpactBps: 200,
       clock: new FixedClock(T0),
       env: ENV,
       fetchImpl: (async () =>
@@ -276,7 +280,7 @@ describe("buildQuoteMarketDeps", () => {
 
   it("fragt mit der Probesumme in der kleinsten Einheit des Ankers", async () => {
     const { fetchImpl, log } = fakeNet();
-    const deps = buildQuoteMarketDeps({ clock: new FixedClock(T0), env: ENV, fetchImpl })!;
+    const deps = buildQuoteMarketDeps({ maxImpactBps: 200, clock: new FixedClock(T0), env: ENV, fetchImpl })!;
 
     await deps.fetchQuote({
       inputMint: QUOTE_ANCHOR_MINT,
@@ -316,6 +320,7 @@ describe("Selbstbremse gegen die Drosselung", () => {
     const gewartet: number[] = [];
 
     const deps = buildQuoteMarketDeps({
+      maxImpactBps: 200,
       clock,
       env: ENV,
       fetchImpl,
@@ -368,6 +373,7 @@ describe("Selbstbremse gegen die Drosselung", () => {
     const { fetchImpl } = fakeNet();
     const gewartet: number[] = [];
     const deps = buildQuoteMarketDeps({
+      maxImpactBps: 200,
       clock,
       env: ENV,
       fetchImpl,

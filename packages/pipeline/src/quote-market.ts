@@ -55,6 +55,15 @@ export interface QuoteMarketInput {
    * genau dort danebenliegen, wo es weh tut — bei duennen Maerkten.
    */
   readonly priceImpactBps: number | null;
+  /**
+   * Ausstiegsfaehigkeit, gemessen mit einer zweiten Anfrage in der
+   * VERKAUFSrichtung.
+   *
+   * Das Gegenstueck zu `priceImpactBps`: dieses misst, was der Einstieg
+   * kostet, jenes, ob der Ausstieg ueberhaupt stattfindet. Ein Token kann
+   * jeden Score der Welt haben und trotzdem eine Falle sein.
+   */
+  readonly exitCapacityRatio: number | null;
 }
 
 export type QuoteMarketResult =
@@ -116,6 +125,7 @@ export function quoteToMarket(input: QuoteMarketInput): QuoteMarketResult {
       sells5m: input.sells5m,
       holders: input.holders,
       priceImpactBps: input.priceImpactBps,
+      exitCapacityRatio: input.exitCapacityRatio,
     },
     // Zurueckgerechnet aus dem gemessenen Alter: der Zeitpunkt, zu dem der
     // Anbieter gerechnet hat. Genau das erwartet `sourced()` als

@@ -197,6 +197,7 @@ export async function runPipelineSmokeTest(input: {
       value: {
         priceUsd: market.priceUsd,
         liquidityUsd: market.liquidityUsd,
+        exitCapacityRatio: null,
         marketCapUsd: null,
         volume24hUsd: market.volume24hUsd,
         volume5mUsd: null,

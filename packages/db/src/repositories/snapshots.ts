@@ -105,6 +105,7 @@ export class SnapshotRepository {
         buys5m: candidate.market.buys5m,
         sells5m: candidate.market.sells5m,
         priceImpactBps: candidate.market.priceImpactBps,
+        exitCapacityRatio: candidate.market.exitCapacityRatio,
         holders: candidate.market.holders,
         // Ohne berechnete Scores bleibt data_completeness die einzige ehrliche
         // Qualitaetsangabe: sie zaehlt, was tatsaechlich da war.
@@ -149,6 +150,7 @@ function completenessOf(market: MarketObservation): number {
     market.buys5m,
     market.sells5m,
     market.priceImpactBps,
+    market.exitCapacityRatio,
     market.holders,
   ];
   const present = fields.filter((f) => f !== null && Number.isFinite(f)).length;
@@ -165,6 +167,7 @@ function missingOf(market: MarketObservation): Record<string, string> {
     buys5m: market.buys5m,
     sells5m: market.sells5m,
     priceImpactBps: market.priceImpactBps,
+    exitCapacityRatio: market.exitCapacityRatio,
     holders: market.holders,
   })) {
     if (value === null) out[name] = "NOT_PROVIDED_BY_SOURCE";

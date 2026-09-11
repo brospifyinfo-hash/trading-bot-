@@ -4228,3 +4228,120 @@ passiert, ist offen und wird gemessen, nicht behauptet: die Tore stehen in
 Trades von sich aus `UNKNOWN / INSUFFICIENT_SAMPLE`, und ein abgelehnter
 Einstieg ist ein ebenso gültiges Ergebnis wie ein angenommener. Live-Handel
 bleibt abgeschaltet.
+
+## §119 — Das Feld, an dem jeder Token scheiterte
+
+Datum: 2026-09-11
+
+`exitCapacityRatio` stand auf `notCollected()`, mit einer guten Begründung:
+
+> Braucht die Token-Reserve des Pools […]. Die liefert keine der heutigen
+> Quellen — und aus der Dollar-Liquidität zurückzurechnen hieße, eine Poolform
+> anzunehmen.
+
+Die Begründung war richtig. Die Folge hat niemand zu Ende gedacht.
+
+Die Ausstiegsfähigkeit ist ein **hartes Tor**:
+
+```ts
+const ratio = ctx.features.execution.exitCapacityRatio;
+if (!isPresent(ratio)) return "DATA_INCOMPLETE";
+```
+
+Harte Tore laufen als Schritt 1, vor Score, vor Circuit Breaker, vor allem.
+Ein hartes Tor, das nach einem nie erhobenen Wert fragt, lehnt **jeden Token
+ab** — dauerhaft, unabhängig von seiner Qualität, und ohne dass irgendwo etwas
+kaputt aussieht. Der Bot konnte keine Position eröffnen. Nicht „hat noch
+keine gefunden": *konnte nicht*.
+
+### Gemessen, weil das Modell es selbst verlangt
+
+`price-impact.ts` sagt über seine eigene Näherung:
+
+> Im Live- und Paper-Betrieb ist das echte Quote immer vorzuziehen, weil es die
+> tatsächliche Route über mehrere Pools berücksichtigt.
+
+Also eine zweite Anfrage, in der Gegenrichtung: „was bekomme ich für das
+Fünffache der Position?" Die Menge kommt aus dem `outAmount` des Kaufquotes —
+dem **gemessenen** Gegenwert der Probesumme, nicht aus einem Preis
+zurückgerechnet. Sonst hinge die Ausstiegsfrage an genau der Zahl, die sie
+prüfen soll.
+
+```
+ratio = multiple × min(1, maxImpactBps / gemessenerImpact)
+```
+
+Zwei Eigenschaften tragen die Ehrlichkeit:
+
+1. **Gedeckelt beim abgefragten Vielfachen.** Liegt der Impact unter der
+   Grenze, ist bewiesen, dass das Fünffache herausgeht — mehr wird nicht
+   behauptet, auch wenn die Formel mehr hergäbe.
+2. **Nach unten skaliert, nie hochgerechnet.** Reißt der Impact die Grenze,
+   wird vom gemessenen Punkt herunter gerechnet. Die andere Richtung — von
+   einer kleinen Probe auf eine große Menge — überschätzt bei konzentrierter
+   Liquidität genau das, wovor dieses Tor schützen soll.
+
+Fünf, weil `liquidityScore` die Zahl auf eine Rampe von 1 bis 5 legt. Bei drei
+zu fragen (der Grenze des harten Tors) würde jeden Token auf halbem Rampenweg
+deckeln: die Messung wäre strenger als das Tor, das sie bedient.
+
+Eine gescheiterte Sonde wirft den Preis nicht weg. Sie meldet sich in einem
+eigenen Kanal (`exitProbe` im Log), nicht in `noSourceReasons` — sonst zählte
+ein gedrosselter Nebenabruf den Token als quellenlos, obwohl eine Quelle
+geantwortet hat.
+
+### Die Rechnung, die ich falsch hatte
+
+Ich hatte dem Betreiber gesagt, dieses eine Feld hebe auch die
+Datenvollständigkeit über ihre Schwelle: 20 von 29 Feldern seien der
+Bestfall, mit dem neuen Feld 21, und 21/29 = 0,724 ≥ 0,70. Das war eine
+Handrechnung, und sie war falsch.
+
+Gemessen (voller Verlauf, echter RugCheck-Befund, Ausstieg gemessen):
+
+```
+dataCompleteness: 0.655    weightCoverage: 0.70    finalScore: 70
+FEHLEND (10): security.lpBurnedOrLocked, security.riskLevel,
+              holder.distinctActors, holder.largestClusterSharePct,
+              pending.smartMoney{Buyers,Sellers}, pending.social{Authenticity,
+              Momentum}, pending.devScore, pending.narrativeScore
+```
+
+Zwei Felder mehr als angenommen: `lpBurnedOrLocked` und `riskLevel` schreibt
+die Anreicherung **nicht** — der LP-Anteil liegt bewusst als Zahl in
+`findings`, weil der Wahrheitswert eine Schwelle verlangt, die niemand
+gemessen hat (§113), und einen Risikograd liefert RugCheck nicht in der Form,
+die dieses Feld erwartet.
+
+**Also: das Tor `dataCompleteness ≥ 0.7` blockiert weiterhin.** Die Änderung
+ist notwendig und nicht hinreichend. Beides steht jetzt als Test da, damit die
+Fehlrechnung nicht wiederkommt.
+
+### Was sie trotzdem gebracht hat
+
+Zwei Dinge, beide gemessen:
+
+1. Das harte Tor `!isPresent(exitCapacityRatio)` ist weg. Es hätte jeden
+   Token abgelehnt, auch wenn alles andere stimmte.
+2. Der Endscore steigt von **59 auf 70**. `liquidityScore` deckelt sich selbst
+   bei 60, solange die Ausstiegsrechnung fehlt — ein Deckel auf einem
+   Teilscore mit Gewicht 0.15, der den Endscore mitzog. Zur Einstiegsschwelle
+   von 75 fehlen damit noch fünf Punkte statt sechzehn.
+
+### Der offene Punkt, und warum er nicht hier entschieden wird
+
+Um über 0,70 zu kommen, fehlen zwei Felder. Jeder Weg dorthin ist eine
+Entscheidung, keine Implementierung:
+
+- `lpBurnedOrLocked` verlangt eine Schwelle auf dem LP-Anteil — ist ein zu
+  72,9 % gesperrter Pool „gesperrt"?
+- `riskLevel` verlangt eine Abbildung von RugCheckss Punktzahl auf vier Stufen.
+- `distinctActors` und `largestClusterSharePct` verlangen eine
+  Chain-Auswertung, die es nicht gibt.
+- Oder die Schwelle selbst: `dataCompleteness` zählt **Felder**, und sechs der
+  zehn fehlenden gehören zu Quellen, die dieses System bewusst noch nicht hat.
+  Die scoring-relevante Abdeckung misst `weightCoverage` bereits getrennt, mit
+  eigenem Tor bei 0,6 — das sie mit 0,70 besteht.
+
+Eine erfundene Schwelle wäre der billigste Weg und genau der, den dieses
+Projekt nicht geht. Die Frage gehört dem Betreiber vorgelegt.

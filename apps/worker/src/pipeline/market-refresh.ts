@@ -42,6 +42,7 @@ export interface MarketRefreshDeps {
     drain(): {
       reasons: Readonly<Record<string, number>>;
       quotes: Readonly<Record<string, number>>;
+      exitProbes: Readonly<Record<string, number>>;
       tokens: number;
     };
   };
@@ -160,6 +161,7 @@ export async function refreshMarketData(
             buys5m: input.market.buys5m,
             sells5m: input.market.sells5m,
             priceImpactBps: input.market.priceImpactBps,
+            exitCapacityRatio: input.market.exitCapacityRatio,
             holders: input.market.holders,
           },
           observedAt: input.provenance.dataTimestamp,
@@ -239,6 +241,12 @@ export async function refreshMarketData(
       // keine Auskunft, sondern Rauschen.
       ...(why !== undefined && Object.keys(why.quotes).length > 0
         ? { unusableQuotes: tally(why.quotes) }
+        : {}),
+      // Der Ausgang der Verkaufssonde. `OK=n` heisst: fuer n Token ist die
+      // Ausstiegsfaehigkeit gemessen — die Zahl, ohne die das harte Tor jeden
+      // Token ablehnt (§119).
+      ...(why !== undefined && Object.keys(why.exitProbes).length > 0
+        ? { exitProbe: tally(why.exitProbes) }
         : {}),
     },
     "Marktdaten aufgefrischt",

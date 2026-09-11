@@ -67,6 +67,15 @@ export interface MarketFields {
   readonly holders: number | null;
   /** Preiseinfluss aus einem Router-Quote. `null` bei jeder anderen Quelle. */
   readonly priceImpactBps: number | null;
+  /**
+   * Wie oft die geplante Position noch herausginge, gemessen am Router.
+   *
+   * `null` bei jeder Quelle ausser einem Router — und `null` auch dann, wenn
+   * die Verkaufssonde nichts geliefert hat. Nicht gemessen heisst hier nicht
+   * „keine Kapazitaet": das eine ist eine Wissensluecke, das andere ein
+   * Befund ueber den Markt.
+   */
+  readonly exitCapacityRatio: number | null;
 }
 
 export interface ChainBuildInput {

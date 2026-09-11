@@ -64,6 +64,21 @@ export const QUOTE_ANCHOR_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 export const QUOTE_PROBE_NOTIONAL = 100;
 
 /**
+ * Das Vielfache der Position, mit dem der Ausstieg geprueft wird.
+ *
+ * Fuenf, weil dort die Bewertung ihre Obergrenze hat: `liquidityScore` legt
+ * die Ausstiegsfaehigkeit auf eine Rampe von 1 bis 5. Bei drei zu fragen
+ * (der Grenze des harten Tors) wuerde jeden Token auf halbem Rampenweg
+ * deckeln, obwohl er mehr hergibt — die Messung waere dann strenger als das
+ * Tor, das sie bedient.
+ *
+ * Der Preis dafuer ist eine zweite Router-Anfrage je Token. Das ist der
+ * teuerste Posten dieser Aenderung und bewusst in Kauf genommen: ohne diese
+ * Zahl lehnt das harte Tor JEDEN Token ab (DECISIONS §119).
+ */
+export const EXIT_PROBE_MULTIPLE = 5;
+
+/**
  * Slippage-Vorgabe der Anfrage.
  *
  * Beeinflusst `outAmount` NICHT — sie geht nur in `otherAmountThreshold`, also
@@ -117,6 +132,16 @@ export interface QuoteSourceInput {
   /** Ergaenzende Felder (Liquiditaet, Volumen, Marktkapitalisierung). */
   readonly companion?: (mint: string) => Promise<Partial<MarketFields>>;
   readonly onUnusable?: (mint: string, reason: string) => void;
+  readonly onExitProbe?: (mint: string, outcome: string) => void;
+  /**
+   * Die Impact-Obergrenze, gegen die der Ausstieg gemessen wird.
+   *
+   * Kommt aus den Strategieparametern (`risk.maxPriceImpactBps`) und steht
+   * deshalb nicht als Konstante hier: wer die Grenze verschiebt, verschiebt
+   * damit auch die Bedeutung der gemessenen Ausstiegszahl, und beides muss
+   * dieselbe Quelle haben.
+   */
+  readonly maxImpactBps: number;
   /**
    * Nur fuer Tests.
    *
@@ -250,8 +275,11 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
       return outcome.at;
     },
 
+    exitProbe: { multiple: EXIT_PROBE_MULTIPLE, maxImpactBps: input.maxImpactBps },
+
     ...(input.companion === undefined ? {} : { companion: input.companion }),
     ...(input.onUnusable === undefined ? {} : { onUnusable: input.onUnusable }),
+    ...(input.onExitProbe === undefined ? {} : { onExitProbe: input.onExitProbe }),
   };
 }
 

@@ -69,6 +69,7 @@ export interface HandlerDeps {
     drain(): {
       reasons: Readonly<Record<string, number>>;
       quotes: Readonly<Record<string, number>>;
+      exitProbes: Readonly<Record<string, number>>;
       tokens: number;
     };
   };

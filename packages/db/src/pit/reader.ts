@@ -32,6 +32,7 @@ export interface PitSnapshot {
   readonly buys5m: number | null;
   readonly sells5m: number | null;
   readonly priceImpactBps: number | null;
+  readonly exitCapacityRatio: number | null;
   readonly holders: number | null;
   readonly finalScore: number | null;
   readonly dataCompleteness: number;

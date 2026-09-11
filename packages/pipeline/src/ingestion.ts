@@ -35,6 +35,8 @@ export interface MarketObservation {
   readonly holders: number | null;
   /** Preiseinfluss aus einem Router-Quote. `null` bei jeder anderen Quelle. */
   readonly priceImpactBps: number | null;
+  /** Ausstiegsfaehigkeit aus der Verkaufssonde. `null`, wenn nicht gemessen. */
+  readonly exitCapacityRatio: number | null;
 }
 
 export interface SnapshotProvenance {

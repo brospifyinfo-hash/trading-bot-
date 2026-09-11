@@ -1,5 +1,5 @@
 import { isBase58Address, mint as toMint, type Clock, type Mint } from "@sae/core";
-import type { KnownProviderId, ProviderEnv } from "@sae/config";
+import { DEFAULT_STRATEGY_PARAMETERS, type KnownProviderId, type ProviderEnv } from "@sae/config";
 import {
   DEFAULT_MARKET_SELECTION,
   selectMarket,
@@ -75,6 +75,15 @@ export interface RejectionTally {
    * Auszaehlung gleich aus.
    */
   recordQuote(label: string): void;
+  /**
+   * Ausgang der Verkaufssonde — ein eigener Kanal, kein Anhaengsel.
+   *
+   * Eine misslungene Sonde ist kein fehlender Markt: der Preis steht, nur die
+   * Ausstiegszahl fehlt. Sie in `record` zu zaehlen wuerde `tokens` erhoehen
+   * und den Token als quellenlos ausweisen, obwohl eine Quelle geantwortet
+   * hat — eine Zahl, die still etwas anderes bedeutet als ihr Name sagt.
+   */
+  recordExitProbe(outcome: string): void;
 }
 
 export interface RejectionCounts {
@@ -82,6 +91,8 @@ export interface RejectionCounts {
   readonly reasons: Readonly<Record<string, number>>;
   /** Gegenwaehrung -> wie oft, nur fuer `UNUSABLE_QUOTE`. */
   readonly quotes: Readonly<Record<string, number>>;
+  /** Ausgang der Verkaufssonde -> wie oft. `OK` heisst: Ausstieg gemessen. */
+  readonly exitProbes: Readonly<Record<string, number>>;
   /**
    * Wie viele ABRUFE ohne Markt endeten.
    *
@@ -111,8 +122,14 @@ function safeLabel(raw: string): string {
 export function createRejectionTally(): RejectionTally & { drain(): RejectionCounts } {
   let reasons: Record<string, number> = {};
   let quotes: Record<string, number> = {};
+  let exitProbes: Record<string, number> = {};
   let tokens = 0;
   return {
+    recordExitProbe(outcome: string): void {
+      const key = safeLabel(outcome);
+      const bisher = exitProbes[key];
+      exitProbes[key] = bisher === undefined ? 1 : bisher + 1;
+    },
     recordQuote(label: string): void {
       const key = safeLabel(label);
       const bisher = quotes[key];
@@ -131,9 +148,10 @@ export function createRejectionTally(): RejectionTally & { drain(): RejectionCou
       }
     },
     drain(): RejectionCounts {
-      const out = { reasons, quotes, tokens };
+      const out = { reasons, quotes, exitProbes, tokens };
       reasons = {};
       quotes = {};
+      exitProbes = {};
       tokens = 0;
       return out;
     },
@@ -193,6 +211,16 @@ function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
   const quoteDeps = buildQuoteMarketDeps({
     env: deps.env,
     clock: deps.clock,
+    // Dieselbe Grenze, die spaeter das harte Tor prueft. Sie hier zu
+    // wiederholen statt sie zu beziehen waere die Sorte Doppelung, bei der
+    // eine der beiden Zahlen irgendwann leise stehen bleibt.
+    maxImpactBps: DEFAULT_STRATEGY_PARAMETERS.risk.maxPriceImpactBps,
+    ...(deps.rejections === undefined
+      ? {}
+      : {
+          onExitProbe: (_mint: string, outcome: string) =>
+            deps.rejections?.recordExitProbe(outcome),
+        }),
     companion: async (mint: string): Promise<Partial<MarketFields>> => {
       const result = await begleiter.fetchMarket(mint);
       // Kein Begleitdatensatz ist kein Fehler: der Preis steht auch ohne ihn,
@@ -293,6 +321,9 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
         value: {
           priceUsd: chosen.priceUsd,
           liquidityUsd: chosen.liquidityUsd,
+          // Eine Marktdatenquelle rechnet keine Route und kann deshalb ueber
+          // den Ausstieg nichts sagen. `null` heisst genau das.
+          exitCapacityRatio: null,
           // In der geprueften Antwort fehlte `marketCap`. Fehlt es weiterhin,
           // bleibt es `null` — NOT_AVAILABLE, nicht 0.
           marketCapUsd: raw?.marketCapUsd ?? null,

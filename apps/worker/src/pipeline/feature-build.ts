@@ -150,10 +150,12 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
     },
     execution: {
       expectedCostBps: expectedCostBps(latest),
-      // Braucht die Token-Reserve des Pools, um zu sagen, wie oft die Position
-      // noch herausginge. Die liefert keine der heutigen Quellen — und aus der
-      // Dollar-Liquiditaet zurueckzurechnen hiesse, eine Poolform anzunehmen.
-      exitCapacityRatio: notCollected(),
+      // Gemessen mit einer zweiten Router-Anfrage in der Verkaufsrichtung
+      // (`measureExitCapacity`). Vorher stand hier `notCollected()`, mit dem
+      // Hinweis, dass die Pool-Reserve fehlt — richtig, aber folgenschwer: die
+      // Ausstiegsfaehigkeit ist ein HARTES Tor, und ohne sie wurde JEDER Token
+      // mit `DATA_INCOMPLETE` abgelehnt, gleich wie gut er war (§119).
+      exitCapacityRatio: of(latest, latest.exitCapacityRatio),
       priceImpactBps: of(latest, latest.priceImpactBps),
     },
     pending: {

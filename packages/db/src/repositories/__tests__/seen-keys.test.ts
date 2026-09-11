@@ -55,6 +55,7 @@ const observation: MarketObservation = {
   buys5m: null,
   sells5m: null,
   priceImpactBps: null,
+  exitCapacityRatio: null,
   holders: 1_400,
 };
 

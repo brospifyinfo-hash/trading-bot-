@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { isMissing, isPresent, systemClock, tokenId as asTokenId } from "@sae/core";
+import { isMissing, isPresent, missing, systemClock, tokenId as asTokenId } from "@sae/core";
 import { LivePitReader, schema, type Database } from "@sae/db";
 import { createTestDatabase } from "@sae/db/testing";
 import { computeScores } from "@sae/scoring";
@@ -45,6 +45,7 @@ async function snapshot(input: {
   readonly minutesAgo: number;
   readonly priceUsd: number;
   readonly holders?: number | null;
+  readonly exitCapacityRatio?: number | null;
 }): Promise<void> {
   const at = new Date(T0.getTime() - input.minutesAgo * 60 * 1_000);
   await db.insert(schema.tokenSnapshots).values({
@@ -58,6 +59,9 @@ async function snapshot(input: {
     buys5m: 30,
     sells5m: 22,
     priceImpactBps: 120,
+    // Was die Verkaufssonde misst (§119). Vorher gab es diese Spalte nicht,
+    // und das Feld blieb im Vektor fehlend — mit Folgen bis ins harte Tor.
+    exitCapacityRatio: input.exitCapacityRatio ?? 5,
     holders: input.holders ?? null,
     dataCompleteness: 0.4,
     sourceProviderId: "jupiter-quote",
@@ -290,8 +294,18 @@ describe("Feature-Vektor aus der Historie", () => {
    *
    * Sie beantwortet nicht "funktioniert der Bauer", sondern "reicht das, was
    * dieses System erhebt, ueberhaupt fuer eine Einstiegsentscheidung".
+   *
+   * ### Was die gemessene Ausstiegsfaehigkeit geaendert hat — und was nicht
+   *
+   * Sie hat das harte Tor `!isPresent(exitCapacityRatio)` beseitigt, an dem
+   * bis §119 JEDER Token scheiterte, und sie hat den Endscore gehoben (der
+   * Liquiditaets-Teilscore war ohne sie bei 60 gedeckelt).
+   *
+   * Sie hat die Datenvollstaendigkeit NICHT ueber die Schwelle gebracht. Das
+   * stand zwischenzeitlich als Erwartung im Raum und war eine Fehlrechnung;
+   * hier steht der gemessene Wert, damit sie nicht wiederkommt.
    */
-  it("misst, wie vollstaendig ein Vektor aus heutigen Daten ist", async () => {
+  it("hebt die Vollstaendigkeit, reicht aber noch nicht ueber die Schwelle", async () => {
     const vector = await buildFeatureVector({
       pit: reader(),
       tokenId: asTokenId(tokenUuid),
@@ -303,12 +317,74 @@ describe("Feature-Vektor aus der Historie", () => {
     const scores = computeScores(vector);
     const schwelle = DEFAULT_STRATEGY_PARAMETERS.entryGates.minDataCompleteness;
 
-    // Kein Wunschwert, sondern der gemessene: er haengt daran, wie viele
-    // Felder dieses System heute ueberhaupt erhebt.
-    expect(scores.dataCompleteness).toBeGreaterThan(0);
+    // Das Feld ist da — das harte Tor, das es verlangt, ist damit passiert.
+    expect(isPresent(vector.execution.exitCapacityRatio)).toBe(true);
+
+    // Und die Vollstaendigkeit reicht trotzdem nicht. Kein Wunschwert,
+    // sondern der gemessene: sie zaehlt Felder, und sechs der fehlenden
+    // gehoeren zu Quellen, die dieses System bewusst noch nicht hat.
     expect(scores.dataCompleteness).toBeLessThan(schwelle);
 
-    // Damit steht schwarz auf weiss, was noch fehlt — und zwar namentlich.
-    expect(scores.missingFields.length).toBeGreaterThan(0);
+    // Namentlich, damit die Luecke eine Liste ist und kein Gefuehl.
+    const fehlend = scores.missingFields.map((m) => m.field);
+    expect(fehlend).toContain("holder.distinctActors");
+    expect(fehlend).toContain("pending.smartMoneyBuyers");
+    // Aber ausdruecklich NICHT mehr dieses hier.
+    expect(fehlend).not.toContain("execution.exitCapacityRatio");
+  });
+
+  it("waere ohne die Ausstiegsfaehigkeit noch ein Feld aermer", async () => {
+    // Die Gegenprobe: dass die Zahl gestiegen ist, liegt an diesem Feld und
+    // nicht an etwas anderem, das sich nebenbei geaendert hat.
+    const vector = await buildFeatureVector({
+      pit: reader(),
+      tokenId: asTokenId(tokenUuid),
+      asOf: T0,
+      firstSeenAt: new Date(T0.getTime() - 6 * 60 * 60 * 1_000),
+    });
+    if (vector === null) throw new Error("erwartet: Vektor");
+
+    const ohne = {
+      ...vector,
+      execution: {
+        ...vector.execution,
+        exitCapacityRatio: missing("NOT_YET_COLLECTED" as const, T0, null),
+      },
+    };
+
+    expect(computeScores(ohne).dataCompleteness).toBeLessThan(
+      computeScores(vector).dataCompleteness,
+    );
+  });
+
+  /**
+   * Der zweite Gewinn, und der weniger offensichtliche.
+   *
+   * `liquidityScore` deckelt sich selbst bei 60, solange die
+   * Ausstiegsfaehigkeit fehlt — „ohne Ausstiegsrechnung bleibt die Aussage
+   * unvollstaendig". Dieser Deckel lag auf einem Teilscore mit Gewicht 0.15
+   * und hat den Endscore mitgezogen.
+   */
+  it("nimmt dem Liquiditaets-Teilscore seinen Deckel", async () => {
+    const vector = await buildFeatureVector({
+      pit: reader(),
+      tokenId: asTokenId(tokenUuid),
+      asOf: T0,
+      firstSeenAt: new Date(T0.getTime() - 6 * 60 * 60 * 1_000),
+    });
+    if (vector === null) throw new Error("erwartet: Vektor");
+
+    const ohne = {
+      ...vector,
+      execution: {
+        ...vector.execution,
+        exitCapacityRatio: missing("NOT_YET_COLLECTED" as const, T0, null),
+      },
+    };
+
+    const mit = computeScores(vector).finalScore;
+    const kleiner = computeScores(ohne).finalScore;
+    if (mit === null || kleiner === null) throw new Error("erwartet: Endscore");
+    expect(mit).toBeGreaterThan(kleiner);
   });
 });

@@ -64,6 +64,7 @@ class CountingAdapter implements MarketDataAdapter {
         buys5m: null,
         sells5m: null,
         priceImpactBps: null,
+        exitCapacityRatio: null,
         holders: null,
       },
       observedAt: this.observedAt,

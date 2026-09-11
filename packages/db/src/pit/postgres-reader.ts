@@ -110,6 +110,7 @@ function mapSnapshot(row: SnapshotRow): PitSnapshot {
     buys5m: row.buys5m,
     sells5m: row.sells5m,
     priceImpactBps: row.priceImpactBps,
+    exitCapacityRatio: row.exitCapacityRatio,
     holders: row.holders,
     finalScore: row.finalScore,
     dataCompleteness: row.dataCompleteness,

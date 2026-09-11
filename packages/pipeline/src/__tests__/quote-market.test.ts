@@ -32,6 +32,7 @@ function input(over: Partial<QuoteMarketInput> = {}): QuoteMarketInput {
     buys5m: null,
     sells5m: null,
     priceImpactBps: null,
+    exitCapacityRatio: null,
     volume24hUsd: 95_000,
     holders: null,
     ...over,

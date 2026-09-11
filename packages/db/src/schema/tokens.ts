@@ -124,6 +124,18 @@ export const tokenSnapshots = pgTable(
      * noch einer ist.
      */
     priceImpactBps: doublePrecision("price_impact_bps"),
+    /**
+     * Wie oft die geplante Position noch herausginge — gemessen, nicht
+     * gerechnet.
+     *
+     * Gegenstueck zu `price_impact_bps`: dieses Feld sagt, was der EINSTIEG
+     * kostet, jenes, ob der AUSSTIEG stattfindet. Entsteht aus einer zweiten
+     * Router-Anfrage in der Verkaufsrichtung.
+     *
+     * `null` heisst „nicht gemessen" und ausdruecklich nicht „keine
+     * Kapazitaet" — das eine ist eine Wissensluecke, das andere ein Befund.
+     */
+    exitCapacityRatio: doublePrecision("exit_capacity_ratio"),
     holders: integer("holders"),
     buys5m: integer("buys_5m"),
     sells5m: integer("sells_5m"),
