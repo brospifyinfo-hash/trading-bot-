@@ -4676,3 +4676,66 @@ gilt hier wie in §118 und §120.
 nur den Fall der eigenen Umgebung kennt, hätte hier grün gemeldet und nichts
 abgesichert — das ist ja der ganze Grund, warum der Fehler bis in die
 Produktion kam.
+
+## §124 — Die Frage, die das Dashboard nicht beantwortete
+
+Datum: 2026-09-11
+
+Das Dashboard hatte zwölf Panels und beantwortete die Frage nicht, die man
+stellt, wenn man zusieht: **warum kauft er nicht?**
+
+„Gelegenheiten" zeigte Lebenszyklus-Zustände — angeboten, abgelaufen,
+zurückgezogen. Das ist eine Auskunft über die Verwaltung einer Gelegenheit,
+nicht über das Urteil, das ihr zugrunde lag. Ob eine Entscheidung `WATCH` war
+oder `REJECT`, und woran sie hing, stand nur im Log (§122).
+
+### Der erste Ablehnungsgrund, nicht alle
+
+Eine Ablehnung kann mehrere Gründe tragen. Alle zu zählen ergäbe eine Summe,
+die größer ist als die Zahl der Entscheidungen, und eine Liste, in der derselbe
+Token mehrfach steht. Gezählt wird deshalb `rejection_reasons->>0` — der
+Grund, an dem die Entscheidung **zuerst** scheiterte, und damit der, den man
+beheben müsste.
+
+Der Test hält das fest: die Summe der Gründe übersteigt die Zahl der
+Entscheidungen nicht.
+
+### WATCH bleibt ohne Grund
+
+Dieselbe Entscheidung wie in §122, hier auf der Oberfläche: `WATCH` trägt keine
+Ablehnungsgründe, weil die Entscheidung keine enthält. Einen zu erfinden hieße,
+den Betreiber ein Problem suchen zu lassen, wo keines ist — und es ist der
+Fall, den er bei einer Schwelle von 75 gegen gemessene 70 am häufigsten sieht.
+Deshalb steht unter dem Panel ausgeschrieben, dass WATCH ein Noch-nicht ist
+und kein Nein.
+
+### Der beste Score, mit der Schwelle daneben
+
+`WATCH: 5` ist ohne ihn eine Wand. Fünf Token knapp unter der Schwelle und fünf
+weit darunter sehen gleich aus und bedeuten Gegenteiliges: das eine heißt
+„gleich ist es soweit", das andere „diese Strategie findet hier nichts".
+
+Die Schwelle steht als **Anzeigewert** in `DashboardThresholds` und ist
+ausdrücklich nicht die Quelle der Wahrheit — entschieden wird im Worker mit
+`DEFAULT_STRATEGY_PARAMETERS`. Die Datenschicht hängt bewusst nicht an der
+Strategie: sie zeigt Zahlen, sie fällt keine Urteile. Der Preis ist eine Zahl
+an zwei Stellen; der Gegenwert ist eine Anzeige, die keine Strategie-Entscheidung
+mitträgt.
+
+### Fixture-Trennung, auch hier
+
+`loadDecisionSummary` nimmt denselben `DataScope` wie alle anderen Abfragen.
+Der Test prüft ausdrücklich, dass ein Fixture mit Score 90 **nicht** als bester
+Score der Produktion erscheint — genau die Art stiller Vermischung, gegen die
+es die Trennung überhaupt gibt.
+
+### Nebenbei: eine Zeichenkette, die eine Zeile zerlegt hat
+
+Der erste Entwurf des Panels enthielt deutsche Anführungszeichen im Fließtext.
+Das öffnende `„` ist ein eigenes Zeichen, das schließende war ein gewöhnliches
+`"` — und das hat die JavaScript-Zeichenkette beendet. Der Parser meldete einen
+Syntaxfehler zwölf Zeilen weiter unten.
+
+Kein tiefer Befund, aber der Grund, warum der Text jetzt ohne Anführungszeichen
+auskommt: Satzzeichen, die je nach Sprache anders aussehen, haben in einem
+String-Literal nichts verloren.

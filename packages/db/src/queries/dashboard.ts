@@ -225,6 +225,87 @@ export async function loadOpportunityCounts(
   return { byState, total };
 }
 
+/* ---------------------------------------------------- Entscheidungen */
+
+/**
+ * Warum der Bot NICHT gekauft hat.
+ *
+ * Die Frage, die ein Betreiber beim Zusehen wirklich stellt — und die einzige,
+ * die das Dashboard bisher nicht beantwortete. „Gelegenheiten" zeigt
+ * Lebenszyklus-Zustaende (angeboten, abgelaufen); dass eine Entscheidung
+ * `WATCH` war und woran sie haengt, stand nur im Log (§122).
+ *
+ * ### Warum der beste Score danebensteht
+ *
+ * `WATCH: 5` ist ohne ihn eine Wand. Fuenf Token knapp unter der Schwelle und
+ * fuenf weit darunter sehen gleich aus und bedeuten Gegenteiliges: das eine
+ * heisst „gleich ist es soweit", das andere „diese Strategie findet hier
+ * nichts". Die Schwelle steht daneben, damit die Zahl ohne Nachschlagen
+ * lesbar ist.
+ */
+export interface DecisionSummary {
+  /** ENTER / WATCH / REJECT -> wie oft. */
+  readonly byKind: Readonly<Record<string, number>>;
+  /** Erster Ablehnungsgrund -> wie oft. Nur REJECT traegt welche. */
+  readonly byReason: Readonly<Record<string, number>>;
+  /** Hoechster erreichter Endscore. `null`, wenn nie einer gebildet wurde. */
+  readonly bestScore: number | null;
+  readonly total: number;
+}
+
+export async function loadDecisionSummary(
+  db: Database,
+  scope: DataScope,
+  since: Date | null = null,
+): Promise<DecisionSummary> {
+  const isScope = eq(opportunities.isTestFixture, scope === "TEST");
+  const where =
+    since === null
+      ? isScope
+      : // Ausgeschriebener Cast statt eines gebundenen `Date`: unter
+        // postgres-js bricht das sonst ab, unter PGlite nicht
+        // (`sae/no-date-in-sql`).
+        and(isScope, sql`${opportunities.decidedAt} >= ${since.toISOString()}::timestamptz`);
+
+  const rows = await db
+    .select({
+      kind: opportunities.decisionKind,
+      // Der ERSTE Ablehnungsgrund. Eine Entscheidung kann mehrere tragen; der
+      // erste ist der, an dem sie zuerst scheiterte, und damit der, den man
+      // beheben muesste. Alle zu zaehlen ergaebe eine Liste, in der ein Token
+      // mehrfach vorkommt — und eine Summe, die groesser ist als die Zahl der
+      // Entscheidungen.
+      reason: sql<string | null>`${opportunities.rejectionReasons}->>0`,
+      count: sql<number>`count(*)::int`,
+      best: sql<number | null>`max(${opportunities.finalScore})::int`,
+    })
+    .from(opportunities)
+    .where(where)
+    .groupBy(opportunities.decisionKind, sql`${opportunities.rejectionReasons}->>0`);
+
+  const byKind: Record<string, number> = {};
+  const byReason: Record<string, number> = {};
+  let total = 0;
+  let bestScore: number | null = null;
+
+  for (const row of rows) {
+    // Ausgeschrieben statt `(x ?? 0) + n`: `sae/no-numeric-fallback` kann
+    // einen Zaehler nicht von einem ersetzten Messwert unterscheiden.
+    const bisherKind = byKind[row.kind];
+    byKind[row.kind] = bisherKind === undefined ? row.count : bisherKind + row.count;
+
+    if (row.reason !== null) {
+      const bisherGrund = byReason[row.reason];
+      byReason[row.reason] = bisherGrund === undefined ? row.count : bisherGrund + row.count;
+    }
+
+    total += row.count;
+    if (row.best !== null && (bestScore === null || row.best > bestScore)) bestScore = row.best;
+  }
+
+  return { byKind, byReason, bestScore, total };
+}
+
 /* ------------------------------------------------------ Jobs und Queue */
 
 /**
@@ -513,6 +594,15 @@ export interface DashboardThresholds {
   readonly minSnapshotsForAnalysis: number;
   /** Ab wie vielen abgeschlossenen Paper-Trades eine Kennzahl gezeigt wird. */
   readonly minClosedForStatistics: number;
+  /**
+   * Die Einstiegsschwelle, gegen die der beste Score gezeigt wird.
+   *
+   * Sie steht hier als Anzeigewert und ist NICHT die Quelle der Wahrheit —
+   * entschieden wird mit `DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore`
+   * im Worker. Die Datenschicht haengt bewusst nicht an der Strategie: sie
+   * zeigt Zahlen, sie faellt keine Urteile.
+   */
+  readonly entryScoreThreshold: number;
 }
 
 /**
@@ -525,6 +615,7 @@ const WORKER_ALIVE_WINDOW_MS = 180_000;
 export const DEFAULT_DASHBOARD_THRESHOLDS: DashboardThresholds = {
   minSnapshotsForAnalysis: 100,
   minClosedForStatistics: 100,
+  entryScoreThreshold: 75,
 };
 
 export interface DashboardState {
@@ -533,6 +624,10 @@ export interface DashboardState {
   readonly ingestion: Panel<IngestionSummary>;
   readonly paper: Panel<readonly PaperSummary[]>;
   readonly opportunities: Panel<OpportunityCounts>;
+  /** Warum der Bot nicht gekauft hat — die Frage hinter allen anderen. */
+  readonly decisions: Panel<DecisionSummary>;
+  /** Die Schwelle, gegen die `bestScore` zu lesen ist. */
+  readonly entryScoreThreshold: number;
   readonly research: Panel<ResearchSummary>;
   /** Verpasste und abgelehnte Manual-Gelegenheiten. Nie ein Betrag. */
   readonly missed: Panel<MissedSummary>;
@@ -607,6 +702,7 @@ export async function loadDashboardState(input: {
   const ingestion = await loadIngestionSummary(input.db);
   // Die Produktionskacheln zaehlen ausschliesslich echte Herkunft.
   const opportunityCounts = await loadOpportunityCounts(input.db, "PRODUCTION");
+  const decisions = await loadDecisionSummary(input.db, "PRODUCTION");
   const paperRows = await loadPaperSummary(input.db, "PRODUCTION");
   const research = await loadResearchSummary(input.db);
 
@@ -641,6 +737,15 @@ export async function loadDashboardState(input: {
             "Historie wird aufgebaut.",
           )
         : data(ingestion);
+
+  const decisionPanel: Panel<DecisionSummary> =
+    decisions.total === 0
+      ? waiting(
+          ingestion.snapshotCount === 0
+            ? noSourceReason
+            : "Noch keine Entscheidung gefallen.",
+        )
+      : data(decisions);
 
   const opportunityPanel: Panel<OpportunityCounts> =
     opportunityCounts.total === 0
@@ -741,6 +846,8 @@ export async function loadDashboardState(input: {
     ingestion: ingestionPanel,
     paper: paperPanel,
     opportunities: opportunityPanel,
+    decisions: decisionPanel,
+    entryScoreThreshold: thresholds.entryScoreThreshold,
     research: researchPanel,
     headline: marketDataConnected
       ? ingestionPanel.kind === "DATA"

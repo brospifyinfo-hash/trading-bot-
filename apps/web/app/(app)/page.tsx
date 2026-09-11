@@ -267,6 +267,60 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
         </section>
 
         <section className="panel">
+          <h2>Entscheidungen</h2>
+          <PanelBody
+            panel={state.decisions}
+            render={(v) => (
+              <>
+                <dl className="kv">
+                  {Object.entries(v.byKind).map(([kind, count]) => (
+                    <div key={kind}>
+                      <dt>{kind}</dt>
+                      <dd>{count}</dd>
+                    </div>
+                  ))}
+                  <div>
+                    <dt>bester Score</dt>
+                    <dd>
+                      {v.bestScore === null
+                        ? "—"
+                        : `${v.bestScore} von ${state.entryScoreThreshold}`}
+                    </dd>
+                  </div>
+                </dl>
+
+                {Object.keys(v.byReason).length > 0 && (
+                  <table className="providers">
+                    <thead>
+                      <tr>
+                        <th>Ablehnungsgrund</th>
+                        <th>wie oft</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(v.byReason)
+                        .sort(([, a], [, b]) => b - a)
+                        .map(([reason, count]) => (
+                          <tr key={reason}>
+                            <td>{reason}</td>
+                            <td>{count}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                <p className="placeholder">
+                  {v.byKind["ENTER"] === undefined
+                    ? "WATCH heisst noch nicht gut genug — nicht abgelehnt. Der Token bleibt in Beobachtung und liefert weiter Historie."
+                    : "ENTER heisst entschieden, nicht ausgefuehrt. Ob daraus eine Position wurde, steht unter Paper Trading."}
+                </p>
+              </>
+            )}
+          />
+        </section>
+
+        <section className="panel">
           <h2>Gelegenheiten</h2>
           <PanelBody
             panel={state.opportunities}
