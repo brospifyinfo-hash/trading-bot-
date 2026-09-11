@@ -348,6 +348,7 @@ class EvaluateOpportunityHandler implements JobHandler {
     }
 
     const outcomes: Record<string, number> = {};
+    const scores: number[] = [];
     for (const token of tokens) {
       const result = await runDecision({
         db: this.deps.db,
@@ -368,12 +369,31 @@ class EvaluateOpportunityHandler implements JobHandler {
         quoteMint: QUOTE_ANCHOR_MINT,
         entryAmountRaw,
       });
-      const seen = outcomes[result.outcome];
-      outcomes[result.outcome] = seen === undefined ? 1 : seen + 1;
+      // Gezaehlt wird das Etikett MIT Grund, nicht die blosse Ergebnisart.
+      // `NO_ENTRY=5` sagte, dass nichts gekauft wurde, und verschwieg warum —
+      // genau die Auskunft, die beim Pruefen gebraucht wird (§122).
+      const seen = outcomes[result.label];
+      outcomes[result.label] = seen === undefined ? 1 : seen + 1;
+      if (result.finalScore !== null) scores.push(result.finalScore);
     }
 
+    // Wie nah war der beste Token an der Schwelle? Ohne diese Zahl ist
+    // `WATCH=5` eine Wand: fuenf Token knapp darunter und fuenf weit darunter
+    // sehen gleich aus und bedeuten Gegenteiliges.
+    const bester = scores.length === 0 ? null : Math.max(...scores);
+
     this.deps.logger.info(
-      { role: "decision", processed: tokens.length, reasons: tally(outcomes) },
+      {
+        role: "decision",
+        processed: tokens.length,
+        reasons: tally(outcomes),
+        ...(bester === null
+          ? {}
+          : {
+              bestScore: bester,
+              entrySchwelle: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+            }),
+      },
       "Gelegenheiten geprueft",
     );
     return { status: "OK", processed: tokens.length, outcomes };

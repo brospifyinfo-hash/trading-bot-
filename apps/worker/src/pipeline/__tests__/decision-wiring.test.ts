@@ -178,7 +178,12 @@ describe("Gelegenheitspruefung", () => {
     expect(result.outcomes["NO_SOURCE"]).toBeUndefined();
     // Sie kommt bis zum naechsten ehrlichen Halt: der Feature-Vektor braucht
     // Historie, und die gibt es in dieser leeren Testdatenbank nicht.
-    expect(result.outcomes["BLOCKED"]).toBe(1);
+    //
+    // Und dieser Halt steht MIT Grund in der Auszaehlung. Vorher hiess das
+    // Etikett nur `BLOCKED` — eine Zahl, die sagt, dass es nicht weiterging,
+    // und verschweigt, woran (§122).
+    expect(result.outcomes["BLOCKED_NO_FEATURE_VECTOR"]).toBe(1);
+    expect(result.outcomes["BLOCKED"]).toBeUndefined();
   });
 
   it("legt keine Gelegenheit und keine Position an", async () => {

@@ -57,6 +57,15 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // uebrigen es nicht koennen.
   "entryReady", "entryBlocked",
   "authoritiesWritten",
+  // Fuenfter Durchgang, ausgeloest von derselben Sorte Frage: `WATCH=5` sagt,
+  // dass fuenf Token die Schwelle nicht nahmen, und verschweigt, ob sie knapp
+  // darunter lagen oder weit. Beides sieht gleich aus und bedeutet
+  // Gegenteiliges. Die Schwelle steht daneben, damit die Zahl ohne Nachschlagen
+  // lesbar ist (§122).
+  "bestScore", "entrySchwelle",
+  // Der Ausgang der Verkaufssonde, ohne die die Ausstiegsfaehigkeit fehlt
+  // (§119).
+  "exitProbe",
 ]);
 
 /**

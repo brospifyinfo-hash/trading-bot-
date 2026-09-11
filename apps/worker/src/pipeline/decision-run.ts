@@ -17,7 +17,12 @@ import type { Logger } from "@sae/observability";
 import { LivePitReader, type Database } from "@sae/db";
 import type { MarketDataAdapter } from "@sae/pipeline";
 
-import { runOpportunityPipeline, PAPER_NOTIONAL, type PipelineDeps } from "./opportunity-pipeline";
+import {
+  runOpportunityPipeline,
+  PAPER_NOTIONAL,
+  type PipelineDeps,
+  type PipelineOutcome,
+} from "./opportunity-pipeline";
 
 /**
  * Der Weg vom Snapshot zur Entscheidung — endlich aufgerufen.
@@ -128,6 +133,10 @@ const MAX_POOL_SHARE = 0.02;
 export async function runDecision(deps: DecisionRunDeps): Promise<{
   readonly outcome: string;
   readonly detail: string;
+  /** Das Etikett fuer die Auszaehlung im Log — mit Grund, nicht nur mit Art. */
+  readonly label: string;
+  /** Endscore, wenn einer gebildet wurde. `null` sonst. */
+  readonly finalScore: number | null;
 }> {
   const parameters = DEFAULT_STRATEGY_PARAMETERS;
 
@@ -197,7 +206,7 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     },
   };
 
-  const result = await runOpportunityPipeline(
+  const result: PipelineOutcome = await runOpportunityPipeline(
     {
       kind: "LIVE",
       tokenId: asTokenId(deps.tokenId),
@@ -215,7 +224,66 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     pipelineDeps,
   );
 
-  return { outcome: result.kind, detail: detailOf(result) };
+  return {
+    outcome: result.kind,
+    detail: detailOf(result),
+    label: labelOf(result),
+    finalScore: scoreOf(result),
+  };
+}
+
+/**
+ * Das Etikett, unter dem dieses Ergebnis im Log gezaehlt wird.
+ *
+ * Gezaehlt wurde bisher `result.kind` — also `NO_ENTRY=5`. Das sagt, dass die
+ * Kette lief und nichts gekauft wurde, und verschweigt das Einzige, was man
+ * wissen will: WARUM. Ein Betreiber, der prueft, ob sein Bot funktioniert,
+ * liest dort eine Zahl und weiss danach genauso viel wie vorher.
+ *
+ * Dieselbe Lehre wie bei `noSourceReasons` (§100) und `QUOTE_RATE_LIMITED`
+ * (§108), eine Ebene hoeher: der Grund gehoert an die Zahl.
+ *
+ * Die Etiketten stammen ausschliesslich aus GESCHLOSSENEN Aufzaehlungen des
+ * eigenen Codes — `SignalKind` und `RejectionReason`. Kein Anbietertext, kein
+ * Freitext, nichts, was ein Token-Ersteller beeinflussen koennte; eine
+ * Log-Zeile faelscht man am billigsten ueber ein fremdes Etikett.
+ */
+export function labelOf(result: PipelineOutcome): string {
+  switch (result.kind) {
+    case "NO_SOURCE":
+      // Der Grund je Token steht bereits im Marktdaten-Lauf (`noSourceReasons`).
+      // Ihn hier zu wiederholen hiesse, dieselbe Auskunft zweimal zu fuehren.
+      return "NO_SOURCE";
+    case "BLOCKED":
+      return `BLOCKED_${result.reason}`;
+    case "NO_ENTRY": {
+      const erste = result.decision.rejectionReasons[0];
+      // WATCH hat keine Ablehnungsgruende — es ist ein „noch nicht", kein
+      // „nein". Genau der Fall, den der Betreiber erwartet, solange die
+      // Score-Schwelle bindet.
+      return erste === undefined ? result.decision.kind : `${result.decision.kind}_${erste}`;
+    }
+    case "ENTERED":
+      // Ein Einstieg, dem die Ausfuehrung nicht gefolgt ist, ist kein
+      // Einstieg. Beides unter `ENTERED` zu zaehlen waere die schmeichelhafte
+      // Variante und im Betrieb die gefaehrliche.
+      return result.autoPosition.kind === "OPENED"
+        ? "ENTERED"
+        : `ENTERED_${result.autoPosition.kind}`;
+  }
+}
+
+/**
+ * Der Endscore, soweit er gebildet wurde.
+ *
+ * Die Zahl, an der sich ablesen laesst, WIE WEIT ein Token von der Schwelle
+ * entfernt war. Ohne sie ist `WATCH=5` eine Wand: fuenf Token unter 75 koennen
+ * fuenf mal 74 sein oder fuenf mal 12, und das sind zwei sehr verschiedene
+ * Lagen.
+ */
+function scoreOf(result: PipelineOutcome): number | null {
+  if (result.kind === "NO_ENTRY" || result.kind === "ENTERED") return result.decision.finalScore;
+  return null;
 }
 
 function detailOf(result: Awaited<ReturnType<typeof runOpportunityPipeline>>): string {

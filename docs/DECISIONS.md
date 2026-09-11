@@ -4516,3 +4516,77 @@ Feldern auftaucht — die drei Aussagen zusammen sind die Trennung.
 
 Dazu die Gegenprobe: fehlt ein Feld, das dieses System sehr wohl erhebt, sinkt
 die Kennzahl weiterhin. Sie ist nicht stumpf geworden, sie ist genauer.
+
+## §122 — Eine Zahl, die das Wichtigste verschweigt
+
+Datum: 2026-09-11
+
+Nach §118 bis §121 läuft die Entscheidungskette. Der Betreiber wollte sie
+testen — und hätte im Log das hier gelesen:
+
+```
+role: decision  processed: 5  reasons: NO_ENTRY=5
+```
+
+Fünf Token geprüft, keine Position. Warum? Die Zeile sagt es nicht.
+
+Der Handler zählte `result.kind` — die Ergebnis**art**. Ob ein Token an der
+Score-Schwelle scheiterte, an der Liquidität, an einem Sicherheitsbefund oder
+daran, dass die Ausführung nicht griff: alles wurde zu demselben Wort. Das
+`detail`, das `runDecision` bereits berechnete, wurde weggeworfen.
+
+Dieselbe Lehre wie bei `noSourceReasons` (§100) und `QUOTE_RATE_LIMITED`
+(§108), eine Ebene höher: **der Grund gehört an die Zahl.** Dass sie hier
+wieder gelernt werden musste, ist der eigentliche Befund — die Regel ist
+offenbar leicht zu vergessen, wenn man eine neue Auszählung schreibt.
+
+### Das Etikett
+
+```
+WATCH                        — noch nicht gut genug, kein Fehler
+REJECT_LIQUIDITY_TOO_LOW     — ein hartes Tor, benannt
+BLOCKED_NO_FEATURE_VECTOR    — die Kette hielt vorher an
+ENTERED                      — Position eröffnet
+ENTERED_NOT_FILLED           — Entscheidung ja, Ausführung nein
+NO_SOURCE                    — keine Quelle
+```
+
+Drei Entscheidungen stecken darin:
+
+**WATCH bekommt kein Ablehnungswort.** Es ist ein „noch nicht", kein „nein",
+und die Entscheidung enthält gar keinen Ablehnungsgrund. Einen zu erfinden
+hieße, den Betreiber ein Problem suchen zu lassen, wo keines ist — und es ist
+der Fall, den er bei einer Score-Schwelle von 75 gegen gemessene 70 am
+häufigsten sehen wird.
+
+**Ein Einstieg ohne Fill zählt nicht als Einstieg.** Beides `ENTERED` zu
+nennen wäre die schmeichelhafte Variante und im Betrieb die gefährliche: sie
+meldet Positionen, die es nicht gibt. Nach §120 ist das keine Theorie.
+
+**Der Quellengrund wird nicht wiederholt.** Er steht bereits je Token im
+Marktdaten-Lauf. Dieselbe Auskunft an zwei Stellen zu führen heißt, sie an
+zwei Stellen pflegen zu müssen — und irgendwann widersprechen sie sich.
+
+Alle Etiketten stammen aus **geschlossenen Aufzählungen des eigenen Codes**
+(`SignalKind`, `RejectionReason`). Kein Anbietertext, kein Freitext, nichts,
+was ein Token-Ersteller beeinflussen könnte: eine Log-Zeile fälscht man am
+billigsten über ein fremdes Etikett.
+
+### Die Zahl daneben
+
+`WATCH=5` ist immer noch eine Wand. Fünf Token knapp unter der Schwelle und
+fünf weit darunter sehen gleich aus und bedeuten Gegenteiliges. Die Zeile
+trägt deshalb `bestScore` und `entrySchwelle` — den höchsten erreichten
+Endscore und die Grenze daneben, damit die Zahl ohne Nachschlagen lesbar ist.
+
+### Was beim Schreiben nebenbei auffiel
+
+Die Redaktion ist eine Allowlist, deny-by-default. `bestScore` und
+`entrySchwelle` mussten eingetragen werden — und dabei zeigte sich, dass
+`exitProbe` aus §119 **nie eingetragen worden war**. Der Ausgang der
+Verkaufssonde wäre im Betrieb als `[redacted]` erschienen: ein Feld, das
+gebaut, getestet und geloggt wird und trotzdem nichts sagt.
+
+Eine Allowlist ist die richtige Vorgabe und hat diesen Preis: jedes neue
+Log-Feld braucht einen zweiten, leicht zu vergessenden Handgriff. Der Fund
+gehört hierher, damit beim nächsten Feld daran gedacht wird.
