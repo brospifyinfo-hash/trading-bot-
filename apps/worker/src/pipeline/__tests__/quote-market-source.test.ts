@@ -283,3 +283,63 @@ describe("buildQuoteMarketDeps", () => {
     expect(QUOTE_PROBE_NOTIONAL).toBe(100);
   });
 });
+
+describe("Selbstbremse gegen die Drosselung", () => {
+  /**
+   * Der Anlass steht im Betriebslog vom 2026-09-11: von 25 Token endeten 21
+   * mit `QUOTE_RATE_LIMITED`. Die Anfragen gingen als Stoss hinaus, so
+   * schnell wie die Schleife sie stellte.
+   */
+  it("wartet zwischen den Anfragen, statt sie abweisen zu lassen", async () => {
+    const clock = new FixedClock(T0);
+    const { fetchImpl } = fakeNet();
+    const gewartet: number[] = [];
+
+    const deps = buildQuoteMarketDeps({
+      clock,
+      env: ENV,
+      fetchImpl,
+      sleep: async (ms) => {
+        gewartet.push(ms);
+        // Die Uhr mitziehen — sonst fuellt sich der Eimer nie und der Test
+        // pruefte eine Bremse, die in Wahrheit blockiert.
+        clock.advance(ms);
+      },
+    })!;
+
+    const frage = {
+      inputMint: QUOTE_ANCHOR_MINT,
+      outputMint: MEME,
+      amountRaw: 100_000_000n,
+    };
+    for (let i = 0; i < 5; i += 1) await deps.fetchQuote(frage);
+
+    // Die ersten beiden gehen sofort hinaus (Puffer), danach wird gewartet.
+    expect(gewartet.filter((ms) => ms > 0)).toHaveLength(3);
+    // Rund eine Sekunde je Anfrage — nicht auf die Millisekunde, weil der
+    // Eimer stetig nachfuellt.
+    for (const ms of gewartet.filter((v) => v > 0)) {
+      expect(ms).toBeGreaterThan(500);
+      expect(ms).toBeLessThanOrEqual(1_000);
+    }
+  });
+
+  it("bremst den ersten Abruf nicht", async () => {
+    // Ein Lauf mit einem einzigen Token soll nicht eine Sekunde kosten.
+    const clock = new FixedClock(T0);
+    const { fetchImpl } = fakeNet();
+    const gewartet: number[] = [];
+    const deps = buildQuoteMarketDeps({
+      clock,
+      env: ENV,
+      fetchImpl,
+      sleep: async (ms) => {
+        gewartet.push(ms);
+        clock.advance(ms);
+      },
+    })!;
+
+    await deps.fetchQuote({ inputMint: QUOTE_ANCHOR_MINT, outputMint: MEME, amountRaw: 100_000_000n });
+    expect(gewartet.filter((ms) => ms > 0)).toHaveLength(0);
+  });
+});

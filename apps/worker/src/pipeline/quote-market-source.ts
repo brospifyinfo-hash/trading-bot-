@@ -4,6 +4,7 @@ import type { MarketFields } from "@sae/pipeline";
 import {
   decimalFractionToBps,
   JupiterQuoteAdapter,
+  TokenBucket,
   SolanaBlockTimeAdapter,
   SolanaMintAdapter,
 } from "@sae/providers";
@@ -74,6 +75,27 @@ const PROBE_SLIPPAGE_BPS = 50;
 /** Wie viele gemerkte Antworten hoechstens gehalten werden. */
 const MEMO_LIMIT = 5_000;
 
+/**
+ * Wie schnell gegen den Router gefragt werden darf.
+ *
+ * Gemessen am 2026-09-11 im Betrieb: von 25 Token in einem Lauf endeten **21**
+ * mit `QUOTE_RATE_LIMITED`. Vier kamen durch. Die Anfragen gingen so schnell
+ * hintereinander hinaus, wie die Schleife sie stellte — also praktisch als
+ * Stoss.
+ *
+ * Eine Anfrage je Sekunde, mit einem kleinen Puffer fuer den Start. Die genaue
+ * Grenze des Anbieters steht nirgends; diese Werte sind bewusst vorsichtig
+ * gewaehlt und werden an derselben Log-Zeile nachgeprueft, an der das Problem
+ * sichtbar wurde. Steht dort weiterhin `QUOTE_RATE_LIMITED`, ist es noch zu
+ * schnell.
+ *
+ * Der Tausch dahinter: lieber ZEHN Token je Lauf mit Ergebnis als
+ * fuenfundzwanzig, von denen einundzwanzig leer ausgehen. Die Zahl der
+ * Anfragen sinkt, die Zahl der brauchbaren Antworten steigt.
+ */
+const QUOTE_REQUESTS_PER_SECOND = 1;
+const QUOTE_BURST = 2;
+
 export interface QuoteSourceInput {
   readonly env: ProviderEnv;
   readonly clock: Clock;
@@ -88,6 +110,14 @@ export interface QuoteSourceInput {
    * langsamer Anbieter. Ohne diese Naht liesse sich genau das nicht pruefen.
    */
   readonly fetchImpl?: typeof fetch;
+  /**
+   * Nur fuer Tests: das Warten zwischen zwei Anfragen.
+   *
+   * Ohne diese Naht muesste ein Test echte Sekunden verstreichen lassen, um
+   * die Drosselung zu pruefen — und ein Test, der Sekunden braucht, wird
+   * irgendwann uebersprungen.
+   */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -110,6 +140,13 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
   const decimalsMemo = new Map<string, number>();
   const slotTimeMemo = new Map<number, Date>();
 
+  const bucket = new TokenBucket({
+    capacity: QUOTE_BURST,
+    refillPerSecond: QUOTE_REQUESTS_PER_SECOND,
+    clock: input.clock,
+  });
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
   return {
     clock: input.clock,
     quoteMint: QUOTE_ANCHOR_MINT,
@@ -130,6 +167,13 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
     },
 
     async fetchQuote(request): Promise<QuoteFetchResult> {
+      // Warten, bevor gefragt wird — nicht erst, wenn der Anbieter „nein"
+      // sagt. Eine abgewiesene Anfrage kostet dasselbe wie eine erlaubte und
+      // liefert nichts.
+      const warten = bucket.waitMs(1);
+      if (warten > 0) await sleep(warten);
+      bucket.tryTake(1);
+
       const outcome = await quotes.fetchQuote({
         inputMint: request.inputMint,
         outputMint: request.outputMint,

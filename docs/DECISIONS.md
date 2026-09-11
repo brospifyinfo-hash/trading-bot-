@@ -3930,3 +3930,66 @@ eine Schwelle gibt, steht der Messwert bereit.
 `TOKEN_MARKET`. Für RugCheck wäre das falsch — er liefert keinen Preis. Die
 Bereitschaftstabelle bekommt jetzt die Fähigkeit, die der Anbieter tatsächlich
 erbringt (`SECURITY_REPORT`).
+
+## §115 — Vier von fünfundzwanzig, und der Grund steht endlich da
+
+Datum: 2026-09-11
+
+Erster Betriebslauf mit Sicherheitsanbieter. Drei Befunde.
+
+### RugCheck ist erreichbar, und die Befunde landen
+
+```
+providers: … jupiter-quote=CONNECTED rugcheck=CONNECTED
+role: security-enrichment  processed: 5  written: 5  reasons: OK=5
+```
+
+Der Host, der aus der Entwicklungsumgebung geblockt wird, ist von Railway aus
+erreichbar. Die Blockade war umgebungsspezifisch — das ließ sich von hier aus
+nicht feststellen und war der Grund, die Sonde zu bauen statt zu raten.
+
+### `entryBlocked` fehlt, weil es nichts zu melden gibt
+
+Die Zeile zeigt `ingested: 4  entryReady: 4` und **kein** `entryBlocked`. Das
+Feld wird nur geloggt, wenn es Einträge hat. Sein Fehlen heißt also: **jeder
+geschriebene Snapshot trägt eine Einstiegsentscheidung.** Vier von vier.
+
+Das ist die beste mögliche Ausprägung dieser Zeile und liest sich wie ein
+Fehler. Eine Auslassung, die man erklären muss, ist eine schlechte Auslassung
+— aber die Alternative, ein leeres Feld in jede Zeile zu schreiben, war der
+Grund für die Regel (§102). Es bleibt, wie es ist; der Eintrag hier ist die
+Erklärung.
+
+### Der eigentliche Befund: `QUOTE_RATE_LIMITED=21`
+
+Von 25 Token endeten **21** an Jupiters Drosselung. Vier kamen durch.
+
+Genau dafür wurde in §108 der generische `NO_QUOTE` durch den Grund des
+Anbieters ersetzt. Damals stand dort ein Wort und drei mögliche Ursachen;
+jetzt steht die Ursache da. Die Vermutung von damals — Drosselung — war
+richtig, aber sie war eine Vermutung, und in diesem Projekt haben Vermutungen
+an dieser Stelle schon zweimal danebengelegen.
+
+**Die Anfragen gingen als Stoß hinaus**, so schnell wie die Schleife sie
+stellte: 25 Stück, praktisch gleichzeitig.
+
+### Selbst bremsen statt dagegenlaufen
+
+Zwei Änderungen, beide aus derselben Messung:
+
+1. Der Quote-Pfad nimmt sich einen Token aus einem `TokenBucket`, bevor er
+   fragt — eine Anfrage je Sekunde, kleiner Puffer für den Start. **Gewartet
+   wird vorher, nicht nachdem der Anbieter „nein" gesagt hat:** eine
+   abgewiesene Anfrage kostet dasselbe wie eine erlaubte und liefert nichts.
+2. Zehn Token je Lauf statt fünfundzwanzig. Gebremst passen zehn in den
+   Zwanzig-Sekunden-Takt, fünfundzwanzig nicht.
+
+Kein Token geht verloren: `runResumable` setzt beim nächsten Takt fort, wo
+dieser aufhörte. Ein Token wird damit rund einmal je Minute aufgefrischt statt
+dreimal — bei vier brauchbaren Antworten je Lauf war die höhere Frequenz
+ohnehin eine Illusion.
+
+Der Tausch: **weniger Anfragen, mehr Antworten.** Die genaue Grenze des
+Anbieters steht nirgends; die Werte sind vorsichtig gewählt und werden an
+derselben Log-Zeile nachgeprüft, an der das Problem sichtbar wurde. Steht dort
+weiterhin `QUOTE_RATE_LIMITED`, ist es noch zu schnell.

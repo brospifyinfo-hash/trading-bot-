@@ -379,8 +379,18 @@ class MarketRefreshHandler implements JobHandler {
  * Festlegung, keine Messung: ohne bekannte Rate-Limit-Budgets ist jede Zahl
  * eine Annahme. Sie ist bewusst klein — zu wenige Anfragen kosten Zeit, zu
  * viele kosten den Zugang.
+ *
+ * Von 25 auf 10 gesenkt, und zwar gemessen: am 2026-09-11 endeten 21 von 25
+ * Token mit `QUOTE_RATE_LIMITED`. Vier kamen durch. Seitdem bremst sich der
+ * Quote-Pfad selbst auf eine Anfrage je Sekunde — und zehn Token passen damit
+ * in den Zwanzig-Sekunden-Takt, fuenfundzwanzig nicht.
+ *
+ * Kein Token geht dadurch verloren: `runResumable` setzt beim naechsten Takt
+ * dort fort, wo dieser aufgehoert hat. Ein Token wird damit rund einmal je
+ * Minute aufgefrischt statt dreimal — bei vier brauchbaren Antworten je Lauf
+ * war die hoehere Frequenz ohnehin eine Illusion.
  */
-const MAX_TOKENS_PER_RUN = 25;
+const MAX_TOKENS_PER_RUN = 10;
 const MAX_TOKENS_TRACKED = 500;
 
 /**
