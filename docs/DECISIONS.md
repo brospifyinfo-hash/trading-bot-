@@ -4145,3 +4145,86 @@ dafür, dass die 15 auch ankommen. Wer mehr Token gleichzeitig beobachten will,
 braucht einen bezahlten Zugang. Das ist eine Entscheidung des Betreibers, keine
 technische, und sie steht hier, damit sie nicht als technisches Rätsel
 missverstanden wird.
+
+## §118 — Ein Handler, an dessen Tür nie jemand klopft
+
+Datum: 2026-09-11
+
+Die Entscheidungskette ist vollständig gebaut, getestet und verdrahtet — und
+sie ist noch nie gelaufen. Nicht einmal.
+
+`EVALUATE_OPPORTUNITY` hat einen eigenen Handler. Der steht in `handlers.ts`,
+ist in `describeWiring` sauber als `DEDICATED` ausgewiesen, und
+`decision-wiring.test.ts` ruft ihn direkt auf und prüft, dass er das Richtige
+tut. In `CADENCE_JOB` kommt die Auftragsart nicht vor. **Kein Takt erzeugt
+sie.** Der Handler wartet auf einen Auftrag, den niemand einreiht.
+
+### Warum keine Prüfung das gesehen hat
+
+Zwei Prüfungen decken dieses Gebiet ab, und beide waren grün:
+
+- `describeWiring` fragt: *hat diese Auftragsart einen eigenen Handler?* —
+  Ja.
+- Der Scheduler-Test fragt: *reiht der Scheduler seine Takte ein?* — Ja, alle,
+  die er kennt.
+
+Jede Seite für sich war vollständig. Die Naht dazwischen hat niemand geprüft,
+weil sie in keiner der beiden Dateien wohnt. Das ist die unangenehme Variante
+des Fehlers aus §87, §99 und §110: dort war der Handler nicht angeschlossen
+und der Beweis fehlte sichtbar. Hier ist alles angeschlossen, es gibt nur
+keinen Anlass.
+
+Im Betrieb war das unsichtbar. Ein Auftrag, den es nicht gibt, erzeugt keine
+Log-Zeile, keinen Fehler, keinen Eintrag in der Dead-Letter-Tabelle. Die
+Marktdaten-Zeile meldete `entryReady: 5` — fünf Snapshots, die eine
+Einstiegsentscheidung tragen **könnten**. Dass diese Entscheidung nie gefällt
+wurde, stand nirgends.
+
+### Die Prüfung, die beide Seiten zusammenführt
+
+`laesst keinen verdrahteten Handler ohne Takt, der ihn ruft`: jede
+Auftragsart mit einem eigenen Handler muss in `CADENCE_JOB` vorkommen.
+
+Gegengeprüft, statt darauf zu vertrauen — die Abbildung einmal entfernt, und
+die Prüfung meldet exakt `EVALUATE_OPPORTUNITY`. Ein Wächter, dessen
+Scharfsein man nicht gemessen hat, ist eine Zusicherung ohne Deckung.
+
+`MARKET_DATA_ONLY` ist ausgenommen, und das ist kein Schlupfloch: eine Art,
+deren Handler die Daten noch wegwirft, soll auch nicht getaktet werden. Wer
+sie verdrahtet, wird im selben Zug nach dem Takt gefragt.
+
+### Eine Minute, und warum nicht dreißig Sekunden
+
+Fachlich bindet die Frist aus `maxAgeSeconds`: ein Preis gilt 120 Sekunden.
+Ein Entscheidungstakt, der langsamer läuft als diese Frist, entscheidet auf
+Daten, die der eigene Torwächter bereits abgelehnt hätte.
+
+Rechnerisch bindet das Kontingent. Der Entscheidungslauf **holt seine
+Marktdaten selbst** — er liest nicht den Snapshot, den der Marktdaten-Takt
+Sekunden zuvor geschrieben hat. Fünf Token je Lauf kosten also fünf weitere
+Anfragen je Minute, zusätzlich zu den fünfzehn des Marktdaten-Takts. Zwanzig
+je Minute liegen unter dem Startabstand der Selbstbremse von zwei Sekunden
+(§117); bei dreißig Sekunden wären es fünfundzwanzig, und der Entscheidungslauf
+begänne dem Marktdaten-Takt Anfragen wegzunehmen.
+
+Dass zweimal geholt wird, was einmal reichte, bleibt eine offene Schwäche. Sie
+ist hier benannt und nicht behoben: der Weg dorthin führt durch den
+Gelegenheits-Durchlauf, und der wird nicht nebenbei umgebaut, während zum
+ersten Mal geprüft wird, ob die Kette überhaupt trägt.
+
+### Kein `requiresOpenWork` — die Falle daneben
+
+Sechs Takte tragen dieses Merkmal: ohne Bestand haben sie nichts zu tun. Für
+diesen wäre es der Stillstand, der sich selbst hält — **er erzeugt den
+Bestand, den die anderen überwachen.** Kein Bestand, also keine Bewertung, also
+nie ein Bestand. Und im Log sähe es aus wie ordentliches Sparen:
+`NOTHING_TO_WATCH`, jede Minute, ohne einen Fehler.
+
+### Was das für den Betrieb heißt
+
+Zum ersten Mal kann aus einem Snapshot eine Gelegenheit werden. Was dann
+passiert, ist offen und wird gemessen, nicht behauptet: die Tore stehen in
+`DEFAULT_STRATEGY_PARAMETERS`, der EV-Rechner liefert ohne abgeschlossene
+Trades von sich aus `UNKNOWN / INSUFFICIENT_SAMPLE`, und ein abgelehnter
+Einstieg ist ein ebenso gültiges Ergebnis wie ein angenommener. Live-Handel
+bleibt abgeschaltet.

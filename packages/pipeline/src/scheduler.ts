@@ -25,6 +25,8 @@ export type CadenceId =
   | "FAST_DISCOVERY"
   /** Marktdaten der beobachteten Tokens auffrischen. */
   | "MARKET_UPDATE"
+  /** Aus aufgefrischten Daten eine Einstiegsentscheidung machen. */
+  | "OPPORTUNITY_EVALUATION"
   /** Offene Live-Positionen ueberwachen. */
   | "POSITION_MONITOR"
   /** Offene Paper-Positionen ueberwachen. */
@@ -104,6 +106,39 @@ export const DEFAULT_CADENCES: readonly Cadence[] = [
     requiresMarketData: true,
     estimatedRequests: 20,
     description: "Marktdaten der Beobachtungsliste auffrischen.",
+  },
+  {
+    id: "OPPORTUNITY_EVALUATION",
+    /**
+     * Eine Minute, und die Zahl hat zwei Gruende.
+     *
+     * Fachlich: ein Preis gilt 120 Sekunden
+     * (`DEFAULT_INGEST_SETTINGS.maxAgeSeconds`). Ein Takt, der langsamer
+     * laeuft als diese Frist, entscheidet auf Daten, die der eigene
+     * Torwaechter schon abgelehnt haette.
+     *
+     * Rechnerisch: der Entscheidungslauf holt seine Marktdaten SELBST — er
+     * liest nicht den Snapshot, den `MARKET_UPDATE` gerade geschrieben hat.
+     * Er kostet damit noch einmal so viele Anbieteranfragen wie Token, die
+     * er ansieht. Bei fuenf Token je Lauf sind das fuenf Anfragen je Minute,
+     * zusaetzlich zu den fuenfzehn des Marktdaten-Takts. Zusammen zwanzig je
+     * Minute — unter dem Startabstand der Selbstbremse von zwei Sekunden
+     * (§117), also ohne Verdraengung. Ein Dreissig-Sekunden-Takt laege bei
+     * fuenfundzwanzig und begaenne, dem Marktdaten-Takt Anfragen wegzunehmen.
+     */
+    intervalMs: 60_000,
+    requiresMarketData: true,
+    /**
+     * AUSDRUECKLICH kein `requiresOpenWork`.
+     *
+     * Das waere die Falle: dieser Takt ERZEUGT den Bestand, den die anderen
+     * ueberwachen. Ihn davon abhaengig zu machen, dass es schon Bestand gibt,
+     * ergaebe einen Stillstand, der sich selbst haelt — keine Position, also
+     * keine Bewertung, also nie eine Position. Und er saehe im Log wie
+     * ordentliches Sparen aus: `NOTHING_TO_WATCH`, jede Minute.
+     */
+    estimatedRequests: 5,
+    description: "Aus aufgefrischten Daten eine Einstiegsentscheidung machen.",
   },
   {
     id: "POSITION_MONITOR",

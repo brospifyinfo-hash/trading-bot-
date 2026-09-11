@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FixedClock } from "@sae/core";
-import { InMemoryDispatcher, cadenceWindow, jobRequest } from "@sae/pipeline";
+import { CADENCE_JOB, InMemoryDispatcher, cadenceWindow, jobRequest } from "@sae/pipeline";
 import { createLogger } from "@sae/observability";
 
 import { SchedulerLoop } from "../roles/scheduler";
@@ -144,5 +144,36 @@ describe("Was die Auftragsarten tatsaechlich tun", () => {
       "SCORE_TOKEN",
       "STRATEGY_HEALTH",
     ]);
+  });
+
+  /**
+   * Der Handler allein reicht nicht — ihn muss auch jemand rufen.
+   *
+   * Genau hier ist `EVALUATE_OPPORTUNITY` durchgerutscht: eigener Handler,
+   * eigener Test, in `describeWiring` sauber als `DEDICATED` ausgewiesen —
+   * und in `CADENCE_JOB` kam die Auftragsart nicht vor. Kein Takt hat sie je
+   * erzeugt. Die Entscheidungskette war damit vollstaendig gebaut und lief
+   * kein einziges Mal.
+   *
+   * Das ist dieselbe Klasse wie §87, §99 und §110, aber eine Ebene hoeher:
+   * dort war der Handler nicht angeschlossen, hier ist er es und niemand
+   * klopft an. Die bisherigen Pruefungen konnten das nicht sehen, weil sie
+   * beide Seiten getrennt betrachtet haben. Diese hier schliesst sie
+   * zusammen.
+   *
+   * `MARKET_DATA_ONLY` ist ausgenommen, und zwar mit Absicht: eine Art, deren
+   * Handler die Daten noch wegwirft, soll auch nicht getaktet werden. Wird
+   * sie verdrahtet, verlangt dieser Test im selben Zug den Takt dazu.
+   */
+  it("laesst keinen verdrahteten Handler ohne Takt, der ihn ruft", () => {
+    const wiring = describeWiring(registry);
+    const getaktet = new Set<string>(Object.values(CADENCE_JOB));
+
+    const verwaist = Object.entries(wiring)
+      .filter(([kind, w]) => w === "DEDICATED" && !getaktet.has(kind))
+      .map(([kind]) => kind)
+      .sort();
+
+    expect(verwaist).toEqual([]);
   });
 });
