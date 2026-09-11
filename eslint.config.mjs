@@ -2,6 +2,7 @@ import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
 import noNumericFallback from "./eslint-rules/no-numeric-fallback.js";
 import noDateInSql from "./eslint-rules/no-date-in-sql.js";
+import noDateAssertionInSql from "./eslint-rules/no-date-assertion-in-sql.js";
 
 /**
  * Ein einziges `sae`-Plugin.
@@ -10,7 +11,13 @@ import noDateInSql from "./eslint-rules/no-date-in-sql.js";
  * zu definieren. Die hauseigenen Regeln werden deshalb hier zusammengefuehrt
  * und unten nur noch je Dateibereich unterschiedlich scharf gestellt.
  */
-const saeRules = { rules: { ...noNumericFallback.rules, ...noDateInSql.rules } };
+const saeRules = {
+  rules: {
+    ...noNumericFallback.rules,
+    ...noDateInSql.rules,
+    ...noDateAssertionInSql.rules,
+  },
+};
 
 export default [
   {
@@ -65,6 +72,8 @@ export default [
     files: ["packages/db/src/**/*.ts", "apps/**/*.ts"],
     rules: {
       "sae/no-date-in-sql": "error",
+      // Die Gegenrichtung: nicht hineinbinden, sondern herauslesen.
+      "sae/no-date-assertion-in-sql": "error",
     },
   },
   {

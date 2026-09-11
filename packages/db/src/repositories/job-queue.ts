@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
 import type { JobDispatcher, JobRequest } from "@sae/pipeline";
 
+import { asDate } from "../coerce";
 import type { Database } from "../client";
 import { jobQueue, jobQueueHistory, type JobState } from "../schema/queue";
 
@@ -462,20 +463,24 @@ export class JobQueueRepository {
       .select({
         state: jobQueue.state,
         count: sql<number>`count(*)::int`,
-        oldest: sql<Date | null>`min(${jobQueue.enqueuedAt})`,
+        oldest: sql<Date | string | null>`min(${jobQueue.enqueuedAt})`,
       })
       .from(jobQueue)
       .where(inArray(jobQueue.state, ["QUEUED", "RUNNING", "DEAD"] satisfies JobState[]))
       .groupBy(jobQueue.state);
 
     const by = (s: JobState): number => rows.find((r) => r.state === s)?.count ?? 0;
-    const oldest = rows.find((r) => r.state === "QUEUED")?.oldest ?? null;
+    // Hier stand `new Date(oldest)` — jemand ist ueber genau dieses Problem
+    // schon gestolpert und hat es an dieser einen Stelle umschifft. Das Wissen
+    // hat die beiden Dashboard-Abfragen nie erreicht, und dort ist es im
+    // Betrieb hochgegangen (§123). Jetzt benutzen alle drei denselben Weg.
+    const oldest = asDate(rows.find((r) => r.state === "QUEUED")?.oldest);
     void now;
     return {
       queued: by("QUEUED"),
       running: by("RUNNING"),
       dead: by("DEAD"),
-      oldestQueuedAt: oldest === null ? null : new Date(oldest),
+      oldestQueuedAt: oldest,
     };
   }
 }

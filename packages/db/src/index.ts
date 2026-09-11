@@ -1,4 +1,5 @@
 export * as schema from "./schema/index";
+export * from "./coerce";
 export * from "./connection-string";
 export * from "./client";
 export * from "./pit/reader";

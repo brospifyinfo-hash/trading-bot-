@@ -4590,3 +4590,89 @@ gebaut, getestet und geloggt wird und trotzdem nichts sagt.
 Eine Allowlist ist die richtige Vorgabe und hat diesen Preis: jedes neue
 Log-Feld braucht einen zweiten, leicht zu vergessenden Handgriff. Der Fund
 gehört hierher, damit beim nächsten Feld daran gedacht wird.
+
+## §123 — Ein Typ, der etwas behauptet, das der Treiber nicht liefert
+
+Datum: 2026-09-11
+
+Das Dashboard war erreichbar und stürzte auf der Startseite ab:
+
+```
+TypeError: a.lastSnapshotAt?.toISOString is not a function
+    at render (.next/server/app/(app)/page.js)
+  digest: '336847385'
+```
+
+Dahinter stand:
+
+```ts
+lastAt: sql<Date | null>`max(${tokenSnapshots.observedAt})`,
+```
+
+Das spitze Klammerpaar ist eine **Behauptung über den Typ, keine Umwandlung**.
+Bei einer normalen Spaltenauswahl trifft sie zu, weil Drizzle den Spaltentyp
+kennt und abbildet. Bei einem rohen Ausdruck wie `max(...)` kennt er ihn nicht
+— und was ankommt, hängt am Treiber: unter PGlite ein `Date`, in der
+Produktion eine Zeichenkette.
+
+`?.` half nicht. Es fängt `null` und `undefined`, nicht „ist da, ist aber eine
+Zeichenkette".
+
+Das ist exakt die Asymmetrie, für die es in diesem Projekt bereits die Regel
+`sae/no-date-in-sql` gibt: grüner Testlauf, Ausfall im Betrieb. Nur in der
+anderen Richtung — jene Regel schützt das Hineinbinden, hier ging es um das
+Herauslesen.
+
+### Das Wissen war da und ist nicht angekommen
+
+In `job-queue.ts` stand seit jeher:
+
+```ts
+oldestQueuedAt: oldest === null ? null : new Date(oldest),
+```
+
+Jemand ist über genau dieses Problem gestolpert und hat es **an dieser einen
+Stelle** umschifft. Zwei weitere Stellen mit derselben Behauptung blieben
+stehen, und eine davon ist im Betrieb hochgegangen.
+
+Eine lokale Umgehung ohne Regel ist eine Reparatur mit Verfallsdatum: sie hält
+genau die Datei, in der sie steht.
+
+### Warum nicht an der Anzeigestelle repariert wurde
+
+Der naheliegende Vorschlag lautete `new Date(x).toISOString()` dort, wo es
+knallt. Dreifach schlecht:
+
+1. Er heilt **ein** Feld. `oldestQueuedAt` trug dieselbe Behauptung und wäre
+   der nächste Absturz gewesen — dieselbe Seite, zwanzig Zeilen tiefer.
+2. Er lässt die Lüge im Typ stehen. Der nächste Aufrufer läuft wieder hinein.
+3. `new Date(undefined)` ergibt ein ungültiges Datum, dessen `toISOString()`
+   erneut wirft. Der Patch hätte den Absturz verschoben, nicht behoben.
+
+Repariert wurde an der Grenze, an der die Daten hereinkommen: `asDate()` in
+`packages/db/src/coerce.ts`, und der Typ sagt jetzt die Wahrheit
+(`Date | string | null`). Weil eine Zeichenkette kein `toISOString` hat,
+**zwingt der Compiler** jeden Aufrufer zur Umwandlung. Aus einem
+Laufzeitabsturz wird ein Übersetzungsfehler.
+
+`asDate` wirft unter keinen Umständen. Eine Oberfläche, die wegen eines
+Zeitstempels abstürzt, ist schlimmer als eine, die an einer Stelle einen Strich
+zeigt.
+
+### Die Regel, und ihre gemessene Schärfe
+
+`sae/no-date-assertion-in-sql` verbietet `sql<… Date …>` ohne `string` daneben.
+Die ehrliche Form `sql<Date | string | null>` ist ausdrücklich erlaubt — die
+Regel verlangt keine Umschreibung, sie verlangt Wahrheit.
+
+Gegengeprüft statt geglaubt: die Behauptung einmal wiederhergestellt, und die
+Regel meldet sie an der richtigen Zeile mit dem richtigen Grund. Ein Wächter,
+dessen Schärfe niemand gemessen hat, ist eine Zusicherung ohne Deckung — das
+gilt hier wie in §118 und §120.
+
+### Der Test prüft beide Welten
+
+`coerce.test.ts` prüft ausdrücklich **Zeichenkette und `Date`**. Ein Test, der
+nur den Fall der eigenen Umgebung kennt, hätte hier grün gemeldet und nichts
+abgesichert — das ist ja der ganze Grund, warum der Fehler bis in die
+Produktion kam.

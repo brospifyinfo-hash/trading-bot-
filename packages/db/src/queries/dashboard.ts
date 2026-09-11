@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 
+import { asDate } from "../coerce";
 import type { Database } from "../client";
 import { tokenSnapshots } from "../schema/tokens";
 import { opportunities, paperPositions } from "../schema/opportunities";
@@ -115,7 +116,10 @@ export async function loadIngestionSummary(
   const [totals] = await db
     .select({
       count: sql<number>`count(*)::int`,
-      lastAt: sql<Date | null>`max(${tokenSnapshots.observedAt})`,
+      // `Date | string`, nicht `Date`: bei einem rohen Ausdruck kennt Drizzle
+      // den Spaltentyp nicht und bildet nichts ab. Der Typ sagt hier, was
+      // wirklich ankommt — und zwingt damit zur Umwandlung (§123).
+      lastAt: sql<Date | string | null>`max(${tokenSnapshots.observedAt})`,
       tokens: sql<number>`count(distinct ${tokenSnapshots.tokenId})::int`,
     })
     .from(tokenSnapshots)
@@ -135,7 +139,7 @@ export async function loadIngestionSummary(
 
   return {
     snapshotCount: totals?.count ?? 0,
-    lastSnapshotAt: totals?.lastAt ?? null,
+    lastSnapshotAt: asDate(totals?.lastAt),
     distinctTokens: totals?.tokens ?? 0,
     byTier,
   };
@@ -245,7 +249,7 @@ export async function loadQueueSummary(db: Database): Promise<QueueSummary> {
     .select({
       state: jobQueue.state,
       count: sql<number>`count(*)::int`,
-      oldest: sql<Date | null>`min(${jobQueue.enqueuedAt})`,
+      oldest: sql<Date | string | null>`min(${jobQueue.enqueuedAt})`,
       retrying: sql<number>`count(*) filter (where ${jobQueue.attempts} > 1)::int`,
     })
     .from(jobQueue)
@@ -258,7 +262,7 @@ export async function loadQueueSummary(db: Database): Promise<QueueSummary> {
 
   const liveBy = (state: string): number => live.find((r) => r.state === state)?.count ?? 0;
   const doneHistory = history.find((r) => r.state === "DONE")?.count ?? 0;
-  const oldest = live.find((r) => r.state === "QUEUED")?.oldest ?? null;
+  const oldest = asDate(live.find((r) => r.state === "QUEUED")?.oldest);
 
   return {
     queued: liveBy("QUEUED"),
