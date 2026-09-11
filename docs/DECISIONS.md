@@ -3866,3 +3866,67 @@ RugCheck gehört damit **nicht** in `REFRESH_MARKET_DATA`, sondern in einen
 eigenen, langsamen Anreicherungstakt mit Zwischenspeicher. Sicherheitsdaten
 ändern sich in Stunden, nicht in Sekunden. Das ist keine Optimierung, sondern
 die Bedingung, unter der der Anbieter überhaupt nutzbar ist.
+
+## §114 — Der Anreicherungstakt, und warum er langsam ist
+
+Datum: 2026-09-11
+
+Der Weg von RugCheck in den Feature-Vektor ist gebaut: eigene Auftragsart
+`ENRICH_SECURITY`, eigener Takt `SECURITY_ENRICHMENT`, eigener Handler, eigene
+Health-Sonde.
+
+### Fünf Token alle fünf Minuten
+
+Gemessenes Limit: 15 Anfragen, Zeitfenster unbekannt. Der Takt nimmt fünf
+Token je Lauf und läuft alle fünf Minuten — rund **eine Anfrage je Minute**.
+
+Das ist nicht Sparsamkeit, sondern die Natur der Daten. Eine Mint-Autorität
+ändert sich nicht im Sekundentakt; ein Befund gilt sechs Stunden, danach wird
+er neu geholt. Wer Sicherheitsdaten im Marktdaten-Rhythmus abfragt, zahlt
+Kontingent für dieselbe Antwort.
+
+Bei Drosselung bricht der Lauf **sofort** ab, statt die restlichen Token
+durchzuprobieren: die nächste Anfrage brächte dasselbe Ergebnis und triebe den
+Rest tiefer ins Limit. In fünf Minuten läuft der Takt ohnehin wieder.
+
+### Die Auswahl ist eine Abfrage, nicht eine Schleife
+
+`selectTokensNeedingSecurity` holt per `LEFT JOIN LATERAL` den jüngsten Befund
+je Token und filtert direkt auf „keiner" oder „älter als sechs Stunden". Neue
+Tokens zuerst — bei ihnen steht die Entscheidung an, bei den alten ist sie
+längst gefallen.
+
+### Die eigene Lint-Regel hat einen echten Fehler gefangen
+
+Der erste Entwurf band `staleBefore` als `Date` direkt in das SQL-Fragment.
+`sae/no-date-in-sql` hat das abgelehnt, mit genau der Begründung, für die es
+die Regel gibt: **unter PGlite (Tests) läuft das, unter postgres-js (Betrieb)
+bricht es ab.** Der Fehler wäre grün durch die Testsuite gegangen und erst im
+laufenden System erschienen. Jetzt steht dort `${…toISOString()}::timestamptz`.
+
+### Was NICHT geschrieben wird
+
+Ohne konfigurierten Anbieter entsteht **keine Zeile**. Das ist der wichtigste
+Test der Datei: eine Zeile in `token_security` ohne echte Werte sähe im
+Feature-Vektor aus wie „geprüft und unauffällig" — die gefährlichste Lüge, die
+dieses System erzählen könnte, und ausgerechnet dort, wo es um Rug Pulls geht.
+
+Ebenso bei unlesbarer Antwort und bei Drosselung: kein Datensatz, kein
+Teilwert.
+
+### Der LP-Anteil bekommt keine erfundene Schwelle
+
+`token_security` führt `lp_burned_or_locked` als Wahrheitswert. Der gemessene
+Pool war zu **72,886 %** gesperrt — ist das „gesperrt"? Jede Grenze hier wäre
+erfunden, und eine falsche deckelt den Sicherheitsscore auf 35.
+
+Die Zahl landet deshalb unverändert in `findings` (jsonb). Nichts geht
+verloren, niemand muss eine Grenze erfinden, und sobald es einen Grund für
+eine Schwelle gibt, steht der Messwert bereit.
+
+### Die Fähigkeit wird benannt
+
+`sampleProviderHealth` meldete jeden geprüften Anbieter pauschal als
+`TOKEN_MARKET`. Für RugCheck wäre das falsch — er liefert keinen Preis. Die
+Bereitschaftstabelle bekommt jetzt die Fähigkeit, die der Anbieter tatsächlich
+erbringt (`SECURITY_REPORT`).

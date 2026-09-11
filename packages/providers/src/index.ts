@@ -20,4 +20,5 @@ export * from "./solana/mint";
 export * from "./solana/block-time";
 export * from "./solana/largest-accounts";
 export * from "./rugcheck/report";
+export * from "./rugcheck/adapter";
 export * from "./jupiter/quote-fetch";

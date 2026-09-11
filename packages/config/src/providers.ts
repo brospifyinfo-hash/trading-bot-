@@ -175,7 +175,11 @@ export function readProviderConfig(env: ProviderEnv): readonly ProviderConfigEnt
       requiresApiKey: false,
       apiKeyPresent: true,
       configured: env.RUGCHECK_BASE_URL !== undefined,
-      adapterImplemented: false,
+      // Seit 2026-09-10 geprueft: der Vertrag stammt aus zwei echten
+      // Antworten (USDC und ein Memecoin), nicht aus der Dokumentation —
+      // Swagger hinterlegt fuer die 200-Antwort ueberhaupt kein Schema.
+      // Siehe docs/providers/rugcheck.md und DECISIONS §113.
+      adapterImplemented: true,
     },
   ];
   return entries;

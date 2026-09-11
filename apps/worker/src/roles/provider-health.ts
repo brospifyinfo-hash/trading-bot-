@@ -11,6 +11,7 @@ import {
   DexScreenerMarketAdapter,
   JupiterQuoteAdapter,
   JUPITER_QUOTE_CONTRACT,
+  RugcheckReportAdapter,
   SOLANA_BLOCK_TIME_CONTRACT,
   SOLANA_LARGEST_ACCOUNTS_CONTRACT,
   SolanaBlockTimeAdapter,
@@ -232,10 +233,96 @@ async function probeQuoteMarket(env: ProviderEnv): Promise<ProbeResult> {
   };
 }
 
+/**
+ * RugCheck — erreichbar und lesbar?
+ *
+ * Die Sonde fragt denselben Endpunkt, den auch der Anreicherungstakt benutzt,
+ * mit derselben Sondenadresse wie ueberall. Sie beantwortet die eine Frage,
+ * die sich aus dieser Umgebung nicht beantworten liess: ob Railway den Host
+ * ueberhaupt erreicht. Hier wird er vom Egress-Proxy geblockt.
+ *
+ * `RATE_LIMITED` faerbt auf DEGRADED und nicht auf UNAVAILABLE: gedrosselt
+ * kommt wieder, und der Anreicherungstakt ist ohnehin darauf ausgelegt,
+ * langsam zu sein.
+ */
+async function probeRugcheck(env: ProviderEnv): Promise<ProbeResult> {
+  const baseUrl = env.RUGCHECK_BASE_URL;
+  if (baseUrl === undefined) {
+    return {
+      status: "NOT_CONFIGURED",
+      detail: "RUGCHECK_BASE_URL fehlt.",
+      latencyMs: 0,
+      ok: false,
+      httpStatus: null,
+    };
+  }
+
+  const adapter = new RugcheckReportAdapter({ clock: systemClock, baseUrl });
+  const outcome = await adapter.fetchReport(CONTRACT_PROBE_MINT);
+
+  switch (outcome.kind) {
+    case "OK":
+      return {
+        status: "CONNECTED",
+        detail: `Bericht gelesen, Schema ${adapter.schemaVersion}.`,
+        latencyMs: outcome.latencyMs,
+        ok: true,
+        httpStatus: 200,
+      };
+    case "NOT_FOUND":
+      // Geantwortet, kennt die Sondenadresse nur nicht. Dieselbe Auslegung
+      // wie bei DexScreener: erreichbar ist erreichbar.
+      return {
+        status: "CONNECTED",
+        detail: "Geantwortet, kennt die Sondenadresse aber nicht.",
+        latencyMs: outcome.latencyMs,
+        ok: true,
+        httpStatus: 404,
+      };
+    case "RATE_LIMITED":
+      return {
+        status: "DEGRADED",
+        detail: `Gedrosselt. Rest: ${String(outcome.rateLimit.remaining ?? "unbekannt")}.`,
+        latencyMs: outcome.latencyMs,
+        ok: false,
+        httpStatus: 429,
+      };
+    case "SCHEMA_REJECTED":
+      return {
+        status: "UNAVAILABLE",
+        detail: `Antwort nicht lesbar: ${outcome.reason}`,
+        latencyMs: 0,
+        ok: false,
+        httpStatus: null,
+      };
+    case "FAILED":
+      return {
+        status:
+          outcome.failure === "BLOCKED"
+            ? "BLOCKED"
+            : outcome.failure === "RATE_LIMITED"
+              ? "DEGRADED"
+              : "UNAVAILABLE",
+        detail: `${outcome.failure}: ${outcome.reason}`,
+        latencyMs: 0,
+        ok: false,
+        httpStatus: null,
+      };
+  }
+}
+
 /** Anbieter, die tatsaechlich gemessen werden koennen. */
 const PROBES: Partial<Record<KnownProviderId, (env: ProviderEnv) => Promise<ProbeResult>>> = {
   dexscreener: probeDexScreener,
   "jupiter-quote": probeQuoteMarket,
+  rugcheck: probeRugcheck,
+};
+
+/** Was ein erfolgreicher Abruf ueber den Anbieter aussagt. */
+const PROBE_CAPABILITY: Partial<Record<KnownProviderId, "TOKEN_MARKET" | "SECURITY_REPORT">> = {
+  dexscreener: "TOKEN_MARKET",
+  "jupiter-quote": "TOKEN_MARKET",
+  rugcheck: "SECURITY_REPORT",
 };
 
 export function buildStatusReports(env: NodeJS.ProcessEnv): readonly ProviderStatusReport[] {
@@ -362,14 +449,19 @@ export async function sampleProviderHealth(input: {
       const httpStatus = probeStatus.get(id);
       if (httpStatus === undefined) continue;
 
+      // Die Faehigkeit, die dieser Anbieter tatsaechlich erbringt — nicht
+      // pauschal TOKEN_MARKET. RugCheck liefert keinen Preis, und ihn als
+      // Marktdatenquelle bereitzumelden waere eine Zusage, die er nicht
+      // einloest.
+      const capability = PROBE_CAPABILITY[id] ?? "TOKEN_MARKET";
       await input.readiness.declare({
         providerId: id,
-        capability: "TOKEN_MARKET",
+        capability,
         implementationConfidence: "SCHEMA_VERIFIED",
       });
       await input.readiness.recordSmokeTest({
         providerId: id,
-        capability: "TOKEN_MARKET",
+        capability,
         at,
         httpStatus,
         detail: report.detail ?? "",

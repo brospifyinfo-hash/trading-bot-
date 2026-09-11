@@ -294,3 +294,101 @@ export async function recordAuthorities(
   }
   return written;
 }
+
+/**
+ * Tokens, die einen Sicherheitsbefund brauchen.
+ *
+ * „Brauchen" heisst: noch nie einen gehabt, oder der letzte ist aelter als
+ * `staleBefore`. Absteigend nach Erstkontakt — neue Tokens zuerst, weil bei
+ * ihnen die Entscheidung ansteht und bei den alten laengst gefallen ist.
+ *
+ * Das `LEFT JOIN` auf den juengsten Befund statt eines `NOT IN`: so faellt in
+ * derselben Abfrage auch der veraltete Fall heraus, und es bleibt bei einer
+ * Abfrage je Lauf.
+ */
+export async function selectTokensNeedingSecurity(
+  db: Database,
+  limit: number,
+  staleBefore: Date,
+): Promise<readonly TrackedToken[]> {
+  const rows = await db.execute<{ id: string; mint: string; first_seen_at: Date }>(sql`
+    select t.id, t.mint, t.first_seen_at
+    from tokens t
+    left join lateral (
+      select s.observed_at
+      from token_security s
+      where s.token_id = t.id
+      order by s.observed_at desc
+      limit 1
+    ) letzter on true
+    where t.blacklisted_at is null
+      and t.state <> 'REJECTED'
+      and (
+        letzter.observed_at is null
+        or letzter.observed_at < ${staleBefore.toISOString()}::timestamptz
+      )
+    order by t.first_seen_at desc
+    limit ${limit}
+  `);
+  // Wie in `hasOpenWork`: `execute` liefert je nach Treiber die Zeilen direkt
+  // oder in `.rows`. Beide Formen kommen im Betrieb vor (PGlite im Test,
+  // postgres.js in Produktion), und eine davon anzunehmen hiesse, den Test
+  // gruen zu halten und die Produktion leer laufen zu lassen.
+  const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] }).rows ?? []);
+  return list.map((raw) => {
+    const row = raw as { id: string; mint: string; first_seen_at: Date | string };
+    return {
+      id: row.id,
+      mint: row.mint,
+      firstSeenAt: row.first_seen_at instanceof Date ? row.first_seen_at : new Date(row.first_seen_at),
+    };
+  });
+}
+
+/** Ein vollstaendiger Sicherheitsbefund, wie ihn ein Anbieter liefert. */
+export interface SecurityFinding {
+  readonly tokenId: string;
+  readonly checkVersion: string;
+  readonly mintAuthorityActive: boolean | null;
+  readonly freezeAuthorityActive: boolean | null;
+  readonly top10HolderSharePct: number | null;
+  readonly topHolderSharePct: number | null;
+  readonly devHoldingPct: number | null;
+  /** Normierter Anbieter-Score. Kein eigenes Urteil. */
+  readonly securityScore: number | null;
+  /**
+   * Was der Anbieter sonst noch meldete.
+   *
+   * Bewusst frei geformt: hier landen Messungen, fuer die es (noch) keine
+   * Spalte gibt — etwa der LP-Sperranteil. Sie gehen dadurch nicht verloren,
+   * und niemand muss dafuer eine Schwelle erfinden.
+   */
+  readonly findings: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Schreibt einen Sicherheitsbefund fort.
+ *
+ * Anders als `recordAuthorities` IMMER eine neue Zeile: ein Befund ist eine
+ * Messung zu einem Zeitpunkt, und die Zeitreihe ist der Zweck. Der Takt sorgt
+ * dafuer, dass das selten genug passiert — alle paar Stunden je Token, nicht
+ * alle 20 Sekunden.
+ */
+export async function recordSecurityFinding(
+  db: Database,
+  finding: SecurityFinding,
+  at: Date,
+): Promise<void> {
+  await db.insert(tokenSecurity).values({
+    tokenId: finding.tokenId,
+    observedAt: at,
+    checkVersion: finding.checkVersion,
+    mintAuthorityActive: finding.mintAuthorityActive,
+    freezeAuthorityActive: finding.freezeAuthorityActive,
+    top10HolderSharePct: finding.top10HolderSharePct,
+    topHolderSharePct: finding.topHolderSharePct,
+    devHoldingPct: finding.devHoldingPct,
+    securityScore: finding.securityScore,
+    findings: finding.findings,
+  });
+}

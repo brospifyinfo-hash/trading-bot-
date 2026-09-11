@@ -38,7 +38,19 @@ export type CadenceId =
   /** Erreichbarkeit der Provider. Laeuft immer. */
   | "PROVIDER_HEALTH"
   /** Bestandsabgleich. */
-  | "RECONCILIATION";
+  | "RECONCILIATION"
+  /**
+   * Sicherheitsbefunde nachladen.
+   *
+   * Ein EIGENER Takt, und das ist keine Ordnungsliebe. Der Anbieter drosselt
+   * bei 15 Anfragen (Fenster unbekannt, gemessen 2026-09-10); der
+   * Marktdaten-Takt fragt 25 Token alle 20 Sekunden. Im selben Takt waere
+   * RugCheck sofort dicht.
+   *
+   * Sicherheitsdaten aendern sich ausserdem in Stunden, nicht in Sekunden —
+   * sie oft abzufragen kostet nur Kontingent (DECISIONS §113).
+   */
+  | "SECURITY_ENRICHMENT";
 
 export interface Cadence {
   readonly id: CadenceId;
@@ -116,6 +128,19 @@ export const DEFAULT_CADENCES: readonly Cadence[] = [
     requiresOpenWork: true,
     estimatedRequests: 0,
     description: "Abgelaufene Gelegenheiten schliessen — zeitgesteuert, nicht beim naechsten Login.",
+  },
+  {
+    id: "SECURITY_ENRICHMENT",
+    // Fuenf Minuten, und selbst das ist grosszuegig: der Handler nimmt je
+    // Lauf nur eine Handvoll Token. Macht rund eine Anfrage je Minute gegen
+    // ein Limit von 15 — weit genug entfernt, dass ein Ausreisser nichts
+    // kostet.
+    intervalMs: 300_000,
+    // Ausdruecklich unabhaengig von der Marktdatenlage: ein Sicherheitsbefund
+    // ist auch dann richtig, wenn gerade kein Preis zu holen ist.
+    requiresMarketData: false,
+    estimatedRequests: 5,
+    description: "Sicherheitsbefunde nachladen. Eigener Takt wegen des Rate-Limits.",
   },
   {
     id: "RECONCILIATION",

@@ -49,13 +49,16 @@ describe("Provider-Konfiguration", () => {
     //   selbst und `getBlockTime`, beide von der Sonde im
     //   provider-health-Takt gemessen (siehe
     //   packages/providers/src/solana/__tests__/block-time.test.ts).
+    // - rugcheck: gegen ZWEI echte Antworten, 2026-09-10 — USDC und ein
+    //   Memecoin. Swagger hinterlegt fuer die 200-Antwort ueberhaupt kein
+    //   Schema, die Antwort selbst ist die einzige Quelle.
     //
     // Wer hier einen Anbieter ergaenzt, ohne dass sein Schema aus einer
     // Primaerquelle stammt, hebelt die wichtigste Regel des Provider-Layers
     // aus — und dieser Test ist die Stelle, an der das auffaellt.
     const entries = readProviderConfig(empty);
     const implemented = entries.filter((e) => e.adapterImplemented).map((e) => e.id);
-    expect(implemented.sort()).toEqual(["dexscreener", "jupiter", "jupiter-quote"]);
+    expect(implemented.sort()).toEqual(["dexscreener", "jupiter", "jupiter-quote", "rugcheck"]);
   });
 
   /**

@@ -17,6 +17,7 @@ import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProv
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
+import { enrichSecurity } from "./pipeline/security-enrichment";
 import { runDecision } from "./pipeline/decision-run";
 import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
@@ -382,6 +383,33 @@ class MarketRefreshHandler implements JobHandler {
 const MAX_TOKENS_PER_RUN = 25;
 const MAX_TOKENS_TRACKED = 500;
 
+/**
+ * Sicherheitsbefunde nachladen.
+ *
+ * Eigener Handler und eigener Takt, weil der Anbieter bei 15 Anfragen
+ * drosselt (Fenster unbekannt, gemessen 2026-09-10). Im Marktdaten-Handler
+ * mitzulaufen hiesse, ihn sofort dichtzumachen — siehe DECISIONS §113.
+ */
+class EnrichSecurityHandler implements JobHandler {
+  readonly wiring = "DEDICATED" as const;
+  constructor(private readonly deps: HandlerDeps) {}
+
+  async handle(job: ClaimedJob): Promise<unknown> {
+    void job;
+    const env = loadEnv(providerEnvSchema, this.deps.env);
+    const result = await enrichSecurity({
+      db: this.deps.db,
+      logger: this.deps.logger,
+      ...(env.RUGCHECK_BASE_URL !== undefined ? { baseUrl: env.RUGCHECK_BASE_URL } : {}),
+    });
+
+    if (result.status === "NOT_CONFIGURED") {
+      return waitingForData("Kein Sicherheitsanbieter konfiguriert (RUGCHECK_BASE_URL).");
+    }
+    return result;
+  }
+}
+
 export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
   const market = (what: string): JobHandler => new MarketDataHandler(deps, what);
   return {
@@ -395,6 +423,7 @@ export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
     RECONCILE: market("Abgleich"),
     STRATEGY_HEALTH: market("Strategie-Gesundheit"),
     RESEARCH_BATCH: market("Forschungslauf"),
+    ENRICH_SECURITY: new EnrichSecurityHandler(deps),
   };
 }
 

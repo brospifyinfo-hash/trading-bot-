@@ -26,7 +26,9 @@ export type JobKind =
   | "SAMPLE_PROVIDER_HEALTH"
   | "RECONCILE"
   | "STRATEGY_HEALTH"
-  | "RESEARCH_BATCH";
+  | "RESEARCH_BATCH"
+  /** Sicherheitsbefunde nachladen. Eigener Auftrag, eigener Takt. */
+  | "ENRICH_SECURITY";
 
 export interface JobRequest {
   readonly kind: JobKind;
@@ -109,4 +111,5 @@ export const CADENCE_JOB: Readonly<Record<CadenceId, JobKind>> = {
   STRATEGY_HEALTH: "STRATEGY_HEALTH",
   PROVIDER_HEALTH: "SAMPLE_PROVIDER_HEALTH",
   RECONCILIATION: "RECONCILE",
+  SECURITY_ENRICHMENT: "ENRICH_SECURITY",
 };
