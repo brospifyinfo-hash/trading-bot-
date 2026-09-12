@@ -315,6 +315,13 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
                     ? "WATCH heisst noch nicht gut genug — nicht abgelehnt. Der Token bleibt in Beobachtung und liefert weiter Historie."
                     : "ENTER heisst entschieden, nicht ausgefuehrt. Ob daraus eine Position wurde, steht unter Paper Trading."}
                 </p>
+                <p className="placeholder">
+                  Gezaehlt werden festgehaltene Entscheidungen. Ein Token, dessen Datenlage
+                  fuer eine Bewertung nicht reichte, erscheint hier NICHT — er hat keine
+                  Entscheidung erzeugt, und eine Zeile dafuer anzulegen hiesse, ein Urteil
+                  zu behaupten, das nie gefaellt wurde. Diese Faelle stehen im Log unter
+                  <code> Gelegenheiten geprueft </code> als <code>BLOCKED_…</code>.
+                </p>
               </>
             )}
           />

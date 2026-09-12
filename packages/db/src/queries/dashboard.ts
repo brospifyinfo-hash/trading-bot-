@@ -727,6 +727,26 @@ export async function loadDashboardState(input: {
         ? "Alle Marktdatenquellen vom Netz gesperrt."
         : "Keine Marktdatenquelle verbunden.";
 
+  /**
+   * Warum noch nichts da ist — und zwar der RICHTIGE Grund.
+   *
+   * Mehrere Kacheln zeigten pauschal die Marktdaten-Begruendung, sobald ihre
+   * eigene Zahl auf null stand. Im Betrieb stand deshalb „Keine
+   * Marktdatenquelle verbunden" auf der Seite, waehrend daneben drei Quellen
+   * als CONNECTED gelistet waren und die Aufnahme 39.972 Snapshots meldete
+   * (§127).
+   *
+   * Eine falsche Begruendung ist teurer als gar keine: sie schickt die
+   * Fehlersuche zum Anbieter, waehrend das System in Wahrheit nur noch nichts
+   * gefunden hat.
+   *
+   * Die Unterscheidung haengt an den Snapshots: gibt es keine, fehlen
+   * tatsaechlich die Daten. Gibt es welche, fliesst etwas — dann ist die
+   * leere Kachel eine Aussage ueber den Markt und keine ueber die Technik.
+   */
+  const nochNichts = (sonst: string): string =>
+    ingestion.snapshotCount === 0 ? noSourceReason : sonst;
+
   const ingestionPanel: Panel<IngestionSummary> =
     ingestion.snapshotCount === 0
       ? waiting(noSourceReason)
@@ -740,25 +760,21 @@ export async function loadDashboardState(input: {
 
   const decisionPanel: Panel<DecisionSummary> =
     decisions.total === 0
-      ? waiting(
-          ingestion.snapshotCount === 0
-            ? noSourceReason
-            : "Noch keine Entscheidung gefallen.",
-        )
+      ? waiting(nochNichts("Noch keine Entscheidung gefallen."))
       : data(decisions);
 
   const opportunityPanel: Panel<OpportunityCounts> =
     opportunityCounts.total === 0
-      ? waiting(
-          ingestion.snapshotCount === 0
-            ? noSourceReason
-            : "Noch keine Gelegenheit bewertet.",
-        )
+      ? waiting(nochNichts("Noch keine Gelegenheit bewertet."))
       : data(opportunityCounts);
 
   const paperPanel: Panel<readonly PaperSummary[]> =
     paperRows.length === 0
-      ? waiting(opportunityCounts.total === 0 ? noSourceReason : "Noch keine Paper-Position eroeffnet.")
+      ? waiting(
+          opportunityCounts.total === 0
+            ? nochNichts("Noch keine Gelegenheit bewertet — ohne sie keine Position.")
+            : "Noch keine Paper-Position eroeffnet.",
+        )
       : closedTotal < thresholds.minClosedForStatistics
         ? insufficient(
             closedTotal,
@@ -786,7 +802,7 @@ export async function loadDashboardState(input: {
   const missedTotal = missed.expired + missed.rejected + missed.invalidated + missed.cancelled;
   const missedPanel: Panel<MissedSummary> =
     opportunityCounts.total === 0
-      ? waiting(noSourceReason)
+      ? waiting(nochNichts("Noch keine Manual-Gelegenheit angeboten."))
       : missedTotal === 0
         ? waiting("Noch keine Manual-Gelegenheit abgeschlossen.")
         : data(missed);

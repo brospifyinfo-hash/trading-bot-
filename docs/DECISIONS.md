@@ -4863,3 +4863,64 @@ Auskunft, nicht ein Fehler.
 
 Ob dieser Takt bleiben soll, ist eine Abwägung gegen das Kontingent von
 RugCheck und gehört dem Betreiber vorgelegt, nicht hier entschieden.
+
+## §127 — Eine Kachel, die den Anbieter beschuldigt
+
+Datum: 2026-09-12
+
+Auf der Seite standen gleichzeitig:
+
+```
+Datenquellen    dexscreener CONNECTED · jupiter-quote CONNECTED · rugcheck CONNECTED
+Aufnahme        Snapshots 39.972 · Tokens 566
+Paper Trading   WAITING — Keine Marktdatenquelle verbunden.
+```
+
+Drei verbundene Quellen, vierzigtausend Snapshots — und darunter die Auskunft,
+es sei keine Quelle verbunden.
+
+Die Ursache war eine Abkürzung: mehrere Kacheln zeigten pauschal die
+Marktdaten-Begründung, sobald ihre eigene Zahl auf null stand.
+
+```ts
+waiting(opportunityCounts.total === 0 ? noSourceReason : "Noch keine Position.")
+```
+
+Der Zustand war richtig (es gibt keine Position), die Begründung falsch.
+
+### Warum das teurer ist als gar keine Begründung
+
+Eine leere Kachel ohne Grund lässt einen nachsehen. Eine leere Kachel mit
+**falschem** Grund schickt die Fehlersuche in eine bestimmte Richtung — hier
+zum Anbieter, während das System in Wahrheit nur noch nichts gefunden hat.
+Genau dieselbe Klasse wie die Meldung „WAITING FOR LIVE MARKET DATA" bei
+ausgefallener Datenbank, gegen die `NotReady` in der Web-App gebaut wurde: die
+bequeme Auskunft, die nach Betrieb aussieht.
+
+Die Unterscheidung hängt an den Snapshots und steht jetzt einmal statt
+viermal: gibt es keine, fehlen tatsächlich die Daten; gibt es welche, fließt
+etwas, und die leere Kachel ist eine Aussage über den Markt und keine über die
+Technik.
+
+Der Test prüft beide Richtungen — die Marktdaten-Begründung verschwindet bei
+fließenden Daten und erscheint ohne sie. Ohne die Gegenprobe ließe sich nicht
+unterscheiden, ob die Unterscheidung greift oder den Grund nur überall
+unterdrückt.
+
+### Was das Panel „Entscheidungen" nicht zeigt — und warum
+
+Dasselbe Log meldete `processed: 5` mit `BLOCKED_DATA_QUALITY_TOO_LOW=3` und
+`REJECT_DATA_INCOMPLETE=2`, während das Panel nur die zwei REJECT zählte.
+
+Das ist kein Fehler, sondern eine Eigenschaft: ein Token, dessen Datenlage für
+eine Bewertung nicht reichte, erzeugt **keine Gelegenheit**. Eine Zeile dafür
+anzulegen hieße, ein Urteil zu behaupten, das nie gefällt wurde — und die
+spätere Statistik würde Ablehnungen zählen, die keine waren.
+
+Unausgesprochen ist diese Eigenschaft trotzdem irreführend: wer „REJECT 8"
+liest, nimmt an, der Bot habe acht Token angesehen. Er hat mehr angesehen, und
+die meisten kamen nicht bis zur Bewertung. Das steht jetzt unter dem Panel, mit
+dem Verweis darauf, wo diese Fälle stehen.
+
+Eine unbequeme Eigenschaft zu benennen ist billiger, als sie zu beheben, indem
+man Daten erfindet.

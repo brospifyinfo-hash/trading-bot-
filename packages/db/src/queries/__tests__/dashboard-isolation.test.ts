@@ -3,7 +3,7 @@ import { eur } from "@sae/core";
 
 import type { Database } from "../../client";
 import { createTestDatabase } from "../../testing/harness";
-import { strategies, strategyVersions, tokens } from "../../schema/index";
+import { strategies, strategyVersions, tokens, tokenSnapshots } from "../../schema/index";
 import { OpportunityRepository } from "../../repositories/opportunities";
 import { PaperPositionRepository } from "../../repositories/paper-positions";
 import { loadDashboardState, loadOpportunityCounts, loadPaperSummary } from "../dashboard";
@@ -93,6 +93,50 @@ async function seedFixtureTrade(): Promise<void> {
     entryCostsMinor: 0n,
   });
 }
+
+describe("Begruendung einer leeren Kachel", () => {
+  /**
+   * Eine falsche Begruendung ist teurer als gar keine.
+   *
+   * Im Betrieb stand „Keine Marktdatenquelle verbunden" unter Paper Trading,
+   * waehrend daneben drei Quellen als CONNECTED gelistet waren und die
+   * Aufnahme 39.972 Snapshots meldete. Das schickt die Fehlersuche zum
+   * Anbieter, waehrend das System in Wahrheit nur noch keine Gelegenheit
+   * gefunden hat (§127).
+   */
+  it("nennt bei fliessenden Daten nicht die Marktdatenquelle", async () => {
+    // Snapshots vorhanden, also fliesst etwas — nur eben noch keine
+    // Gelegenheit und keine Position.
+    await db.insert(tokenSnapshots).values({
+      tokenId,
+      observedAt: NOW,
+      priceUsd: 0.00042,
+      liquidityUsd: 180_000,
+      dataCompleteness: 0.8,
+      sourceProviderId: "jupiter-quote",
+      sourceTier: "PRIMARY",
+      sourceFreshnessSeconds: 8,
+      ingestKey: "begruendung-1",
+    });
+
+    const state = await loadDashboardState({ db, now: NOW });
+
+    for (const panel of [state.paper, state.decisions, state.opportunities, state.missed]) {
+      if (panel.kind !== "WAITING") continue;
+      expect(panel.reason).not.toContain("Marktdatenquelle");
+    }
+  });
+
+  it("nennt ohne jeden Snapshot sehr wohl die Marktdatenquelle", async () => {
+    // Die Gegenprobe: ohne Daten ist die Marktdaten-Begruendung die richtige.
+    // Ohne sie liesse sich nicht unterscheiden, ob die Unterscheidung greift
+    // oder ob sie den Grund nur ueberall unterdrueckt.
+    const state = await loadDashboardState({ db, now: NOW });
+    expect(state.paper.kind).toBe("WAITING");
+    if (state.paper.kind !== "WAITING") return;
+    expect(state.paper.reason).toContain("Marktdatenquelle");
+  });
+});
 
 describe("TEST_FIXTURE erscheint nicht in Produktionskennzahlen", () => {
   it("laesst die Produktionskacheln auf WAITING stehen", async () => {
