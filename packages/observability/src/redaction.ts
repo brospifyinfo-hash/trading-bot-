@@ -65,6 +65,9 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   "bestScore", "entrySchwelle",
   // Welches Pflichtfeld gefehlt hat — die Gegenmassnahme haengt daran (§126).
   "fehlendeFelder",
+  // Die Zahlen, an denen sich ablesen laesst, OB rotiert wird: `skipped`
+  // waechst mit jedem Takt, bis die Liste einmal durch ist (§128).
+  "beobachtet", "rundeFertig",
   // Der Ausgang der Verkaufssonde, ohne die die Ausstiegsfaehigkeit fehlt
   // (§119).
   "exitProbe",

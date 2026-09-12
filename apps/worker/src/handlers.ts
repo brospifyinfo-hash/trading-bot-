@@ -6,13 +6,14 @@ import {
   OpportunityRepository,
   ProviderHealthStore,
   ProviderReadinessStore,
+  PostgresCheckpointStore,
   selectTrackedTokens,
   type ClaimedJob,
   type Database,
 } from "@sae/db";
 import { tally, type Logger } from "@sae/observability";
 import type { ProviderStatus, ProviderStatusReport } from "@sae/providers";
-import { buildMarketDataChain, type MarketDataAdapter } from "@sae/pipeline";
+import { buildMarketDataChain, runResumable, type MarketDataAdapter } from "@sae/pipeline";
 import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
@@ -353,7 +354,11 @@ class EvaluateOpportunityHandler implements JobHandler {
       );
     }
 
-    const tokens = await selectTrackedTokens(this.deps.db, MAX_TOKENS_PER_RUN);
+    // Die GANZE Liste, nicht nur ein Lauf voll: die Rotation entscheidet
+    // unten, welcher Ausschnitt an der Reihe ist. Hier stand
+    // `MAX_TOKENS_PER_RUN`, und damit sah dieser Lauf immer dieselben fuenf
+    // juengsten Token — die am wenigsten fertigen, die es gibt (§128).
+    const tokens = await selectTrackedTokens(this.deps.db, MAX_TOKENS_TRACKED);
     if (tokens.length === 0) return waitingForData("Keine beobachteten Tokens.");
 
     // Die Anbieterlage aus den PERSISTIERTEN Messungen. Ohne Messung gilt ein
@@ -397,7 +402,17 @@ class EvaluateOpportunityHandler implements JobHandler {
     const outcomes: Record<string, number> = {};
     const scores: number[] = [];
     const fehlendeFelder: Record<string, number> = {};
-    for (const token of tokens) {
+
+    // Dieselbe Rotation wie beim Marktdaten-Lauf, mit eigenem Schluessel.
+    // Ohne sie bewertet dieser Lauf jede Minute erneut dieselben fuenf Token.
+    const run = await runResumable<(typeof tokens)[number], void>({
+      jobKey: ROTATION_DECISION,
+      units: tokens,
+      unitId: (token) => token.id,
+      store: new PostgresCheckpointStore(this.deps.db),
+      clock: systemClock,
+      maxUnitsPerRun: MAX_TOKENS_PER_RUN,
+      process: async (token) => {
       const result = await runDecision({
         db: this.deps.db,
         logger: this.deps.logger,
@@ -427,7 +442,8 @@ class EvaluateOpportunityHandler implements JobHandler {
         const bisher = fehlendeFelder[feld];
         fehlendeFelder[feld] = bisher === undefined ? 1 : bisher + 1;
       }
-    }
+      },
+    });
 
     // Wie nah war der beste Token an der Schwelle? Ohne diese Zahl ist
     // `WATCH=5` eine Wand: fuenf Token knapp darunter und fuenf weit darunter
@@ -437,7 +453,13 @@ class EvaluateOpportunityHandler implements JobHandler {
     this.deps.logger.info(
       {
         role: "decision",
-        processed: tokens.length,
+        // Die Zahlen der ROTATION, nicht die Laenge der Liste. `skipped`
+        // waechst mit jedem Takt, bis die Liste einmal durch ist — die Zahl,
+        // an der sich ueberhaupt erst ablesen laesst, ob rotiert wird (§128).
+        processed: run.processed,
+        skipped: run.skipped,
+        beobachtet: tokens.length,
+        rundeFertig: run.completed,
         reasons: tally(outcomes),
         // Die Gegenmassnahme haengt am Feld: ein fehlendes `marketCapUsd`
         // heisst „die Marktdatenquelle liefert es fuer diesen Token nicht",
@@ -454,7 +476,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       },
       "Gelegenheiten geprueft",
     );
-    return { status: "OK", processed: tokens.length, outcomes };
+    return { status: "OK", processed: run.processed, outcomes };
   }
 }
 
@@ -470,7 +492,11 @@ class MarketRefreshHandler implements JobHandler {
   constructor(private readonly deps: HandlerDeps) {}
 
   async handle(job: ClaimedJob): Promise<unknown> {
-    return refreshMarketData(job.dedupeKey, {
+    // Der Auftragsschluessel taugt NICHT als Checkpoint-Schluessel — siehe
+    // `ROTATION_MARKET`. `job.dedupeKey` bleibt die Idempotenz der QUEUE; das
+    // ist eine andere Frage als die, wo die Rotation stehengeblieben ist.
+    void job;
+    return refreshMarketData(ROTATION_MARKET, {
       db: this.deps.db,
       logger: this.deps.logger,
       env: this.deps.env,
@@ -501,13 +527,35 @@ class MarketRefreshHandler implements JobHandler {
  * vier Sekunden Abstand dauern 20 Sekunden — genau ein Takt, also nie
  * ueberlappend.
  *
- * Kein Token geht dadurch verloren: `runResumable` setzt beim naechsten Takt
- * dort fort, wo dieser aufgehoert hat. Ein Token wird damit rund einmal je
- * Minute aufgefrischt statt dreimal — bei vier brauchbaren Antworten je Lauf
- * war die hoehere Frequenz ohnehin eine Illusion.
+ * Kein Token geht dadurch verloren — seit §128 stimmt dieser Satz auch. Er
+ * stand hier schon vorher und war falsch: der Checkpoint hing am
+ * Auftragsschluessel und damit am Zeitfenster, sodass jeder Takt wieder bei
+ * den juengsten fuenf begann. Erst mit einem stabilen Rotationsschluessel
+ * setzt `runResumable` tatsaechlich dort fort, wo der vorige Takt aufhoerte.
+ *
+ * Bei 566 Token und fuenf je 20-Sekunden-Takt dauert ein voller Durchgang
+ * rund 38 Minuten. Das ist lang — aber es ist der ehrliche Preis des
+ * kostenlosen Kontingents, und vorher war es unendlich.
  */
 const MAX_TOKENS_PER_RUN = 5;
 const MAX_TOKENS_TRACKED = 500;
+
+/**
+ * Die Schluessel, unter denen die Rotation ihren Platz merkt.
+ *
+ * Konstant und ausdruecklich NICHT der Auftragsschluessel: der traegt das
+ * Zeitfenster des Takts und ist alle zwanzig Sekunden ein anderer. Damit lud
+ * jeder Lauf einen leeren Checkpoint und begann wieder am Anfang der nach
+ * `firstSeenAt DESC` sortierten Liste — es wurden also immer nur die fuenf
+ * juengsten Token angefasst, und die uebrigen 561 nie wieder (§128).
+ *
+ * Ein Schluessel je Auftragsart, weil die beiden Laeufe getrennt rotieren:
+ * der Marktdaten-Lauf alle 20 Sekunden, der Entscheidungslauf jede Minute.
+ * Ein gemeinsamer Schluessel liesse den einen den Platz des anderen
+ * ueberschreiben.
+ */
+const ROTATION_MARKET = "rotation:REFRESH_MARKET_DATA";
+const ROTATION_DECISION = "rotation:EVALUATE_OPPORTUNITY";
 
 /**
  * Sicherheitsbefunde nachladen.

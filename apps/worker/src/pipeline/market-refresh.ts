@@ -81,9 +81,24 @@ interface TokenUnit {
 /**
  * Ein Lauf.
  *
- * `jobKey` ist der Auftragsschluessel aus der Queue. Er traegt das Zeitfenster
- * des Takts, also gehoert der Checkpoint genau zu diesem Takt — und wird nach
- * vollstaendiger Abarbeitung geloescht, damit der naechste Takt frisch anfaengt.
+ * `jobKey` ist der Schluessel des CHECKPOINTS, nicht der des Auftrags — und
+ * der Unterschied hat das ganze System zum Stillstand gebracht.
+ *
+ * Hier stand der Auftragsschluessel aus der Queue, mit der Begruendung, der
+ * Checkpoint gehoere „genau zu diesem Takt". Der Auftragsschluessel traegt
+ * aber das ZEITFENSTER des Takts und ist damit alle zwanzig Sekunden ein
+ * anderer. Jeder Lauf lud folglich einen leeren Checkpoint und begann wieder
+ * am Anfang der Liste — die nach `firstSeenAt DESC` sortiert ist.
+ *
+ * Wirkung im Betrieb: von 566 beobachteten Token wurden immer nur die
+ * **fuenf juengsten** aufgefrischt. Die uebrigen 561 hat nach ihrer
+ * Entdeckung nie wieder jemand angesehen. Im Log stand das die ganze Zeit
+ * sichtbar da — `skipped: 0`, in jeder einzelnen Zeile. Ein rotierender Lauf
+ * haette wachsende Zahlen gezeigt (§128).
+ *
+ * Der Schluessel identifiziert deshalb die ROTATION und nicht den Takt.
+ * `runResumable` loescht ihn, sobald die Liste einmal durch ist — der
+ * naechste Durchgang faengt dann von selbst neu an.
  */
 export async function refreshMarketData(
   jobKey: string,

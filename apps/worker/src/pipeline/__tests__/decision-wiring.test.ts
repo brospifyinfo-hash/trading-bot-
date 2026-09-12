@@ -186,6 +186,55 @@ describe("Gelegenheitspruefung", () => {
     expect(result.outcomes["BLOCKED"]).toBeUndefined();
   });
 
+  /**
+   * Der Fehler, der das System zum Stillstand gebracht hat.
+   *
+   * Der Checkpoint hing am Auftragsschluessel, und der traegt das Zeitfenster
+   * des Takts. Jeder Lauf lud damit einen leeren Checkpoint und begann wieder
+   * am Anfang der nach `firstSeenAt DESC` sortierten Liste: von 566 Token
+   * wurden immer nur die fuenf juengsten angesehen, die uebrigen 561 nie
+   * wieder (§128).
+   *
+   * Im Log stand es die ganze Zeit sichtbar da — `skipped: 0`, in jeder
+   * einzelnen Zeile. Ein rotierender Lauf zeigt wachsende Zahlen.
+   */
+  it("sieht beim zweiten Takt ANDERE Tokens an", async () => {
+    // Mehr Tokens als ein Lauf anfasst — sonst waere die Frage gar nicht
+    // gestellt.
+    for (let i = 0; i < 8; i += 1) {
+      await db.insert(schema.tokens).values({
+        mint: `Rotation${String(i).padStart(38, "x")}`,
+        discoverySource: "dexscreener",
+        state: "SCREENING",
+      });
+    }
+
+    const registry = handlers();
+    const erster = (await registry["EVALUATE_OPPORTUNITY"]?.handle(job)) as {
+      processed: number;
+    };
+
+    // Ausdruecklich ein ANDERER Auftragsschluessel: genau so kommt der
+    // naechste Takt an. Frueher hat das den Checkpoint zuruckgesetzt.
+    const zweiter = (await registry["EVALUATE_OPPORTUNITY"]?.handle({
+      ...job,
+      id: "00000000-0000-4000-8000-000000000003",
+      dedupeKey: "job:evaluate:test:naechstes-fenster",
+    })) as { processed: number };
+
+    const alle = await db.select({ id: schema.tokens.id }).from(schema.tokens);
+
+    // Beide Laeufe haben gearbeitet, und keiner mehr als erlaubt.
+    expect(erster.processed).toBeGreaterThan(0);
+    expect(zweiter.processed).toBeGreaterThan(0);
+    expect(erster.processed).toBeLessThanOrEqual(5);
+
+    // Der eigentliche Nachweis: die Summe ist die Zahl der TOKEN, nicht die
+    // doppelte Laufgroesse. Ohne Rotation haetten beide Laeufe dieselben
+    // fuenf angefasst und die Summe waere zehn — mit fuenf Dubletten.
+    expect(erster.processed + zweiter.processed).toBe(alle.length);
+  });
+
   it("legt keine Gelegenheit und keine Position an", async () => {
     // Der Lauf darf nichts erzeugen, solange die Datenlage keine Entscheidung
     // traegt. Er soll sichtbar machen, nicht handeln.

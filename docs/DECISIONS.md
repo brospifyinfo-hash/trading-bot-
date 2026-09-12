@@ -4924,3 +4924,95 @@ dem Verweis darauf, wo diese Fälle stehen.
 
 Eine unbequeme Eigenschaft zu benennen ist billiger, als sie zu beheben, indem
 man Daten erfindet.
+
+## §128 — `skipped: 0`, in jeder einzelnen Zeile
+
+Datum: 2026-09-12
+
+Die Frage lautete, welches Pflichtfeld fehlt. Die Antwort war eindeutig:
+
+```
+Gelegenheiten geprueft  processed: 5  reasons: BLOCKED_DATA_QUALITY_TOO_LOW=5
+                        fehlendeFelder: liquidityUsd=5 marketCapUsd=5 volume24hUsd=5
+```
+
+Alle drei DexScreener-Felder, bei allen fünf Token. Der Preis war da (vom
+Router), die Begleitdaten nicht.
+
+Das führte zur eigentlichen Frage: **warum ausgerechnet diese fünf?**
+
+### Der Checkpoint hing am Zeitfenster
+
+```ts
+return refreshMarketData(job.dedupeKey, { … });
+```
+
+`job.dedupeKey` entsteht aus `idempotencyKey("job", { kind, cadence, window, … })`
+— und `window` ist `cadenceWindow(now, intervalMs)`, also alle zwanzig
+Sekunden ein anderer Wert.
+
+`runResumable` lädt den Checkpoint unter diesem Schlüssel, findet nichts, und
+beginnt am Anfang der Liste. Die Liste ist nach `firstSeenAt DESC` sortiert.
+
+**Von 566 beobachteten Token wurden immer nur die fünf jüngsten angefasst. Die
+übrigen 561 hat nach ihrer Entdeckung nie wieder jemand angesehen.**
+
+Der Entscheidungslauf war noch direkter: er lud gleich nur fünf Zeilen
+(`selectTrackedTokens(db, MAX_TOKENS_PER_RUN)`) und rotierte gar nicht.
+
+Damit urteilte das System permanent über die Token, die am wenigsten bereit
+sind: gerade entdeckt, von der Anreicherung noch nicht erreicht, und bei
+DexScreener oft noch ohne handelbares Paar. Genau die drei fehlenden Felder.
+
+### Es stand die ganze Zeit sichtbar da
+
+`skipped: 0` — in jeder Log-Zeile dieser Sitzung, von Anfang an. Ein
+rotierender Lauf zeigt wachsende Zahlen; eine Null bedeutet „der Checkpoint war
+leer". Die Zahl wurde geloggt, war korrekt, und niemand hat sie gelesen — ich
+eingeschlossen.
+
+Eine Kennzahl, die man nicht liest, ist keine Kennzahl.
+
+### Zwei Kommentare, die sich widersprachen
+
+In `market-refresh.ts` stand, der Checkpoint gehöre **absichtlich** zum
+einzelnen Takt: „Er traegt das Zeitfenster des Takts […] und wird nach
+vollstaendiger Abarbeitung geloescht, damit der naechste Takt frisch
+anfaengt."
+
+In `handlers.ts`, zwanzig Zeilen unter der Stelle, die `MAX_TOKENS_PER_RUN`
+auf fünf senkt: „Kein Token geht dadurch verloren: `runResumable` setzt beim
+naechsten Takt dort fort, wo dieser aufgehoert hat."
+
+Beide Sätze standen monatelang nebeneinander. Der erste beschrieb das
+Verhalten, der zweite die Absicht — und die Senkung von 25 auf 5 (§115, §117)
+stützte sich auf den zweiten. Jede dieser Senkungen hat die Abdeckung also
+nicht umverteilt, sondern verkleinert: von 25 jüngsten auf 5 jüngste.
+
+Ein Kommentar, der eine Zusicherung gibt, die der Code nicht einlöst, ist
+schlimmer als keiner. Er hat hier zwei Folgeentscheidungen getragen.
+
+### Die Reparatur
+
+Der Checkpoint-Schlüssel identifiziert jetzt die **Rotation** und nicht den
+Takt: `rotation:REFRESH_MARKET_DATA` und `rotation:EVALUATE_OPPORTUNITY`, je
+einer pro Auftragsart, weil beide unterschiedlich schnell laufen.
+`runResumable` löscht ihn, sobald die Liste einmal durch ist — der nächste
+Durchgang beginnt dann von selbst neu.
+
+Der Entscheidungslauf lädt die ganze Liste und rotiert genauso.
+
+Bei 566 Token und fünf je Zwanzig-Sekunden-Takt dauert ein voller Durchgang
+rund 38 Minuten. Das ist lang, und es ist der ehrliche Preis des kostenlosen
+Kontingents — vorher war es unendlich.
+
+### Der Wächter
+
+Zwei Läufe mit **verschiedenen** Auftragsschlüsseln dürfen zusammen nicht mehr
+Token anfassen, als es gibt. Gegengeprüft durch Wiederherstellen des Fehlers:
+`expected 10 to be 9` — fünf plus fünf, mit fünf Dubletten. Genau die
+Signatur.
+
+Dazu im Log jetzt `skipped`, `beobachtet` und `rundeFertig` an der
+Entscheidungszeile. Die erste Zahl ist die, an der sich überhaupt ablesen
+lässt, ob rotiert wird.
