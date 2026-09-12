@@ -396,6 +396,7 @@ class EvaluateOpportunityHandler implements JobHandler {
 
     const outcomes: Record<string, number> = {};
     const scores: number[] = [];
+    const fehlendeFelder: Record<string, number> = {};
     for (const token of tokens) {
       const result = await runDecision({
         db: this.deps.db,
@@ -422,6 +423,10 @@ class EvaluateOpportunityHandler implements JobHandler {
       const seen = outcomes[result.label];
       outcomes[result.label] = seen === undefined ? 1 : seen + 1;
       if (result.finalScore !== null) scores.push(result.finalScore);
+      for (const feld of result.missing) {
+        const bisher = fehlendeFelder[feld];
+        fehlendeFelder[feld] = bisher === undefined ? 1 : bisher + 1;
+      }
     }
 
     // Wie nah war der beste Token an der Schwelle? Ohne diese Zahl ist
@@ -434,6 +439,12 @@ class EvaluateOpportunityHandler implements JobHandler {
         role: "decision",
         processed: tokens.length,
         reasons: tally(outcomes),
+        // Die Gegenmassnahme haengt am Feld: ein fehlendes `marketCapUsd`
+        // heisst „die Marktdatenquelle liefert es fuer diesen Token nicht",
+        // ein fehlendes `priceUsd` heisst „der Router hat keinen Kurs".
+        ...(Object.keys(fehlendeFelder).length > 0
+          ? { fehlendeFelder: tally(fehlendeFelder) }
+          : {}),
         ...(bester === null
           ? {}
           : {

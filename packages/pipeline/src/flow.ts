@@ -3,7 +3,7 @@ import type { ProviderFleetStatus } from "@sae/providers";
 
 import type { SnapshotProvenance } from "./ingestion";
 import { snapshotSupportsEntry } from "./ingestion";
-import type { MarketDataFields } from "./market-data-quality";
+import type { MarketDataField, MarketDataFields } from "./market-data-quality";
 import { assessMarketData, explainVerdict } from "./market-data-quality";
 
 /**
@@ -110,6 +110,8 @@ export interface StreamBranch {
   readonly open: boolean;
   readonly reason: BranchReason;
   readonly detail: string;
+  /** Bei `DATA_QUALITY_TOO_LOW`: welche Pflichtfelder fehlten. */
+  readonly missing?: readonly MarketDataField[];
 }
 
 export interface BranchPlan {
@@ -137,6 +139,22 @@ export type DataQualityCheck =
 export interface EntryDataVerdict {
   readonly allowed: boolean;
   readonly reason: string;
+  /**
+   * Welche Pflichtfelder gefehlt haben — als Namen, nicht als Fliesstext.
+   *
+   * `reason` sagt es bereits, aber in einem Satz. Im Betrieb wurde daraus
+   * `BLOCKED_DATA_QUALITY_TOO_LOW=3` und die eigentliche Auskunft fehlte:
+   * WELCHES Feld. Ein fehlendes `marketCapUsd` heisst „die Marktdatenquelle
+   * liefert es fuer diesen Token nicht", ein fehlendes `priceUsd` heisst
+   * „der Router hat keinen Kurs" — zwei verschiedene Probleme mit zwei
+   * verschiedenen Gegenmassnahmen (§126).
+   *
+   * Die Namen stammen aus `MarketDataField` und damit aus einer
+   * geschlossenen Aufzaehlung. Aus einem Satz zurueckzuparsen waere die
+   * Alternative gewesen und haette beim naechsten Umformulieren stumm
+   * aufgehoert zu funktionieren.
+   */
+  readonly missing?: readonly MarketDataField[];
 }
 
 /**
@@ -185,7 +203,11 @@ export function entryDataVerdict(
   });
   return verdict.kind === "PASS"
     ? { allowed: true, reason: "" }
-    : { allowed: false, reason: explainVerdict(verdict) };
+    : {
+        allowed: false,
+        reason: explainVerdict(verdict),
+        ...(verdict.kind === "INCOMPLETE" ? { missing: verdict.missing } : {}),
+      };
 }
 
 /**
@@ -246,7 +268,15 @@ export function planBranches(input: {
       : dataVerdict.reason;
 
   for (const stream of ["AUTO_PAPER", "MANUAL_PAPER"] as const) {
-    branches.push({ stream, open: paperOpen, reason: paperReason, detail: paperDetail });
+    branches.push({
+      stream,
+      open: paperOpen,
+      reason: paperReason,
+      detail: paperDetail,
+      // Nur wenn es etwas zu nennen gibt — ein leeres Feld in jedem
+      // Zweig waere Rauschen.
+      ...(dataVerdict.missing === undefined ? {} : { missing: dataVerdict.missing }),
+    });
   }
 
   // Live zusaetzlich: Freigabe und kein Notstopp. Die Datenlage ist an dieser

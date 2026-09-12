@@ -137,6 +137,8 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
   readonly label: string;
   /** Endscore, wenn einer gebildet wurde. `null` sonst. */
   readonly finalScore: number | null;
+  /** Namen fehlender Pflichtfelder aus geschlossener Aufzaehlung. Sonst leer. */
+  readonly missing: readonly string[];
 }> {
   const parameters = DEFAULT_STRATEGY_PARAMETERS;
 
@@ -229,6 +231,10 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     detail: detailOf(result),
     label: labelOf(result),
     finalScore: scoreOf(result),
+    // Welche Pflichtfelder gefehlt haben. `BLOCKED_DATA_QUALITY_TOO_LOW=3`
+    // sagt, DASS die Datenlage nicht reichte, und verschweigt das Einzige,
+    // was man dagegen tun kann: WELCHES Feld fehlte (§126).
+    missing: result.kind === "BLOCKED" ? (result.missing ?? []) : [],
   };
 }
 

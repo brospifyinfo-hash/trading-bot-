@@ -104,6 +104,46 @@ describe("Paper haengt nicht am Live-Handel", () => {
 });
 
 describe("Verzweigung in die Stroeme", () => {
+  /**
+   * Welches Feld gefehlt hat, nicht nur DASS eines fehlte.
+   *
+   * Im Betrieb stand `BLOCKED_DATA_QUALITY_TOO_LOW=3` und damit genau die
+   * halbe Auskunft: die Gegenmassnahme haengt am Feld. Ein fehlendes
+   * `marketCapUsd` heisst „die Marktdatenquelle liefert es fuer diesen Token
+   * nicht", ein fehlendes `priceUsd` heisst „der Router hat keinen Kurs" —
+   * zwei verschiedene Probleme (§126).
+   */
+  it("nennt das fehlende Pflichtfeld beim Namen", () => {
+    const plan = planBranches({
+      readiness: readiness(),
+      systemState: DEFAULT_SYSTEM_STATE,
+      provenance: primary,
+      dataQuality: {
+        kind: "CHECK",
+        market: marketDataFieldsFrom({ ...vollstaendig, marketCapUsd: null }),
+      },
+    });
+
+    const paper = plan.branches.find((b) => b.stream === "AUTO_PAPER");
+    expect(paper?.open).toBe(false);
+    expect(paper?.reason).toBe("DATA_QUALITY_TOO_LOW");
+    // Der eigentliche Punkt: der Name steht strukturiert da und muss nicht
+    // aus einem Satz zurueckgeparst werden.
+    expect(paper?.missing).toEqual(["marketCapUsd"]);
+  });
+
+  it("laesst das Feld weg, wenn nichts fehlt", () => {
+    // Ein leeres Feld in jedem Zweig waere Rauschen — und im Log eine Spalte,
+    // die immer dasteht und nie etwas sagt.
+    const plan = planBranches({
+      readiness: readiness(),
+      systemState: DEFAULT_SYSTEM_STATE,
+      provenance: primary,
+      dataQuality: geprueft,
+    });
+    expect(plan.branches.find((b) => b.stream === "AUTO_PAPER")?.missing).toBeUndefined();
+  });
+
   it("oeffnet Auto und Manual gemeinsam", () => {
     // Getrennt erzeugt waere die Frage „haette der Mensch besser entschieden"
     // nicht mehr beantwortbar.

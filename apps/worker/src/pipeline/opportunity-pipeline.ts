@@ -101,7 +101,13 @@ export type PipelineOutcome =
   /** Keine Quelle hat geantwortet. Kein Signal, keine Gelegenheit, keine Position. */
   | { readonly kind: "NO_SOURCE"; readonly reason: string; readonly attempted: readonly string[] }
   /** Die Datenlage traegt keine Einstiegsentscheidung. */
-  | { readonly kind: "BLOCKED"; readonly reason: string; readonly detail: string }
+  | {
+      readonly kind: "BLOCKED";
+      readonly reason: string;
+      readonly detail: string;
+      /** Bei `DATA_QUALITY_TOO_LOW`: welche Pflichtfelder fehlten (§126). */
+      readonly missing?: readonly string[];
+    }
   /** Bewertet, aber kein Einstieg. Die Gelegenheit wird trotzdem festgehalten. */
   | {
       readonly kind: "NO_ENTRY";
@@ -265,6 +271,7 @@ export async function runOpportunityPipeline(
       kind: "BLOCKED",
       reason: blocked?.reason ?? "NO_STREAM",
       detail: blocked?.detail ?? "Kein Strom geoeffnet.",
+      ...(blocked?.missing === undefined ? {} : { missing: blocked.missing }),
     };
   }
 

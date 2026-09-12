@@ -63,6 +63,8 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // Gegenteiliges. Die Schwelle steht daneben, damit die Zahl ohne Nachschlagen
   // lesbar ist (§122).
   "bestScore", "entrySchwelle",
+  // Welches Pflichtfeld gefehlt hat — die Gegenmassnahme haengt daran (§126).
+  "fehlendeFelder",
   // Der Ausgang der Verkaufssonde, ohne die die Ausstiegsfaehigkeit fehlt
   // (§119).
   "exitProbe",

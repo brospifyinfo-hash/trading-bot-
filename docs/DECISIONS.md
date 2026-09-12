@@ -4803,3 +4803,63 @@ regulärer Ablehnungsgrund.
 Der Unterschied zu den vorigen Fällen: diesmal gab es eine zweite Anzeige,
 die dasselbe Datum richtig las. Zwei Wege zu derselben Frage sind teuer —
 und sie haben hier einen Fehler gefunden, den kein Test fand.
+
+## §126 — Die halbe Auskunft, eine Ebene tiefer
+
+Datum: 2026-09-12
+
+Nach §125 fällt die Kette zum ersten Mal echte Urteile:
+
+```
+Gelegenheiten geprueft  role: decision  processed: 5
+                        reasons: BLOCKED_DATA_QUALITY_TOO_LOW=3
+                                 REJECT_DATA_INCOMPLETE=2
+```
+
+Das ist der Fortschritt — und zugleich wieder die halbe Auskunft. `DATA_QUALITY_TOO_LOW`
+heißt: eines von vier Pflichtfeldern fehlte (`priceUsd`, `liquidityUsd`,
+`volume24hUsd`, `marketCapUsd`). **Welches**, stand nicht da.
+
+Der Unterschied ist keine Feinheit, sondern die Gegenmaßnahme:
+
+- fehlendes `marketCapUsd` → die Marktdatenquelle liefert es für diesen Token
+  nicht; ein anderer Anbieter oder ein anderes Feld hilft
+- fehlendes `priceUsd` → der Router hat keinen Kurs; Probemenge oder Takt
+  ansehen
+
+Zwei verschiedene Probleme, ein Wort im Log.
+
+### Der Wert war da und wurde zu Prosa
+
+`assessMarketData` liefert `{ kind: "INCOMPLETE", missing: [...] }` — die Namen
+stehen strukturiert da. `entryDataVerdict` machte daraus sofort einen Satz
+(`explainVerdict`), und ab dort war die Liste weg.
+
+Aus diesem Satz zurückzuparsen wäre die billige Lösung gewesen und hätte beim
+nächsten Umformulieren still aufgehört zu funktionieren. Die Liste wird deshalb
+jetzt **mitgeführt**: `EntryDataVerdict.missing` → `StreamBranch.missing` →
+`PipelineOutcome.missing` → eigene Auszählung `fehlendeFelder` im Log.
+
+Die Namen stammen aus `MarketDataField` und damit aus einer geschlossenen
+Aufzählung — dieselbe Regel wie beim Etikett in §122: kein Fließtext, nichts,
+was ein Token-Ersteller beeinflussen könnte.
+
+Optional, nicht leer: ein Feld, das in jedem Zweig steht und fast immer leer
+ist, ist Rauschen. Der Test hält beide Seiten fest — der Name ist da, wenn
+etwas fehlt, und das Feld ist weg, wenn nichts fehlt.
+
+### Der zweite Grund braucht keinen Umbau
+
+`REJECT_DATA_INCOMPLETE` mit `bestScore: —` ist bereits vollständig lesbar:
+`finalScore` ist `null`, und das passiert genau dann, wenn `weightCoverage`
+unter `MIN_WEIGHT_COVERAGE` (0.6) liegt. Ohne Sicherheitsbefund liegt sie bei
+0.50 (§111).
+
+Die Ursache ist damit keine Fehlfunktion, sondern ein Durchsatz: die
+Anreicherung nimmt fünf Token alle fünf Minuten (§114), und es sind 566
+beobachtete Token. Ein vollständiger Durchlauf dauert gut neun Stunden. Wer
+jetzt hinsieht, sieht überwiegend Token ohne Befund — und das ist die richtige
+Auskunft, nicht ein Fehler.
+
+Ob dieser Takt bleiben soll, ist eine Abwägung gegen das Kontingent von
+RugCheck und gehört dem Betreiber vorgelegt, nicht hier entschieden.
