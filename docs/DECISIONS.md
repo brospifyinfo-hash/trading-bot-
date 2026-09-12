@@ -4739,3 +4739,67 @@ Syntaxfehler zwölf Zeilen weiter unten.
 Kein tiefer Befund, aber der Grund, warum der Text jetzt ohne Anführungszeichen
 auskommt: Satzzeichen, die je nach Sprache anders aussehen, haben in einem
 String-Literal nichts verloren.
+
+## §125 — Zwei Zeilen, die sich widersprechen
+
+Datum: 2026-09-12
+
+Die Migration lief, die Spalte war da, die Snapshots stiegen wieder. Und dann
+standen im Log desselben Prozesses, zwanzig Sekunden auseinander, zwei Zeilen,
+von denen eine falsch sein musste:
+
+```
+Marktdaten aufgefrischt  processed: 5  ingested: 5  noSource: 0
+                         entryReady: 5  exitProbe: OK=5
+Gelegenheiten geprueft   role: decision  processed: 5
+                         reasons: BLOCKED_NO_MARKET_DATA=5
+```
+
+Fünf Token mit frischen Marktdaten, fünf einstiegsfähige Snapshots — und
+zwanzig Sekunden später keine Marktdaten. Drei Anbieter standen auf CONNECTED.
+
+### Die Ursache
+
+`apps/worker/src/handlers.ts` las die persistierten Messungen und baute daraus
+die Anbieterlage für die Entscheidungsmaschine:
+
+```ts
+capabilities: [],
+```
+
+`summarizeFleet` filtert auf `capabilities.includes("TOKEN_MARKET")`. Eine leere
+Liste ergibt eine leere Auswahl, `anyMarketDataUsable` wird `false`, und
+`signalValidity` schließt beide Papier-Ströme mit `NO_MARKET_DATA`.
+
+Die Spalte war die ganze Zeit gefüllt. Das Dashboard liest sie — deshalb stand
+dort korrekt „PIPELINE LAEUFT", während der Worker dasselbe Datum als
+Ausfall las. **Der Widerspruch zwischen beiden Anzeigen war der Hinweis**, und
+er stand nur deshalb sichtbar da, weil das Etikett seit §122 den Grund mitträgt.
+Unter dem alten `NO_ENTRY=5` wäre er unauffindbar gewesen.
+
+### Warum kein Test das sah
+
+Der Verdrahtungstest `kommt mit erreichbarem Anbieter am Marktdaten-Tor vorbei`
+gibt es, er lief, er war grün — und er kann diesen Fehler nicht sehen. Ohne
+Historie hält die Kette vorher bei `NO_FEATURE_VECTOR` an; die Stromplanung,
+in der `summarizeFleet` befragt wird, kommt nie an die Reihe.
+
+Die Abbildung stand außerdem **inline im Handler** und war damit nur über einen
+vollständigen Lauf erreichbar: Snapshots, Anbieterzeile, Historie, Adapter.
+Eine Naht, die man nur durch das ganze System erreicht, ist keine geprüfte Naht.
+
+Sie ist deshalb jetzt eine eigene, exportierte Funktion `toStatusReports`, und
+der Wächter prüft sie direkt — gegengeprüft durch Wiederherstellen des Fehlers:
+zwei Tests schlagen an, einer davon exakt auf `anyMarketDataUsable`.
+
+### Die Klasse
+
+Ein Feld mit einem Platzhalter zu füllen, der eine Prüfung stillschweigend
+scheitern lässt — dasselbe Muster wie `features: null` (§110), der leere
+Adapter-Map (§99) und `inputMint === outputMint` (§120). Es sieht nie kaputt
+aus: `[]` ist ein gültiger Wert, der Code läuft durch, und das Ergebnis ist ein
+regulärer Ablehnungsgrund.
+
+Der Unterschied zu den vorigen Fällen: diesmal gab es eine zweite Anzeige,
+die dasselbe Datum richtig las. Zwei Wege zu derselben Frage sind teuer —
+und sie haben hier einen Fehler gefunden, den kein Test fand.

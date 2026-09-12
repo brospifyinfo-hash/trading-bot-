@@ -265,6 +265,70 @@ class DiscoverTokensHandler implements JobHandler {
  * vorher passierte nichts und niemand erfuhr warum, jetzt steht im Log,
  * welches Tor zu ist.
  */
+/**
+ * Persistierte Messungen in das, was die Entscheidungsmaschine liest.
+ *
+ * Eigenstaendig und exportiert, weil genau hier ein Fehler sass, den kein Test
+ * sehen konnte: die Abbildung stand inline im Handler und liess sich nur ueber
+ * einen vollstaendigen Lauf erreichen — mit Snapshots, Anbieterzeile und
+ * Historie. Der vorhandene Verdrahtungstest kam nie so weit, weil die Kette
+ * ohne Historie vorher bei `NO_FEATURE_VECTOR` anhaelt.
+ *
+ * Eine Naht, die man nur durch das ganze System erreicht, ist keine gepruefte
+ * Naht (§125).
+ */
+export function toStatusReports(
+  rows: readonly {
+    readonly providerId: string;
+    readonly status: string;
+    readonly capabilities: unknown;
+    readonly lastSuccessAt: Date | null;
+    readonly lastFailureAt: Date | null;
+    readonly lastFailureReason: string | null;
+    readonly latencyMsP50: number | null;
+    readonly latencyMsP95: number | null;
+    readonly dataFreshnessSeconds: number | null;
+    readonly detail: string | null;
+  }[],
+): readonly ProviderStatusReport[] {
+  return rows.map((row) => ({
+    providerId: row.providerId as never,
+    kind: "market" as const,
+    status: row.status as ProviderStatus,
+    /**
+     * Aus der Messung GELESEN, nicht leer gelassen.
+     *
+     * Hier stand `[]`, und das hat die gesamte Entscheidungskette stillgelegt:
+     * `summarizeFleet` filtert auf `capabilities.includes("TOKEN_MARKET")`,
+     * eine leere Liste ergibt eine leere Auswahl, `anyMarketDataUsable` wird
+     * `false` — und `signalValidity` schliesst beide Papier-Stroeme mit
+     * `NO_MARKET_DATA`.
+     *
+     * Im Betrieb sah das so aus: derselbe Prozess meldete zwanzig Sekunden
+     * vorher `ingested: 5, entryReady: 5` und danach
+     * `BLOCKED_NO_MARKET_DATA=5`. Drei verbundene Anbieter, und die
+     * Entscheidungsmaschine bekam gesagt, es gaebe keinen.
+     *
+     * Die Spalte war die ganze Zeit gefuellt — das Dashboard liest sie genauso
+     * und hat deshalb korrekt „Pipeline laeuft" gemeldet. Der Widerspruch
+     * zwischen beiden Anzeigen war der Hinweis.
+     */
+    capabilities: Array.isArray(row.capabilities)
+      ? (row.capabilities as ProviderStatusReport["capabilities"])
+      : [],
+    lastSuccessAt: row.lastSuccessAt,
+    lastFailureAt: row.lastFailureAt,
+    lastFailureReason: row.lastFailureReason,
+    latencyMsP50: row.latencyMsP50,
+    latencyMsP95: row.latencyMsP95,
+    rateLimit: null,
+    // Aus der Messung uebernommen, nicht ersetzt: `null` heisst hier
+    // ausdruecklich "noch nie etwas geliefert" und nicht "frisch".
+    dataFreshnessSeconds: row.dataFreshnessSeconds,
+    detail: row.detail,
+  }));
+}
+
 class EvaluateOpportunityHandler implements JobHandler {
   readonly wiring = "DEDICATED" as const;
   constructor(private readonly deps: HandlerDeps) {}
@@ -295,24 +359,7 @@ class EvaluateOpportunityHandler implements JobHandler {
     // Die Anbieterlage aus den PERSISTIERTEN Messungen. Ohne Messung gilt ein
     // Anbieter als nicht erreichbar — dieselbe pessimistische Vorgabe wie
     // ueberall sonst.
-    const reports: readonly ProviderStatusReport[] = (
-      await new ProviderHealthStore(this.deps.db).latest()
-    ).map((row) => ({
-      providerId: row.providerId as never,
-      kind: "market" as const,
-      status: row.status as ProviderStatus,
-      capabilities: [],
-      lastSuccessAt: row.lastSuccessAt,
-      lastFailureAt: row.lastFailureAt,
-      lastFailureReason: row.lastFailureReason,
-      latencyMsP50: row.latencyMsP50,
-      latencyMsP95: row.latencyMsP95,
-      rateLimit: null,
-      // Aus der Messung uebernommen, nicht ersetzt: `null` heisst hier
-      // ausdruecklich "noch nie etwas geliefert" und nicht "frisch".
-      dataFreshnessSeconds: row.dataFreshnessSeconds,
-      detail: row.detail,
-    }));
+    const reports = toStatusReports(await new ProviderHealthStore(this.deps.db).latest());
     const snapshotCount = await countSnapshots(this.deps.db);
 
     // Einmal je Lauf und nicht je Token: der Adapter haelt keinen Zustand,
