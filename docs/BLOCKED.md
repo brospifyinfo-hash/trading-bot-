@@ -1,161 +1,125 @@
 # Was blockiert ist — und woran genau
 
-Stand: 2026-09-01, nach der Infrastruktur-Runde: Snapshot-Aufnahme mit
-Nebenläufigkeitsschutz, Checkpointing im Betrieb, Research-Evidenzsperre,
-Resend-Adapter, INVEST-NOW-Prüfkette, Queue-Observability und der
-Vercel-Verbindungscache.
+Stand: 2026-09-12, nach §117–§124. Diese Datei ist bewusst kurz und konkret.
+Sie beantwortet eine Frage: **was fehlt, damit dieses System tut, wofür es
+gebaut ist?**
 
-Diese Datei ist bewusst kurz und konkret. Sie beantwortet eine Frage: **was
-fehlt, damit dieses System läuft?**
+> **Zur Vorgeschichte.** Bis zum 2026-09-01 stand hier als „die eine Ursache"
+> der Egress dieses Entwicklungscontainers: kein Anbieter war erreichbar, alle
+> antworteten mit `403 CONNECT`. Das gilt **für diese Umgebung weiterhin** — und
+> es war nie eine Eigenschaft des Systems. Von Railway aus sind die Anbieter
+> erreichbar, gemessen und verifiziert. Eine Umgebungseigenschaft als
+> Systemzustand zu führen war der Fehler, den dieser Abschnitt korrigiert.
 
 ---
 
-## Die eine Ursache
+## Gemessener Stand
 
-Der Egress dieses Containers lässt keine Verbindung zu den Marktdatenquellen zu.
-Gemessen, nicht vermutet — alle antworten mit `403 CONNECT`:
+Aus `/api/diagnostics/providers`, nicht aus dieser Datei abgeschrieben:
 
-| Host | Zweck | Messung |
+```
+headline: PROVIDER VERIFIED
+```
+
+| Anbieter | Zustand | Wofür |
 |---|---|---|
-| `api.dexscreener.com` | Marktdaten, Discovery | 403 CONNECT |
-| `public-api.birdeye.so` | Marktdaten, Preishistorie | 403 CONNECT |
-| `api.jup.ag` / `lite-api.jup.ag` | Routing, Swap | 403 CONNECT |
-| `mainnet.helius-rpc.com` | Holder, RPC | 403 CONNECT |
-| `api.rugcheck.xyz` | Sicherheitsbefunde | 403 CONNECT |
-| `api.mainnet-beta.solana.com` | RPC | 403 CONNECT |
+| `dexscreener` | CAPABILITY_READY, Smoke 200 | Discovery, Liquidität, Volumen, Marktkapitalisierung |
+| `jupiter-quote` | CAPABILITY_READY, Smoke 200 | Preis **mit Zeitstempel**, Preiseinfluss, Ausstiegsfähigkeit |
+| `rugcheck` | CAPABILITY_READY, Smoke 200 | Mint-/Freeze-Autorität, Holder-Konzentration |
+| `birdeye`, `helius` | NOT_CONFIGURED | nicht hinterlegt |
+| `jupiter` (Router) | UNAVAILABLE | Ausführungspfad — siehe unten |
 
-Erreichbar ist ausschließlich `raw.githubusercontent.com`. Daher stammt der
-einzige verifizierte Anbietervertrag im Repo: Jupiters eigene
-OpenAPI-Spezifikation.
+Die Kette läuft damit von der Entdeckung bis zur Einstiegsentscheidung.
 
 ---
 
-## Komponentenstatus
+## Was jetzt blockiert
 
-### Vollständig gebaut und getestet — läuft ohne Provider
+### 1. Migration 0013 ist nicht gefahren
 
-| Komponente | Ort |
+`token_snapshots.exit_capacity_ratio` fehlt in der Produktionsdatenbank.
+**Solange sie fehlt, scheitert jeder Snapshot-Schreibvorgang** — Postgres lehnt
+das INSERT vollständig ab, der Bot sammelt nichts.
+
+Behoben durch einen Lauf der GitHub-Action „Datenbank migrieren"
+(Bestätigungswort `MIGRATE`). Railway führt Migrationen ausdrücklich nicht aus.
+
+### 2. Die Einstiegsschwelle ist noch nicht erreicht
+
+Gemessen: Endscore **70**, Schwelle **75**. Das ist kein Defekt, sondern die
+Strategie — sie darf und soll ablehnen. Der Bot meldet `WATCH`, also „noch
+nicht gut genug", und beobachtet weiter.
+
+Fünf Punkte fehlen. Ob ein Token sie erreicht, ist eine empirische Frage und
+wird gemessen, nicht behauptet.
+
+### 3. Vier fehlende Datenquellen deckeln den Score strukturell
+
+`smartMoney` (0.12), `dev` (0.07), `social` (0.06), `narrative` (0.05) haben
+keine Quelle. Zusammen 0.30 Gewicht, die dauerhaft fehlen: `weightCoverage`
+liegt deshalb bei 0.70 — bestanden, aber am Anschlag.
+
+Seit §121 zählt `dataCompleteness` diese Felder nicht mehr mit; die
+strukturelle Lücke steht am dafür vorgesehenen Instrument statt doppelt.
+
+### 4. Der Ausführungspfad ist nicht erreichbar
+
+`jupiter` (Router) meldet UNAVAILABLE, während `jupiter-quote` (Marktdaten)
+arbeitet. Die beiden teilen sich einen Host und sonst nichts. Für die erste
+Papier-Position wird der Router gebraucht — ohne ihn gibt es keinen Fill.
+
+Noch nicht untersucht, weil vor der Migration keine Entscheidung ein `ENTER`
+erreicht hat.
+
+---
+
+## Gebaut, getestet, nie benutzt
+
+Die unangenehmste Kategorie: nichts davon sieht kaputt aus.
+
+| Was | Zustand |
 |---|---|
-| Kategorientrennung, vier Invarianten | `@sae/analytics`, `@sae/core` |
-| Trading Brain (EV, RR, Scores, Exits, Regime, Entry-Modelle) | `@sae/decision`, `@sae/scoring`, `@sae/trading` |
-| Forschungsapparat (Kandidaten, Batches, Fragilität, Monte Carlo, Gates) | `@sae/research` |
-| Worker-Sicherheit (Idempotenz, Backoff, Wiederaufnahme) | `@sae/pipeline` |
-| Scheduler mit getrennten Takten | `@sae/pipeline` |
-| Aufnahmeentscheidung mit Herkunft und Frische | `@sae/pipeline` |
-| Provider-Status, Fähigkeiten, Fallback-Kette | `@sae/providers` |
-| Dashboard-Datenschicht mit Leerzuständen | `@sae/db` |
-| **Dauerhafte Queue** (Anspruch mit Frist, Wiederholung, Dead Letter) | `job_queue`, `JobQueueRepository` |
-| **Consumer** mit Handler-Registry und Fehlerklassifikation | `apps/worker/src/consumer.ts` |
-| **Persistente Stores** (Idempotenz, Checkpoint, gesehene Schlüssel, Provider-Health) | `@sae/db/stores` |
-| **Schreibpfade** für Gelegenheiten, Snapshots, Paper-Positionen, Latenz, Forschung | `@sae/db/repositories` |
-| **Datenbank-Invarianten** (Unique-Indizes, CHECK-Constraints, optimistische Sperre) | Migration `0007_integrity`, `0008_job_queue` |
-| **Provider-Health im Minutentakt**, persistiert | `apps/worker/src/roles/provider-health.ts` |
-| **Anbieterkette im Produktivpfad** (`resolveFromChain`) | `apps/worker/src/pipeline/market-input.ts` |
-| **Decision → Gelegenheit → Auto Paper + Manual** | `apps/worker/src/pipeline/opportunity-pipeline.ts` |
-| **Herkunft und Fixture-Isolation** (CHECK + zusammengesetzte FK) | Migration `0009_provenance` |
-| **Snapshot-Aufnahme** mit `UNIQUE (ingest_key)` | `packages/db/src/repositories/snapshots.ts` |
-| **Checkpointing im Betrieb** (Wiederaufnahme je Token) | `apps/worker/src/pipeline/market-refresh.ts` |
-| **Research-Evidenzsperre** (Fixtures promoten nichts) | `packages/db/src/repositories/research.ts` |
-| **Resend-Adapter** mit E-Mail-Template | `packages/alerts/src/resend.ts` |
-| **INVEST-NOW-Prüfkette** (12 Blockiergründe) | `packages/alerts/src/confirmation.ts` |
-| **Queue-Observability** (Jobs, Dead Letters, Latenz, Fehler) | `packages/db/src/queries/dashboard.ts` |
-| **Vercel-Verbindungscache** (ein Pool je Prozess) | `packages/db/src/client.ts` |
+| **Benachrichtigungen** (Resend-Adapter, E-Mail-Vorlage, INVEST-NOW-Prüfkette mit 12 Blockiergründen) | Von **nirgendwo** aufgerufen. Kein Verweis im Worker oder in der Web-App. Es gibt keinen Weg, informiert zu werden. |
+| `SCORE_TOKEN`, `RECONCILE`, `STRATEGY_HEALTH`, `RESEARCH_BATCH` | Zeigen auf den allgemeinen Marktdaten-Handler: holen Daten, werfen sie weg. Keine berührt offenen Bestand. |
+| **Anmeldung** | Formular vorhanden, Magic Link nicht aktiv. Kein Zugangsschutz vor dem Dashboard — wer die URL kennt, sieht es. |
 
-### BLOCKED BY LIVE DATA — Architektur steht, Ausführung wartet
+Der Wächter `laesst keinen verdrahteten Handler ohne Takt, der ihn ruft`
+(§118) hält die zweite Zeile automatisch aktuell. Die erste und dritte sind
+von Hand gepflegt und driften entsprechend.
 
-| Komponente | Was fehlt konkret | Was schon steht |
-|---|---|---|
-| **Marktdaten-Adapter** | Ein erreichbarer Anbieter und dessen geprüfte Endpunkt-Spezifikation | Konfiguration (Basis-URL, Schlüssel), Statusmodell, Kette, Aufnahmelogik |
-| **Discovery-Job** | Eine Quelle, die neue Tokens liefert | Dedup, Cheap Screen, Checkpoint-Wiederaufnahme, Takt |
-| **Feature-Snapshots** | Snapshots, aus denen sie gebaut werden | Schema mit Schreibschutz, `Maybe`-Semantik, Hashing |
-| **Gelegenheiten, Auto/Manual Paper** | Bewertbare Tokens | Zustandsautomat, Verzweigung, Kategorien, Statistik |
-| **EV, Trefferquote, Strategieleistung** | Abgeschlossene Paper-Trades | Rechenwege, Mindeststichproben, Konfidenzintervalle |
-| **Strategie-Promotion** | Alles oben, plus ein kalibriertes Kostenmodell | Zehn Gates; `COST_MODEL_CALIBRATED` steht ausdrücklich auf `FAIL` |
-| **P3 insgesamt** (Smart Money, Clustering, Dev, Social, Narrative) | Die jeweiligen Datenquellen | Felder existieren als `MISSING`, Scores führen sie als `NOT_COMPUTABLE` |
+---
 
-### Bewusst nicht gebaut
+## Bewusst nicht gebaut
 
 | Was | Warum nicht |
 |---|---|
-| Adapter mit erfundenen Endpunktpfaden | Ein Pfad, den niemand geprüft hat, erzeugt Fehlschläge, die wie Anbieterprobleme aussehen |
-| Beispiel- oder Demodaten im Dashboard | Eine Oberfläche mit erfundenen Zahlen gewöhnt einen daran, ihnen zu glauben |
-| Ein Simulator als Provider-Ersatz | Er würde die gesamte Kette grün färben und nichts beweisen |
-| Handler-Inhalt für datenabhängige Auftragsarten | Die Aufträge sind verdrahtet und laufen durch; ohne Kettenmitglied ist ihr Ergebnis `NO_SOURCE`. Sie erfinden weder Snapshot noch Score. |
-| Marktdatenquelle als Kettenmitglied ohne geprüften Adapter | Sie wäre ein Mitglied, das bei jeder Abfrage scheitert — und der Fehlschlag sähe aus wie ein Anbieterproblem statt wie eine fehlende Implementierung |
+| Live-Handel | Es gibt keinen Live-Executor. `packages/trading` enthält genau eine Klasse: `PaperExecutor`. |
+| Signieren | `apps/signer` hält Transport, mTLS und Policy vollständig und antwortet auf eine echte Signieranfrage mit **501**. Bewusst kein halbfertiges Signieren. |
+| Snipen | `minTokenAgeSeconds: 300` schließt Token unter fünf Minuten aus. Die Entdeckung läuft über einen Profil-Feed, nicht über einen Start-Strom. Beides ist eine Entscheidung, keine Lücke. |
+| Adapter mit erfundenen Endpunktpfaden | Ein ungeprüfter Pfad erzeugt Fehlschläge, die wie Anbieterprobleme aussehen. |
+| Beispiel- oder Demodaten im Dashboard | Eine Oberfläche mit erfundenen Zahlen gewöhnt einen daran, ihnen zu glauben. |
+| Ein Simulator als Provider-Ersatz | Er würde die gesamte Kette grün färben und nichts beweisen. |
 
 ---
 
-## Was passiert, sobald eine Quelle antwortet
+## Offene Altlast
 
-Es gibt keinen Startknopf. Die Kette löst sich selbst aus:
-
-1. Die Rolle `provider-health` misst **immer** — auch im blockierten Zustand —
-   und schreibt jede Messung nach `provider_status_samples`.
-2. Der Scheduler liest daraus alle 30 Sekunden `anyMarketDataUsable()`. Meldet
-   eine Marktdatenquelle `CONNECTED` oder `DEGRADED`, wird die Startbedingung
-   wahr — **ohne Neustart**, auch um drei Uhr nachts.
-3. Im nächsten Tick werden `FAST_DISCOVERY`, `MARKET_UPDATE`, `PAPER_MONITOR`
-   und die übrigen datenabhängigen Takte fällig und in `job_queue` eingereiht;
-   der `consumer` zieht sie.
-4. Sobald genug Snapshots vorliegen (`minSnapshotsForAnalysis`), wechselt die
-   Pipeline von `BUILDING_HISTORY` nach `RUNNING`.
-5. Auto Paper und Manual Opportunity öffnen **gemeinsam** — unabhängig davon,
-   ob Live-Handel je freigegeben wird.
-
-Live bleibt davon getrennt: es verlangt zusätzlich eine Freigabe, keinen
-Notstopp, und Daten der Stufe `PRIMARY` oder `SECONDARY` innerhalb der
-Frischegrenze.
+Historische Snapshots tragen `source_freshness_seconds = 0` — ein erfundener
+Wert aus der Zeit vor §89. Sie sind nicht angefasst worden, weil das Ändern
+bestehender Daten eine Entscheidung des Betreibers ist und keine technische.
 
 ---
 
-## Worker-Status
+## Wo die Wahrheit steht
 
-Die vollständige Matrix mit Input, Output, DB-Writes, Queue, Retry, Checkpoint,
-Idempotenz und benötigten Anbietern steht in
-[`WORKER-MATRIX.md`](WORKER-MATRIX.md).
+Diese Datei ist von Hand gepflegt und driftet deshalb — sie hat es zwischen
+dem 2026-09-01 und heute getan, und das war der Anlass, sie neu zu schreiben.
+Abgeleitet und damit verlässlich sind:
 
-Kurzfassung: **fünf** Worker/Handler laufen mit echter Fachlogik
-(`provider-health`, `scheduler`, `consumer`, `market-refresh`,
-`expire-opportunities`). **Vier** sind fachlich fertig und warten auf Daten
-(`scoring`, `decision`, `paper`, `alerts`). **Drei** sind durch fehlende
-Anbieter blockiert (`enrichment`, `positions`, `reconciler`). **Einer** ist
-bewusst nicht gebaut (`execution` — Live-Handel ist abgeschaltet).
-
-## Provider-Integration
-
-Die Analyse zu Provider-Spezifikation V1 steht in
-[`PROVIDER-INTEGRATION-PLAN.md`](PROVIDER-INTEGRATION-PLAN.md): Capability-Mapping,
-Kostenmodell, Progressive Filtering, Datenbank- und Worker-Aenderungen.
-
-Kernbefund: In dieser Umgebung ist **keine** Anbieter-Dokumentation lesbar
-(`curl` und WebFetch blockiert, nur WebSearch funktioniert). Verifiziert ist
-genau ein Vertrag — Jupiter Swap v1 aus der Hersteller-OpenAPI — und der steht
-im Widerspruch zu dem Pfad, den Spezifikation V1 nennt. Kein Adapter, bevor das
-geklaert ist.
-
-## Erster Adapter: DexScreener
-
-Freigegeben, aber nicht gebaut — und zwar aus einem messbaren Grund.
-
-Der Smoke-Test wurde ausgefuehrt und lieferte `403 Host not in allowlist:
-api.dexscreener.com`. Der 403 kommt vom Egress-Proxy dieser Umgebung, nicht vom
-Anbieter; wir haben DexScreener nie erreicht. Ein Response-Schema war aus
-keiner belastbaren Quelle zu bekommen: Doku blockiert, keine offizielle
-GitHub-Organisation erreichbar, auf npm nur Fremdimplementierungen (die beste
-von 2022).
-
-Ohne Struktur der Antwort kein Parser. Details und der genaue Weg zur Freigabe
-stehen in [`providers/dexscreener.md`](providers/dexscreener.md).
-
-Gebaut wurde stattdessen alles Schema-unabhaengige: Entscheidungen als eigenes
-Ereignis, Feature-Observations mit Herkunft je Feld, Provider-Reifegrade und
-die Messung echter Requests.
-
-## Womit anfangen
-
-Genau eine Sache: **eine erreichbare Marktdatenquelle.** Alles andere hängt
-daran und beschleunigt danach nur noch.
-
-Sobald sie steht, baut der `PitReader` die Historie aus `token_snapshots` selbst
-auf — die übrigen Anbieter (Holder, Sicherheit, Social) verkürzen die Wartezeit,
-sind aber für den Anlauf nicht nötig.
+| Frage | Wo sie beantwortet wird |
+|---|---|
+| Kommt das System an Daten? | `/api/diagnostics/providers` |
+| Läuft der Prozess? | `/api/health` |
+| Was tut jede Auftragsart wirklich? | `describeWiring` + die Wächter in `scheduler-dispatch.test.ts` |
+| Warum kauft der Bot nicht? | Panel „Entscheidungen" im Dashboard, und die Log-Zeile `Gelegenheiten geprueft` |
+| Warum wurde etwas so gebaut? | `DECISIONS.md` |
