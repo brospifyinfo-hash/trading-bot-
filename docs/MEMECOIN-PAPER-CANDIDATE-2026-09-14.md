@@ -52,8 +52,9 @@ speichert ihn als RISK_BASED. Sie blockiert abweichende Auftragsgroessen.
 Der Produktionsworker verwendet weiterhin seine bisherige Version. Vor einer
 Aktivierung sind Depot/Exposure, Kosten aller Fills, Quote-Rohmenge und
 Waehrungsbewertung aus echten Daten anzuschliessen; bestehende Positionen muessen
-ihre eigene Strategieversion behalten. Der jetzige Monitor verwendet noch
-gemeinsame Parameter. Das Profil allein aktiviert oder garantiert daher weder
+ihre eigene Strategieversion behalten. Der Monitor liest seit §131 die gespeicherte Version jeder Position und bucht
+Teil- und Vollverkaeufe atomar. Die Fiat-Referenzbewertung ist angeschlossen,
+ihr erfolgreicher Abruf im Produktionsnetz ist aber noch zu belegen. Das Profil allein aktiviert oder garantiert daher weder
 die neuen Pausenregeln noch einen produktiven Handel.
 
 ## Wann der Ansatz als brauchbar gelten kann

@@ -5141,3 +5141,65 @@ Gegenprobe: den bewerteten variablen Betrag wieder durch PAPER_NOTIONAL ersetzt.
 Der Integrationstest scheitert mit `expected undefined to be 20000000n`, weil
 der falsche Auftrag nicht mehr zur genehmigten Groesse passt. Mutation danach
 vollstaendig zurueckgenommen.
+
+
+## §131 — Teilverkaeufe erkennen ist nicht Teilverkaeufe buchen
+
+Datum: 2026-09-14
+
+Der Positionsmonitor wertete die globale Default-Konfiguration aus statt der
+Version der Position. Er las nur die erste Aktion, ignorierte SELL_PORTION und
+schloss bei EXIT_ALL nach einem Quote ohne Verkaufsmenge, Erloes oder Kosten
+zu buchen. So konnte weder eine Gewinnleiter noch eine Nettoauswertung stimmen.
+
+Jetzt werden die gespeicherten Parameter je referenzierter Version validiert;
+auch stillgelegte Versionen gelten weiter fuer ihre offenen Positionen. Ungueltige
+Parameter sind INVALID_STRATEGY_VERSION, kein Anlass fuer globale Ersatzregeln.
+Erfolgreiche Teilstufen werden aus Ereignissen rekonstruiert und nach einem
+Neustart nicht nochmals verkauft. Uebersprungene Stufen werden der Reihe nach
+ausgefuehrt. Ein Fehlschlag unterbricht diesen Versuch, keine Stufe wird als
+erfolgreich markiert. Veraltete Markt-Snapshots loesen keine Verkaeufe aus.
+
+`settleSale` bucht verbleibende Rohmenge, Bruttoergebnis, Kosten, Ereignis und
+gegebenenfalls Schliessung in einer Transaktion mit Versionsvergleich. Der
+Einstand wird kumulativ in ganzen Cent aufgeteilt; der letzte Verkauf erhaelt
+den Rundungsrest. Derselbe Versionsstand kann nicht zweimal gebucht werden.
+Kosten bleiben separat: Netto ist Brutto minus Kosten. Keine bestehende Zeile
+in der Produktionsdatenbank wurde im Rahmen der Entwicklung angefasst.
+
+Eine Preisbewegung des Signals ist kein Verkaufserloes. Der Monitor verlangt
+eine Bewertung der tatsaechlich vom simulierten Executor erhaltenen Anker-Menge.
+Dafuer ist jetzt ein separater Coinbase-Referenzkursadapter angeschlossen:
+SOL/EUR bzw. SOL/USD (Ask fuer Kosten), USDC/EUR bzw. USDC/USD (Bid fuer
+Erloesbewertung). Dezimalstellen werden vom konfigurierten Solana-RPC gelesen,
+nicht als 6 festgeschrieben. Ein unbekanntes oder nicht verfuegbares Handelspaar
+liefert keine Bewertung. Es gibt weder USDC/EUR-Paritaet noch feste 150 EUR/SOL.
+
+Der Vertrag stammt aus der offiziellen Dokumentation:
+https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-ticker
+
+Geprueft werden Dezimalstrings, Bid/Ask-Reihenfolge und der gelieferte Zeitstempel
+(maximal 120 Sekunden, keine Zukunftszeit). Cache und Zusammenfassen paralleler
+Abrufe begrenzen Requests auf einen je Produkt pro 30 Sekunden; 5 Sekunden
+Timeout, keine sofortigen Retry-Schleifen. Der Handler laedt Bewertungen erst
+bei einem faelligen Verkauf, nicht bei leerem Buch oder HOLD. Quelle, Zeitpunkt,
+Anker-Menge und Waehrung stehen am Verkaufsereignis. Das ist eine Fiat-
+Referenzbewertung, kein tatsaechlich ausgefuehrter Coinbase-Tausch.
+
+Der produktive Abruf dieses zusaetzlichen Hosts ist noch nicht nachgewiesen:
+Die beiden direkten Tests aus dieser Arbeitsumgebung endeten mit Timeout.
+Adapter- und Integrationstests verwenden ausdrueckliche Fixtures und belegen
+nur den Vertrag und die Buchungsnaht. NO_VALUATION bzw. NO_COST_BASIS halten eine
+Position offen, wenn benoetigte Angaben fehlen. Bestehende Gebuehren-/Latenz-/
+Fehlschlagannahmen des PaperExecutors sind weiterhin Modellwerte, keine
+gemessenen Chain-Kosten; diese Umstellung ist kein Profitabilitaetsnachweis.
+
+Offen bleiben insbesondere: Einstieg mit dem ausgewaehlten Kandidaten,
+versionsgebundene Einstiegskonfiguration, konsistente Depot-/Exposure-Eingaben,
+aktuelle groessenabhaengige Gesamtkosten und ein beobachteter kompletter
+Papierzyklus nach Deployment. Keine automatische Freigabe fuer Live-Handel.
+
+Die Gegenproben sind ausgefuehrt: globale Defaults statt Positionsversion,
+Vergessen bereits verkaufter Stufen und Weglassen der Ergebnisbuchung lassen
+jeweils den zugehoerigen Integrationstest scheitern. Danach alle Mutationen
+vollstaendig zurueckgenommen.

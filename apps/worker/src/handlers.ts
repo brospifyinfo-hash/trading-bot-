@@ -20,6 +20,7 @@ import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
 import { enrichSecurity } from "./pipeline/security-enrichment";
 import { monitorPaperPositions } from "./pipeline/position-monitor";
+import { buildPaperValuation } from "./pipeline/paper-valuation";
 import {
   anchorUnitsToRaw,
   buildDecimalsReader,
@@ -606,7 +607,10 @@ class EnrichSecurityHandler implements JobHandler {
  */
 class MonitorPaperPositionHandler implements JobHandler {
   readonly wiring = "DEDICATED" as const;
-  constructor(private readonly deps: HandlerDeps) {}
+  private readonly valuation: ReturnType<typeof buildPaperValuation>;
+  constructor(private readonly deps: HandlerDeps) {
+    this.valuation = buildPaperValuation(loadEnv(providerEnvSchema, deps.env));
+  }
 
   async handle(job: ClaimedJob): Promise<unknown> {
     void job;
@@ -617,6 +621,7 @@ class MonitorPaperPositionHandler implements JobHandler {
       // Derselbe Anker, gegen den auch der Marktpreis gemessen wird.
       quoteMint: QUOTE_ANCHOR_MINT,
       quotes: buildQuoteSource(env),
+      loadValuation: this.valuation,
     });
   }
 }

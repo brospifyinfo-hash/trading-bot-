@@ -23,3 +23,4 @@ export * from "./solana/largest-accounts";
 export * from "./rugcheck/report";
 export * from "./rugcheck/adapter";
 export * from "./jupiter/quote-fetch";
+export * from "./coinbase/valuation";
