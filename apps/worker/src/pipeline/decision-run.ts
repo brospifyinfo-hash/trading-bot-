@@ -287,6 +287,7 @@ export function labelOf(result: PipelineOutcome): string {
       // Ein Einstieg, dem die Ausfuehrung nicht gefolgt ist, ist kein
       // Einstieg. Beides unter `ENTERED` zu zaehlen waere die schmeichelhafte
       // Variante und im Betrieb die gefaehrliche.
+      if (result.autoPosition.kind === "ACCOUNT_BLOCKED") return `BLOCKED_${result.autoPosition.reason}`;
       return result.autoPosition.kind === "OPENED"
         ? "ENTERED"
         : `ENTERED_${result.autoPosition.kind}`;

@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { isTestFixture, mulDiv, type Money, type SizingMode, type SourceType, type TradingStream } from "@sae/core";
 
 import type { Database } from "../client";
+import { strategies, strategyVersions } from "../schema/strategy";
 import { opportunities, paperPositionEvents, paperPositions } from "../schema/opportunities";
 
 /**
@@ -76,6 +77,14 @@ export class PaperPositionRepository {
       throw new RangeError("Invalid sale quantities");
     }
     return this.db.transaction(async (tx) => {
+      const [family] = await tx.select({ id: strategyVersions.strategyId, sizing: paperPositions.sizingMode, source: paperPositions.sourceType })
+        .from(paperPositions).innerJoin(strategyVersions, eq(strategyVersions.id, paperPositions.strategyVersionId))
+        .where(eq(paperPositions.id, input.positionId)).limit(1);
+      if (family?.sizing === "RISK_BASED" && family.source === "LIVE") {
+        // Same order as funded buys: strategy family first, then position.
+        // Exit fees must not change cash between an entry check and its booking.
+        await tx.select({ id: strategies.id }).from(strategies).where(eq(strategies.id, family.id)).for("update");
+      }
       const [row] = await tx.select().from(paperPositions).where(eq(paperPositions.id, input.positionId)).limit(1);
       if (row === undefined || row.closedAt !== null || row.version !== input.expectedVersion) return { kind: "STALE" as const };
       if (row.currency !== input.proceeds.currency || row.currency !== input.costs.currency) throw new TypeError("Sale currency mismatch");

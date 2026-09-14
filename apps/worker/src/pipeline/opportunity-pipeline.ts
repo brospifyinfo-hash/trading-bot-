@@ -1,3 +1,4 @@
+import { withPaperBuyAccount } from "./paper-buy-account";
 import { createHash } from "node:crypto";
 import {
   assertProvenanceConsistent,
@@ -89,7 +90,7 @@ export interface PipelineDeps {
    */
   readonly entryAmountRaw: bigint | null;
   /** Explicit quote-valued order for a separately versioned risk-based experiment. */
-  readonly riskBasedEntry?: { readonly amountRaw: bigint; readonly notional: Money };
+  readonly riskBasedEntry?: { readonly amountRaw: bigint; readonly notional: Money; readonly roundTripCosts?: Money; readonly quotedAt?: Date };
   /** Wie lange eine Manual-Gelegenheit auf Antwort wartet. */
   readonly manualRespondMs: number;
   /** Zusatzangaben, die der Live-Pfad nicht selbst herleiten kann. */
@@ -141,6 +142,7 @@ export interface DecisionRecord {
 }
 
 export type AutoPaperResult =
+  | { readonly kind: "ACCOUNT_BLOCKED"; readonly reason: string }
   | { readonly kind: "ORDER_SIZE_MISMATCH" }
   | { readonly kind: "OPENED"; readonly positionId: string; readonly outcome: ExecutionOutcome }
   | { readonly kind: "ALREADY_OPEN"; readonly positionId: string }
@@ -397,13 +399,18 @@ export async function runOpportunityPipeline(
     return { kind: "NO_ENTRY", decision, created, persisted };
   }
 
-  const autoPosition = await openAutoPaperPosition({
+  const openInput = {
     deps,
     opportunityId: auto.opportunityId,
     tokenId: String(features.tokenId),
     provenance,
     decidedAt: decision.decidedAt,
-  });
+  };
+  const autoPosition = deps.riskBasedEntry !== undefined && provenance.sourceType === "LIVE"
+    ? await withPaperBuyAccount({ deps, opportunityId: auto.opportunityId, tokenId: String(features.tokenId),
+        executeAndOpen: (db) => openAutoPaperPosition({ ...openInput, deps: { ...deps, db } }),
+      })
+    : await openAutoPaperPosition(openInput);
 
   /* ---------------------------------------------- 9. Manual bleibt offen */
   // Ausdruecklich KEINE Aktion fuer MANUAL_PAPER. Die Gelegenheit steht auf

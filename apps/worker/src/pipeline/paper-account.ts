@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import { money, mulDiv, type Money } from "@sae/core";
 import { schema, type Database } from "@sae/db";
 import type { PortfolioState } from "@sae/risk";
@@ -132,13 +132,22 @@ export function reconcilePaperAccount(input: {
   };
 }
 
-/** One SQL statement sees positions and their events at the same DB snapshot. */
+/** Family lock keeps entry/exit bookings stable across positions and failed-attempt reads. */
 export async function loadPaperAccount(input: {
   readonly db: Database;
   readonly strategyId: string;
   readonly initialCash: Money;
   readonly asOf: Date;
 }): Promise<PaperAccount> {
+  return input.db.transaction(async (tx) => {
+    const [family] = await tx.select({ id: schema.strategies.id }).from(schema.strategies)
+      .where(eq(schema.strategies.id, input.strategyId)).for("update");
+    if (family === undefined) return { kind: "BLOCKED", reason: "UNRECONCILED_PAPER_ACCOUNT" };
+    return readPaperAccount({ ...input, db: tx });
+  });
+}
+
+async function readPaperAccount(input: Parameters<typeof loadPaperAccount>[0]): Promise<PaperAccount> {
   const rows = await input.db.select({ position: schema.paperPositions, event: schema.paperPositionEvents })
     .from(schema.paperPositions)
     .innerJoin(schema.strategyVersions, eq(schema.strategyVersions.id, schema.paperPositions.strategyVersionId))
@@ -146,9 +155,35 @@ export async function loadPaperAccount(input: {
     .where(and(eq(schema.strategyVersions.strategyId, input.strategyId),
       eq(schema.paperPositions.stream, "AUTO_PAPER"), eq(schema.paperPositions.sizingMode, "RISK_BASED"),
       eq(schema.paperPositions.sourceType, "LIVE"), eq(schema.paperPositions.isTestFixture, false)));
-  return reconcilePaperAccount({
+  const account = reconcilePaperAccount({
     initialCash: input.initialCash, asOf: input.asOf,
     positions: [...new Map(rows.map((row) => [row.position.id, row.position])).values()],
     events: rows.flatMap((row) => row.event === null ? [] : [row.event]),
   });
+  if (account.kind !== "READY") return account;
+  const failures = await input.db.select({ intentId: schema.tradeIntents.id, executionState: schema.executions.state, cost: schema.executions.actualCostMinor, at: schema.executions.confirmedAt,
+      currency: schema.tradeIntents.currency })
+    .from(schema.tradeIntents)
+    .innerJoin(schema.strategyVersions, eq(schema.strategyVersions.id, schema.tradeIntents.strategyVersionId))
+    .leftJoin(schema.executions, eq(schema.executions.intentId, schema.tradeIntents.id))
+    .where(and(eq(schema.strategyVersions.strategyId, input.strategyId),
+      eq(schema.tradeIntents.mode, "paper"), eq(schema.tradeIntents.origin, "auto"), eq(schema.tradeIntents.side, "buy"),
+      eq(schema.tradeIntents.state, "FAILED"), like(schema.tradeIntents.idempotencyKey, "funded-paper-buy:%")));
+  let costs = 0n;
+  let today = 0n;
+  const midnight = new Date(input.asOf); midnight.setUTCHours(0, 0, 0, 0);
+  const attempts = new Set<string>();
+  for (const failure of failures) {
+    if (attempts.has(failure.intentId) || failure.executionState !== "FAILED") return { kind: "BLOCKED", reason: "UNRECONCILED_PAPER_ACCOUNT" };
+    attempts.add(failure.intentId);
+    if (failure.cost === null || failure.cost < 0n || failure.at === null || !Number.isFinite(failure.at.getTime()) || failure.at > input.asOf ||
+      failure.currency !== input.initialCash.currency) return { kind: "BLOCKED", reason: "UNRECONCILED_PAPER_ACCOUNT" };
+    costs += failure.cost;
+    if (failure.at >= midnight) today += failure.cost;
+  }
+  const cash = money(account.cash.minor - costs, account.cash.currency);
+  return { ...account, cash, bookValue: money(account.bookValue.minor - costs, cash.currency),
+    portfolio: { ...account.portfolio, value: money(cash.minor > 0n ? cash.minor : 0n, cash.currency),
+      realizedTodayPnl: money(account.portfolio.realizedTodayPnl.minor - today, cash.currency) },
+  };
 }

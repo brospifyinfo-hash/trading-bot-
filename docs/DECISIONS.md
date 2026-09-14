@@ -5259,3 +5259,69 @@ Ausstiegsquotes samt Gesamtkostentor, sowie die Buchung fehlgeschlagener
 Einstiegsversuche. Letztere koennen Gebuehren ohne Position verursachen und
 duerfen nicht durch eine reine Positionssumme verschwinden. Erst nach dieser
 Verbindung und einem beobachteten Papierzyklus ist ein Teststart vertretbar.
+
+## §133 — Finanzierung und fehlgeschlagene Paper-Kaeufe gemeinsam buchen
+
+Datum: 2026-09-14
+
+Der AUTO_PAPER/RISK_BASED-Pfad mit LIVE-Marktdaten ruft jetzt vor der
+simulierten Ausfuehrung `withPaperBuyAccount` auf. Ein Auftrag braucht eine
+explizite Gesamtkostenreserve samt Zeitstempel. Fehlt sie, bleibt der Auftrag
+MISSING_COST_RESERVATION; der feste Legacy-Pfad und Fixtures bekommen keine
+heimlichen Ersatzkosten. Das Anfangsguthaben ist explizit 3000 EUR je
+Strategiefamilie, keine Kontomessung.
+
+Die Strategiezeile wird mit SELECT FOR UPDATE gesperrt. Unter derselben
+Transaktion werden gespeicherte Parameter, Gelegenheit, Wiederholungen,
+Kontostand, Token-Duplikate, Exposure, Tagesverlust und Verlustserie geprueft.
+Nach dem Warten auf die Sperre wird die Groessenobergrenze aus dem aktuellen
+freien Guthaben erneut berechnet. Dabei bleibt Konfidenz konservativ null;
+eine spaetere Hoeherstufung aus belastbaren Stichproben ist nicht vorweggenommen.
+Kostenreserve und Auftrag muessen gemeinsam in Guthaben und Exposure passen,
+die Reserve muss innerhalb der Kandidaten-Kostengrenze liegen. Die Parameter
+duerfen nicht von der gespeicherten, nicht stillgelegten Version abweichen.
+
+Die Sperre umfasst Ausfuehrung und Positionsanlage. Auch `settleSale` nimmt sie
+fuer denselben LIVE/RISK_BASED-Kontoumfang vor seiner Positionsbuchung. Dadurch
+koennen Ausstiegsgebuehren den Kontostand nicht zwischen Kaufpruefung und
+Kaufbuchung veraendern. Der Kontoleser nimmt dieselbe Sperre, wenn er Positionen
+samt Ereignissen und separat fehlgeschlagene Kaufversuche liest. Sperrreihenfolge
+ist Familie vor Position. Verschiedene Versionen derselben Familie teilen das
+Budget und die Sperre.
+
+Fehlgeschlagene Einstiege erzeugen jetzt einen paper/auto/buy-TradeIntent und
+einen Execution-Kosteneintrag unter dem eindeutigen Schluessel
+`funded-paper-buy:<opportunityId>`. Eine Wiederholung derselben Gelegenheit darf
+weder einen zweiten Fill noch erneut kostenlose Versuche produzieren. Ein
+ABORTED vor Ausfuehrung bleibt ohne Gebuehren. Erfolgreiche Kosten stehen
+weiter an der Position; die Kontorechnung liest zusaetzlich ausschliesslich
+FAILED-Intents dieses Kontopfades. So werden Erfolgskosten nicht zweimal
+abgezogen. Fehlende oder doppelte Execution-Buchungen sperren die Kontorechnung.
+Das Feld actualCostMinor traegt hier ausdruecklich ein simuliertes Ergebnis des
+bestehenden Paper-Kostenmodells, keine gemessene Chain-Gebuehr. Auch bei FAILED
+wird dessen bisheriges Gesamtkostenmodell verwendet, konservativ inklusive
+modellierter Impact-/Latenzanteile; eine Kalibrierung bleibt offen.
+
+Ueberschreitet ein simulierter erfolgreicher Fill seine Kostenreserve, wird die
+ganze Transaktion zurueckgerollt. Das ist ausschliesslich fuer Paper zulaessig:
+Es wurde nichts signiert oder an eine Chain gesendet. Live-Executors werden an
+dieser Schnittstelle abgewiesen.
+
+Tests in isoliertem PGlite pruefen Wiederholung, zwei parallele Aufrufe,
+Gebuehren ohne Position, reduzierte Folgegroesse, veraltete/fehlende Reserven,
+Parameterabweichung und Rollback. PGlite serialisiert Transaktionen selbst;
+das ist kein Lasttest fuer PostgreSQL-Worker. Die produktive Synchronisation
+beruht auf der expliziten Datenbanksperre, nicht auf einer Prozesssperre. Eine
+Gegenprobe ohne Abzug fehlgeschlagener Versuche liess den zugehoerigen Test
+scheitern; danach wurde die Mutation entfernt.
+
+Weiterhin nicht aktiviert: Der Handler stellt noch keine Kandidaten-Auftraege
+mit aktuellen groessenabhaengigen Ein-/Ausstiegsquotes und Kostenreserven her.
+Diese Vorpruefung ist angeschlossen, aber sie ersetzt den noch fehlenden
+Auftragsvorbereiter nicht. Tages-/Seriengrenzen werden hier aus Buchungen neu
+geprueft; ein separat dauerhaft verriegelter Circuit Breaker samt Ruecksetzung
+ist noch nicht implementiert. Keine Produktionsmigration und kein Deployment.
+
+Validierung: 142 Testdateien mit 1520 Tests bestanden; Lint und Typpruefung
+aller 20 Teilprojekte bestanden. Kontosperrgruende erscheinen im Bewertungslauf
+als BLOCKED_<Grund> statt als undifferenzierter Einstiegsversuch.
