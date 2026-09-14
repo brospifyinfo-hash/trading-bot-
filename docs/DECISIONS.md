@@ -5203,3 +5203,59 @@ Die Gegenproben sind ausgefuehrt: globale Defaults statt Positionsversion,
 Vergessen bereits verkaufter Stufen und Weglassen der Ergebnisbuchung lassen
 jeweils den zugehoerigen Integrationstest scheitern. Danach alle Mutationen
 vollstaendig zurueckgenommen.
+
+## §132 — Spendierbares Papierguthaben aus Buchungen statt Startkonstante
+
+Datum: 2026-09-14
+
+Die Kaufseite braucht eine belastbare Kontorechnung, bevor sie den Kandidaten
+aktivieren darf. `reconcilePaperAccount` rekonstruiert freies Guthaben aus dem
+expliziten Anfangsguthaben plus realisiertem Bruttoergebnis minus saemtlichen
+gebuchten Kosten minus dem verbleibenden Einstand offener Positionen. Der
+Einstand folgt derselben kumulativen Ganzzahlaufteilung wie `settleSale`.
+Teilverkaeufe geben ausschliesslich bewertete Erloese frei. Offene Kursgewinne
+werden nicht zu spendierbarem Guthaben. Buchwert und freies Guthaben sind
+getrennt; als konservative Groessenbasis ist nur positives freies Guthaben
+vorgesehen. Das ist keine Mark-to-Market-Depotbewertung.
+
+Vor einer Berechnung werden Rohmengen, Einstand, Ergebnis und Kosten mit den
+OPENED/PARTIAL_TP/EXIT_FILL-Ereignissen abgeglichen. Fehlende, widerspruechliche,
+zukunftsdatierte oder unbekannte Buchungen liefern UNRECONCILED_PAPER_ACCOUNT.
+Ein frueherer asOf bei bereits spaeter veraenderten Positionen ist kein Replay
+und wird abgewiesen. Ein Ueberzug bleibt negativ sichtbar, niemals wird das
+Anfangsguthaben neu eingesetzt. Neue OPENED-Ereignisse dokumentieren die
+Einstiegskosten explizit; alte vollstaendig dokumentierte Ereignisketten koennen
+sie aus Gesamtkosten minus Verkaufskosten rekonstruieren. Keine Nachmigration.
+
+`loadPaperAccount` liest Positionen samt Ereignissen in EINEM SQL-Statement,
+damit beide denselben Datenbank-Snapshot sehen. Der Kontoumfang ist genau eine
+Strategiefamilie ueber ihre Versionen hinweg, AUTO_PAPER/RISK_BASED/LIVE ohne
+Fixtures. Manual-, FIXED_100- und fremde Strategiepositionen werden getrennt.
+Tagesnetto folgt dem UTC-Buchungstag inklusive Einstiegskosten; Verlustserien
+und abgeschlossene Nettorenditen bleiben aus den persistierten Trades lesbar.
+Diese Ausgabe ist noch kein dauerhaft gespeicherter Circuit-Breaker-Lockout.
+
+Die Fiat-Bewertung kann nun auch Kaeufe vorbereiten. Ein freigegebener Fiatbetrag
+wird am USDC-Ask in die groesste bezahlbare Rohmenge umgerechnet, abgerundet
+mit bigint. Die anschliessende Ask-Bewertung wird auf Cent aufgerundet und
+ueberschreitet trotzdem niemals das Budget. Beide Referenzen (USDC und SOL)
+muessen beim Verwenden frisch sein. Das gilt jetzt auch fuer Verkaufsbewertungen;
+ein zwischen Laden und Verwenden veralteter SOL-Kostenkurs gilt nicht weiter.
+
+Nachweis: Rechenfaelle einschliesslich Teilverkaufs-Rundungsrest, Gebuehren,
+Ueberzug, Fremdwaehrung und kaputter Historie; Datenbankintegration mit echten
+Repository-Buchungen in isoliertem PGlite sowie getrennten Versionen und
+Kontoumfaengen. Gegenproben ohne Kostenabzug und mit Aufrunden der Kaufmenge
+liessen die zugehoerigen Tests scheitern und wurden anschliessend entfernt.
+Gesamtlauf: 141 Testdateien / 1515 Tests bestanden, Lint und Typpruefung
+aller 20 Teilprojekte bestanden. Keine Renditebehauptung.
+
+Noch nicht angeschlossen: Der laufende Entscheidungs-Handler benutzt weiter
+seinen bisherigen Groessenpfad. Diese Kontorechnung und Kaufbewertung sind
+vorbereitete, getestete Bausteine, keine aktivierte Kaufstrategie. Vor Aktivierung
+fehlen insbesondere der atomare Budgetvergleich samt Positionsanlage gegen
+parallele Worker, versionsgebundene Kaufparameter, groessenabhaengige Kauf- und
+Ausstiegsquotes samt Gesamtkostentor, sowie die Buchung fehlgeschlagener
+Einstiegsversuche. Letztere koennen Gebuehren ohne Position verursachen und
+duerfen nicht durch eine reine Positionssumme verschwinden. Erst nach dieser
+Verbindung und einem beobachteten Papierzyklus ist ein Teststart vertretbar.

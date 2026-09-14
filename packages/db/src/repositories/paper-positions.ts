@@ -174,6 +174,7 @@ export class PaperPositionRepository {
         at: input.openedAt,
         detail: {
           entryNotionalMinor: input.entryNotional.minor.toString(),
+          entryCostsMinor: input.entryCostsMinor.toString(),
           currency: input.entryNotional.currency,
           sizingMode: input.sizingMode,
         },

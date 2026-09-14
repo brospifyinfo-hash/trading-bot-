@@ -61,3 +61,12 @@ export function valueTokenRaw(raw: bigint, decimals: number, ticker: FiatTicker,
   const rate = ticker[side];
   return money(mulDiv(raw, rate.n * 100n, rate.d * 10n ** BigInt(decimals), side === "bid" ? "floor" : "ceil"), currency);
 }
+
+/** Largest raw quantity affordable at the ask; never round an order above its budget. */
+export function tokenRawForBudget(budget: Money, decimals: number, ticker: FiatTicker): bigint {
+  if (budget.minor < 0n || !Number.isInteger(decimals) || decimals < 0 || decimals > 18 ||
+    !ticker.product.endsWith(`-${budget.currency}`) || ticker.ask.n <= 0n || ticker.ask.d <= 0n) {
+    throw new RangeError("Invalid fiat purchase units");
+  }
+  return mulDiv(budget.minor, ticker.ask.d * 10n ** BigInt(decimals), ticker.ask.n * 100n, "floor");
+}

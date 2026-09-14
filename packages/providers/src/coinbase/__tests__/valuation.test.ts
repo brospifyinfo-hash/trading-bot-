@@ -33,3 +33,18 @@ describe("fiat reference valuation", () => {
     expect(await source.ticker("USDC", "EUR")).toBeNull();
   });
 });
+
+it("converts a fiat budget to the largest affordable raw quantity, even at awkward decimals", async () => {
+  const { tokenRawForBudget } = await import("../valuation");
+  const ticker = { bid: { n: 89n, d: 100n }, ask: { n: 91n, d: 100n }, observedAt: now, product: "USDC-EUR" };
+  for (const decimals of [0, 2, 6, 9, 18]) {
+    for (const minor of [0n, 1n, 1875n, 7500n, 9_007_199_254_740_993n]) {
+      const budget = { minor, currency: "EUR" as const };
+      const raw = tokenRawForBudget(budget, decimals, ticker);
+      expect(valueTokenRaw(raw, decimals, ticker, "EUR", "ask").minor).toBeLessThanOrEqual(minor);
+      expect(valueTokenRaw(raw + 1n, decimals, ticker, "EUR", "ask").minor).toBeGreaterThan(minor);
+    }
+  }
+  expect(() => tokenRawForBudget(eur(1), -1, ticker)).toThrow();
+  expect(() => tokenRawForBudget({ minor: 1n, currency: "USD" }, 6, ticker)).toThrow();
+});
