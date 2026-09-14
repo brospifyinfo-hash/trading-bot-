@@ -9,6 +9,7 @@ import { strategyCandidates } from "../schema/research";
 import { jobQueue, jobQueueHistory } from "../schema/queue";
 import { latencySamples } from "../schema/latency";
 import { systemEvents } from "../schema/ops";
+import { loadLatestDecisionRun, isRecentObservation, type DecisionRunReport } from "./decision-run";
 
 /**
  * Datenschicht des Dashboards.
@@ -69,16 +70,11 @@ export interface ProviderRow {
  */
 export async function loadProviderStatus(db: Database): Promise<readonly ProviderRow[]> {
   const rows = await db
-    .select()
+    .selectDistinctOn([providerStatusSamples.providerId])
     .from(providerStatusSamples)
     .orderBy(providerStatusSamples.providerId, desc(providerStatusSamples.observedAt));
 
-  const latest = new Map<string, (typeof rows)[number]>();
-  for (const row of rows) {
-    if (!latest.has(row.providerId)) latest.set(row.providerId, row);
-  }
-
-  return [...latest.values()].map((r) => ({
+  return rows.map((r) => ({
     providerId: r.providerId,
     kind: r.kind,
     status: r.status,
@@ -351,7 +347,8 @@ export async function loadQueueSummary(db: Database): Promise<QueueSummary> {
     done: doneHistory,
     dead: liveBy("DEAD"),
     oldestQueuedAt: oldest === null ? null : new Date(oldest),
-    retryingJobs: live.reduce((n, r) => n + r.retrying, 0),
+    retryingJobs: live.filter((r) => r.state === "QUEUED" || r.state === "RUNNING")
+      .reduce((n, r) => n + r.retrying, 0),
   };
 }
 
@@ -619,6 +616,8 @@ export const DEFAULT_DASHBOARD_THRESHOLDS: DashboardThresholds = {
 };
 
 export interface DashboardState {
+  readonly latestDecisionRun: DecisionRunReport | null;
+  readonly paperCounts: readonly PaperSummary[];
   readonly providers: readonly ProviderRow[];
   readonly marketDataConnected: boolean;
   readonly ingestion: Panel<IngestionSummary>;
@@ -697,7 +696,8 @@ export async function loadDashboardState(input: {
   const providers = await loadProviderStatus(input.db);
 
   const marketProviders = providers.filter((p) => p.capabilities.includes("TOKEN_MARKET"));
-  const marketDataConnected = marketProviders.some((p) => p.status === "CONNECTED");
+  const marketDataConnected = marketProviders.some((p) => p.status === "CONNECTED" &&
+    isRecentObservation(p.observedAt, input.now, WORKER_ALIVE_WINDOW_MS));
 
   const ingestion = await loadIngestionSummary(input.db);
   // Die Produktionskacheln zaehlen ausschliesslich echte Herkunft.
@@ -713,6 +713,7 @@ export async function loadDashboardState(input: {
 
   const queue = await loadQueueSummary(input.db);
   const recentJobs = await loadRecentJobs(input.db);
+  const latestDecisionRun = await loadLatestDecisionRun(input.db);
   const deadLetters = await loadDeadLetters(input.db);
   const errors = await loadErrors(input.db);
   const latencyRows = await loadLatencySummary(input.db);
@@ -839,15 +840,15 @@ export async function loadDashboardState(input: {
     // „Lebt der Worker?" heisst: hat er in den letzten Minuten etwas
     // geschrieben. Ein Prozess, der laeuft und nichts tut, gilt nicht als
     // lebendig — genau diese Verwechslung soll die Anzeige verhindern.
-    workerAlive:
-      lastSample !== null &&
-      input.now.getTime() - lastSample.getTime() < WORKER_ALIVE_WINDOW_MS,
+    workerAlive: isRecentObservation(lastSample, input.now, WORKER_ALIVE_WINDOW_MS),
     lastProviderSampleAt: lastSample,
     liveTradingEnabled: false,
     blockedBy: marketDataConnected ? [] : [noSourceReason],
   };
 
   return {
+    latestDecisionRun,
+    paperCounts: paperRows,
     testData,
     missed: missedPanel,
     queue,
@@ -867,7 +868,7 @@ export async function loadDashboardState(input: {
     research: researchPanel,
     headline: marketDataConnected
       ? ingestionPanel.kind === "DATA"
-        ? "Pipeline laeuft."
+        ? "Marktdatenquelle erreichbar. Handelsbereitschaft siehe Betriebsdiagnose."
         : "Historie wird aufgebaut."
       : "WAITING FOR LIVE MARKET DATA",
     generatedAt: input.now,

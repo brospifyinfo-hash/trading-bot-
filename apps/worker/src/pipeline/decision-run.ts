@@ -130,6 +130,36 @@ export interface DecisionRunDeps {
  */
 const MAX_POOL_SHARE = 0.02;
 
+/** Derselbe Rechner fuer Entscheidung und Betriebsdiagnose. Kein zweites Regelwerk. */
+export function paperSizing(liquidityUsd: number | null) {
+  const parameters = DEFAULT_STRATEGY_PARAMETERS;
+  const maxNotionalByLiquidity = liquidityUsd === null
+    ? PAPER_PORTFOLIO
+    : eur(Math.round(liquidityUsd * MAX_POOL_SHARE * 100));
+  return computePositionSize({
+    portfolioValue: PAPER_PORTFOLIO,
+    stopDistance: parameters.exit.stopLossBps / 10_000,
+    maxNotionalByLiquidity,
+    evConfidence: 0,
+    minimumNotional: PAPER_NOTIONAL,
+    parameters,
+  });
+}
+
+/** JSON-faehig, Betraege bleiben Cent-Zeichenketten statt gerundeter Messwerte. */
+export function paperSizingDiagnostics() {
+  const sizing = paperSizing(null);
+  return {
+    currency: PAPER_NOTIONAL.currency,
+    minimumMinor: PAPER_NOTIONAL.minor.toString(),
+    portfolioCapMinor: sizing.candidates.PORTFOLIO_CAP.minor.toString(),
+    confidenceCapMinor: sizing.candidates.CONFIDENCE.minor.toString(),
+    maximumMinor: sizing.size.minor.toString(),
+    tradeable: sizing.tradeable,
+    bindingConstraint: sizing.bindingConstraint,
+  };
+}
+
 export async function runDecision(deps: DecisionRunDeps): Promise<{
   readonly outcome: string;
   readonly detail: string;
@@ -142,23 +172,7 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
 }> {
   const parameters = DEFAULT_STRATEGY_PARAMETERS;
 
-  // Die Liquiditaetsgrenze der Positionsgroesse. Ohne bekannte Liquiditaet
-  // gibt es keine Obergrenze aus dem Markt — dann bindet eine andere.
-  const maxNotionalByLiquidity: Money =
-    deps.liquidityUsd === null
-      ? PAPER_PORTFOLIO
-      : eur(Math.round(deps.liquidityUsd * MAX_POOL_SHARE * 100));
-
-  const sizing = computePositionSize({
-    portfolioValue: PAPER_PORTFOLIO,
-    stopDistance: parameters.exit.stopLossBps / 10_000,
-    maxNotionalByLiquidity,
-    // Ohne Historie ist die Zuversicht nicht hoch, und sie wird auch nicht
-    // dazu erklaert. Der EV-Rechner unten sagt dasselbe mit eigenen Worten.
-    evConfidence: 0,
-    minimumNotional: PAPER_NOTIONAL,
-    parameters,
-  });
+  const sizing = paperSizing(deps.liquidityUsd);
 
   // Ohne abgeschlossene Trades liefert der Rechner von sich aus UNKNOWN. Das
   // ist die richtige Auskunft — und sie entsteht durch Rechnen.

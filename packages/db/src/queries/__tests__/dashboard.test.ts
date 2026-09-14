@@ -116,4 +116,10 @@ describe("Provider-Status", () => {
     expect(state.headline).toBe("Historie wird aufgebaut.");
     expect(state.ingestion.kind).toBe("WAITING");
   });
+
+  it("eine alte gruene Providerzeile bestaetigt keinen aktuellen Betrieb", async () => {
+    const state = await loadDashboardState({ db, now: new Date(NOW.getTime() + 180_000) });
+    expect(state.marketDataConnected).toBe(false);
+    expect(state.systemState.workerAlive).toBe(false);
+  });
 });

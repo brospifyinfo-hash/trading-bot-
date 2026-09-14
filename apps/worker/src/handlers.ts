@@ -26,7 +26,7 @@ import {
   QUOTE_ANCHOR_MINT,
   QUOTE_PROBE_NOTIONAL,
 } from "./pipeline/quote-market-source";
-import { runDecision } from "./pipeline/decision-run";
+import { runDecision, paperSizingDiagnostics } from "./pipeline/decision-run";
 import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
 import { resolveMarketInput } from "./pipeline/market-input";
@@ -476,7 +476,20 @@ class EvaluateOpportunityHandler implements JobHandler {
       },
       "Gelegenheiten geprueft",
     );
-    return { status: "OK", processed: run.processed, outcomes };
+    // Der Consumer persistiert das Ergebnis ohnehin. Die Diagnose darf nicht
+    // nur im Log stehen, wo der Betreiber sie ohne Hilfe nicht auswerten kann.
+    return {
+      status: "OK",
+      processed: run.processed,
+      outcomes,
+      missingFields: fehlendeFelder,
+      tracked: tokens.length,
+      skipped: run.skipped,
+      roundComplete: run.completed,
+      bestScore: bester,
+      entryThreshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+      sizing: paperSizingDiagnostics(),
+    };
   }
 }
 

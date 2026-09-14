@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { schema, type Database } from "@sae/db";
 import { bps, eur } from "@sae/core";
+import { MEMECOIN_PAPER_CANDIDATE } from "@sae/config";
+import { sizeCostAwarePaper } from "@sae/risk";
 import { DEFAULT_FEES, DEFAULT_LATENCY } from "@sae/simulation";
 import { PaperExecutor, type Executor, type ExecutionPlan } from "@sae/trading";
 
@@ -22,6 +24,45 @@ import { MINT, NoQuoteSource, createHarness, type Harness } from "./harness";
  */
 
 const T0 = new Date("2026-08-31T12:00:00Z");
+
+it("carries a risk-sized order through execution and accounting without a fixed-100 substitution", async () => {
+  const base = h.deps();
+  const result = sizeCostAwarePaper({
+    portfolioValue: eur(3_000), stopDistance: 0.2, evConfidence: 0,
+    maxNotionalByLiquidity: eur(200), remainingExposure: eur(300),
+    roundTripCosts: eur(0.30), maxRoundTripCostBps: MEMECOIN_PAPER_CANDIDATE.maxRoundTripCostBps,
+    parameters: MEMECOIN_PAPER_CANDIDATE.parameters,
+  });
+  if (result.kind !== "SIZED") throw new Error("Fixture sizing failed");
+  const plans: ExecutionPlan[] = [];
+  const outcome = await runOpportunityPipeline(request(), h.deps({
+    parameters: MEMECOIN_PAPER_CANDIDATE.parameters,
+    decisionContext: { ...base.decisionContext, sizing: result.sizing },
+    // Deliberately different numeric values: token units are not EUR cents.
+    riskBasedEntry: { amountRaw: 20_000_000n, notional: result.sizing.size },
+    executor: { mode: "paper", execute: async (plan) => { plans.push(plan); return base.executor.execute(plan); } },
+  }));
+  expect(outcome.kind).toBe("ENTERED");
+  expect(plans[0]?.inAmount).toBe(20_000_000n);
+  expect(plans[0]?.notional).toEqual(eur(18.75));
+  const [position] = await db.select().from(schema.paperPositions);
+  expect(position?.sizingMode).toBe("RISK_BASED");
+  expect(position?.entryNotionalMinor).toBe(1_875n);
+  expect(position?.isTestFixture).toBe(true);
+});
+
+it("refuses a fixed order that differs from the decision's approved amount", async () => {
+  const base = h.deps();
+  let calls = 0;
+  const outcome = await runOpportunityPipeline(request(), h.deps({
+    decisionContext: { ...base.decisionContext, sizing: { ...base.decisionContext.sizing, size: eur(37.50) } },
+    executor: { mode: "paper", execute: async (plan) => { calls += 1; return base.executor.execute(plan); } },
+  }));
+  expect(outcome.kind).toBe("ENTERED");
+  if (outcome.kind === "ENTERED") expect(outcome.autoPosition.kind).toBe("ORDER_SIZE_MISMATCH");
+  expect(calls).toBe(0);
+  expect(await db.select().from(schema.paperPositions)).toHaveLength(0);
+});
 
 let h: Harness;
 let db: Database;

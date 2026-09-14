@@ -5016,3 +5016,128 @@ Signatur.
 Dazu im Log jetzt `skipped`, `beobachtet` und `rundeFertig` an der
 Entscheidungszeile. Die erste Zahl ist die, an der sich überhaupt ablesen
 lässt, ob rotiert wird.
+
+## §129 — Der Einsatz ist kein Gewinnziel, und die Diagnose muss im Dashboard ankommen
+
+Datum: 2026-09-13
+
+Der Betreiber hat die Bestandsaufnahme zur Umsetzung freigegeben und nach
+anderen Memecoin-Bots sowie einer Alternative zur 3-Prozent-Grenze gefragt.
+Diese Grenze betrifft den Einsatz, nicht die Rendite. Die Primaerquellen,
+offiziellen Jupiter-Limits und die konkrete Entscheidungsvorlage stehen in
+`BOT-RESEARCH-2026-09-13.md`.
+
+### Ein weiterer Widerspruch vor dem Einstieg
+
+3.000 EUR Papierdepot ergeben bei 3 Prozent maximal 90 EUR Position. Der
+Mindestbetrag ist 100 EUR. Noch enger bindet EV-Konfidenz 0: das Risikosizing
+erlaubt dann nur 37,50 EUR. Der Code kann diese Mindestgroesse nie erreichen.
+Das Anheben nur einer Grenze ist deshalb verworfen. Risikowerte und
+Gewinnziele bleiben unveraendert bis zur konkreten Betreiberentscheidung.
+
+`paperSizing` ist jetzt die gemeinsame Aufrufstelle des bestehenden Rechners
+fuer Entscheidung und Diagnose. Das Ergebnis wird vor einer Marktbegrenzung
+als erklaerte Konfiguration ausgewiesen, nicht als Depotmessung. Es werden
+keine Tore umgangen und keine Positionen zum Testen in Produktion angelegt.
+
+### Die Ausgabe war nur im Log vollstaendig
+
+Der Handler gab nur processed und outcomes zurueck. Fehlende Felder,
+Rotationsgroesse und Score gingen nicht in das ohnehin persistierte
+`job_queue.result`. Diese Daten werden nun mitgefuehrt; das Dashboard zeigt
+den letzten tatsaechlich ausgefuehrten Bewertungslauf mit Abschlusszeit und
+Groessenwiderspruch. Alte Ergebnisse bleiben unvollstaendig, statt rueckwirkend
+ergaenzt zu werden. Ein SUPERSEDED-Auftrag ist kein Bewertungslauf.
+
+Der Integrationstest nimmt die echte Handler-Ausgabe und liest sie nach dem
+Speichern ueber dieselbe Abfrage wie das Dashboard. Damit wird gerade die
+Naht geprueft, die bei den vorherigen Reparaturen fehlte.
+
+Gegengeprueft: mit dem alten Handler-Ergebnis scheitert er an
+`expected null to deeply equal {}`. Weitere Gegenproben stellen die drei
+Fehler wieder her: veraltete Messung als aktuell, SUPERSEDED als Lauf und
+abgeschlossener Auftrag als Wiederholung. Alle drei werden von den Tests
+erkannt. Danach wurde der korrigierte Code wieder eingesetzt.
+
+### Kein gruenes Signal aus einer Konstante
+
+Die Statusleiste zeigte fest 0 offene Positionen und zweimal laeuft. Sie zeigt
+jetzt die tatsaechlichen Produktions-Papierzaehlungen; der nicht verdrahtete
+Emergency-Knopf ist deaktiviert und als solcher benannt. Eine alte oder in der
+Zukunft liegende Provider-Messung begruendet keinen aktuellen Zustand mehr.
+Die Anbieterpruefung wird nicht mehr als Beweis fuer den Consumer bezeichnet.
+Ein UNAVAILABLE ohne Erfolgs- oder Fehlermessung wird als UNGEPRUEFT gezeigt;
+es wurde kein Routerausfall gemessen und kein Erfolg hinzuerfunden.
+
+### Zwei belegte Kosten-/Zaehlerfehler
+
+`loadProviderStatus` versprach DISTINCT ON im Kommentar, lud aber die gesamte
+Historie und filterte erst in JavaScript. Es waehlt jetzt in SQL den letzten
+Datensatz je Anbieter. Die Anzeige in Wiederholung zaehlte auch fertige und
+tote Jobs mit mehreren Versuchen; jetzt zaehlen nur QUEUED und RUNNING.
+
+### Grenzen
+
+Dies ist der erste Diagnose-/Betriebsbaustein. Authentifizierung, konsistente
+variable Ordergroessen, reale Waehrungs-/Kostenquellen, Portfolioeingaben,
+Budgetsteuerung und der Nachweis von 100 echten Papierabschluessen sind damit
+noch nicht geloest. Kein Push auf main, keine Produktionsmigration, keine
+Bestandskorrektur und kein Live-Handel sind Teil dieser Aenderung.
+
+
+## §130 — Eine gewaehlte Teststrategie ist noch kein Gewinnnachweis
+
+Datum: 2026-09-14
+
+Der Betreiber hat die Auswahl jetzt ausdruecklich delegiert: andere Memecoin-Bots
+vergleichen und den sinnvoll erscheinenden Ansatz uebernehmen. Damit ist die in
+§129 offene Auswahl fuer den Papier-Test getroffen; es ist keine Live-Freigabe.
+
+BONKbot dokumentiert Teilverkaeufe/Limit Sells und Trailing Stops, Warp getrennte
+Kaufbetraege und TP/SL, Hummingbot den Positions-Lebenszyklus mit Zeitlimit. Keine
+dieser Quellen belegt die langfristige Profitabilitaet unserer Parameter. Quellen
+und Auswahl stehen in `MEMECOIN-PAPER-CANDIDATE-2026-09-14.md`.
+
+Der neue, separat bezeichnete Kandidat `memecoin-risk-managed` Version 1.0.0
+verwendet 0,5 Prozent Stop-Risikobudget vor Kosten, maximal 3 Prozent Einsatz,
+10 Prozent Gesamt-Exposure, 3 Prozent Tagesverlust und hoechstens vier Positionen.
+Die 3 Prozent bleiben eine Obergrenze, keine feste Groesse und kein Gewinnziel.
+Ein Stop ist keine Garantie gegen Totalverlust. Die Gewinnleiter verkauft 40/30/20
+Prozent der Ursprungsposition bei +25/+50/+100 Prozent; 10 Prozent bleiben uebrig.
+20 Prozent Stopabstand, 15 Prozent Basis-Trailing und sechs Stunden Zeitlimit sind
+unvalidierte Versuchseinstellungen. Sicherheits- und Einstiegsschwellen bleiben
+im Kandidaten unveraendert. Keine Optimierung anhand erfundener Gewinner.
+
+Der neue Kosten-Groessenrechner verlangt eine gleichwaehrige Schaetzung fuer Kauf
+UND alle geplanten Verkaeufe, Quote-basierte Kapazitaet und verbleibendes Exposure.
+Das Mindestvolumen folgt aus diesem Kostenbetrag und dem expliziten Kostenbudget
+von 2 Prozent. Es ist kein abgesenkter fester Mindestbetrag. Ist die erlaubte
+Position zu klein fuer ihre Kosten, bleibt der Einstieg blockiert. Fehlende Angaben
+sind kein Nullwert. Verbleibendes Exposure reserviert die modellierten Kosten.
+Die Kosten muessen fuer die vorgeschlagene Groesse und Zahl der Fills neu bewertet
+werden; dieser reine Rechner beschafft keine Quotes und keinen Wechselkurs.
+
+Die Ausfuehrungsnaht nimmt nun optional einen explizit bewerteten risikobasierten
+Auftrag entgegen. Betrag und Rohmenge gehen unveraendert an den Executor, derselbe
+Geldbetrag an die Buchhaltung, mit `RISK_BASED` statt `FIXED_100`. Weicht der Auftrag
+von der genehmigten Groesse ab, erfolgt keine Ausfuehrung. Insbesondere wird ein
+fehlender variabler Auftrag nicht durch den alten festen 100er-Kauf ersetzt.
+
+Der Kandidat ersetzt nicht still die bestehende Default-Version. Im laufenden
+Worker fehlen nach wie vor reale Portfolio-/Exposure-Eingaben, vollstaendige
+Kosten-/FX-Bewertung und ein versionsgebundener Positionsmonitor. Eine Aktivierung
+mit diesen Platzhaltern wuerde Testparameter als gemessenen Betrieb ausgeben. Der
+Code ist deshalb ein implementierter Testkandidat mit integrierter Ausfuehrungsnaht,
+noch kein aktivierter produktiver Papierlauf. Bestehende Daten wurden nicht
+geaendert; keine Migration, keine Wallet-Aktion. GitHub-Schreiben war zuletzt
+mit HTTP 403 blockiert.
+
+Die Regression prueft berechnete Groesse -> Executor -> gespeicherte Position und
+einen absichtlich davon abweichenden festen Auftrag. Mechaniktests pruefen die
+Teilverkaufsleiter, Verlustausstieg, Trailing und Zeitablauf. Saemtliche dortigen
+Positionen sind TEST_FIXTURE; sie belegen keine Rendite.
+
+Gegenprobe: den bewerteten variablen Betrag wieder durch PAPER_NOTIONAL ersetzt.
+Der Integrationstest scheitert mit `expected undefined to be 20000000n`, weil
+der falsche Auftrag nicht mehr zur genehmigten Groesse passt. Mutation danach
+vollstaendig zurueckgenommen.
