@@ -1,14 +1,14 @@
 import { isDeepStrictEqual } from "node:util";
 import { eq, inArray } from "drizzle-orm";
-import { eur, money } from "@sae/core";
+import { money } from "@sae/core";
 import { strategyParametersSchema, MEMECOIN_PAPER_CANDIDATE } from "@sae/config";
-import { schema, type Database } from "@sae/db";
+import { schema, PAPER_INITIAL_CASH, type Database } from "@sae/db";
 import { computePositionSize, checkExposure, dailyLossPct } from "@sae/risk";
 import { loadPaperAccount } from "./paper-account";
 import type { AutoPaperResult, PipelineDeps } from "./opportunity-pipeline";
 
 /** A simulation setting, not an observed balance. Shared across candidate versions. */
-export const PAPER_INITIAL_CASH = eur(3000);
+export { PAPER_INITIAL_CASH } from "@sae/db";
 
 /**
  * Serialize funded entries across all versions in a strategy family. The lock,

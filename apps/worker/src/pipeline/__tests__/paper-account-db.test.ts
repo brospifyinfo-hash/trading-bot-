@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { eur } from "@sae/core";
-import { PaperPositionRepository, schema } from "@sae/db";
+import { PaperPositionRepository, schema, loadPaperTrading } from "@sae/db";
 import { createTestDatabase } from "@sae/db/testing";
 import { loadPaperAccount } from "../paper-account";
 
@@ -48,6 +48,27 @@ it("reconciles repository fills across versions while separating fixtures, manua
     expect(account.kind).toBe("READY");
     if (account.kind !== "READY") return;
     expect(account.cash).toEqual(eur(2847.78));
+    const dashboard = await loadPaperTrading({ db, strategyName: "account-test", now: at });
+    expect(dashboard.kind).toBe("READY");
+    if (dashboard.kind !== "READY") throw new Error("Dashboard unavailable");
+    expect(dashboard.account).toEqual(account);
+    expect(dashboard.open).toHaveLength(2);
+    expect(dashboard.closedCount).toBe(0);
+    await repo.settleSale({ positionId: positions[0]!, expectedVersion: 1, soldAmountRaw: 2n,
+      proceeds: eur(80), costs: eur(.30), at, reason: "STOP_LOSS", levelIndex: null,
+      maxAdverseExcursion: 0, maxFavorableExcursion: 0, valuation: { source: "TEST_FIXTURE" },
+    });
+    const after = await loadPaperTrading({ db, strategyName: "account-test", now: at });
+    expect(after.kind).toBe("READY");
+    if (after.kind !== "READY") throw new Error("Dashboard unavailable");
+    expect(after.open).toHaveLength(1);
+    expect(after.closedCount).toBe(1);
+    expect(after.closed[0]!.position.realizedPnlMinor - after.closed[0]!.position.costsPaidMinor).toBe(2849n);
+    expect(after.account.cash).toEqual(eur(2927.48));
+    expect(after.account.bookValue).toEqual(eur(3027.49));
+    expect(await loadPaperTrading({ db, strategyName: "missing", now: at }))
+      .toEqual({ kind: "WAITING", updatedAt: at });
+
     expect(account.portfolio.openPositions).toHaveLength(2);
     expect(account.portfolio.openPositions.reduce((sum, row) => sum + row.notional.minor, 0n)).toBe(16669n);
   } finally { await close(); }

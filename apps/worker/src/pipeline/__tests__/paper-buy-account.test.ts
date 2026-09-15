@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { bps, eur } from "@sae/core";
 import { MEMECOIN_PAPER_CANDIDATE } from "@sae/config";
-import { PaperPositionRepository, schema, type Database } from "@sae/db";
+import { PaperPositionRepository, schema, loadPaperTrading, type Database } from "@sae/db";
 import type { ExecutionOutcome } from "@sae/trading";
 import { createHarness } from "./harness";
 import { withPaperBuyAccount, PAPER_INITIAL_CASH } from "../paper-buy-account";
@@ -94,6 +94,14 @@ describe("funded paper entry transaction", () => {
         expect(account.cash.minor).toBe(300000n - h.filled.costs.total.minor);
         expect(account.portfolio.realizedTodayPnl.minor).toBe(-h.filled.costs.total.minor);
         expect(account.portfolio.openPositions).toHaveLength(0);
+        const [family] = await h.db.select().from(schema.strategies);
+        const dashboard = await loadPaperTrading({ db: h.db, strategyName: family!.name, now: at });
+        expect(dashboard.kind).toBe("READY");
+        if (dashboard.kind !== "READY") throw new Error("Dashboard unavailable");
+        expect(dashboard.account).toEqual(account);
+        expect(dashboard.closed).toEqual([]);
+        expect(dashboard.open).toEqual([]);
+
       }
       // A fresh opportunity must use the reduced budget, not the initial 18.75.
       expect(await h.run(await h.opportunity())).toMatchObject({ kind: "ACCOUNT_BLOCKED", reason: "STALE_SIZE_APPROVAL" });
