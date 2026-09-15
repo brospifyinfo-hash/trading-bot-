@@ -1,3 +1,4 @@
+import type { PreparedPaperEntry } from "./prepare-paper-entry";
 import { withPaperBuyAccount } from "./paper-buy-account";
 import { createHash } from "node:crypto";
 import {
@@ -93,6 +94,8 @@ export interface PipelineDeps {
   readonly riskBasedEntry?: { readonly amountRaw: bigint; readonly notional: Money; readonly roundTripCosts?: Money; readonly quotedAt?: Date };
   /** Wie lange eine Manual-Gelegenheit auf Antwort wartet. */
   readonly manualRespondMs: number;
+  /** Lazy preflight only after data gates and a preliminary ENTER. */
+  readonly prepareEntry?: () => Promise<PreparedPaperEntry>;
   /** Zusatzangaben, die der Live-Pfad nicht selbst herleiten kann. */
   readonly decisionContext: Omit<
     DecisionContext,
@@ -218,7 +221,7 @@ export async function runOpportunityPipeline(
 
   /* ---------------------------------------------- 5. Entscheidung */
   const decisionAt = deps.clock.now();
-  const decision = decide({
+  let decision = decide({
     ...deps.decisionContext,
     decisionId: `dec-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
     strategyVersionId: deps.strategyVersionId,
@@ -278,6 +281,18 @@ export async function runOpportunityPipeline(
       detail: blocked?.detail ?? "Kein Strom geoeffnet.",
       ...(blocked?.missing === undefined ? {} : { missing: blocked.missing }),
     };
+  }
+
+  if (decision.kind === "ENTER" && deps.prepareEntry !== undefined) {
+    const prepared = await deps.prepareEntry();
+    if (prepared.kind === "BLOCKED") return { kind: "BLOCKED", reason: prepared.reason, detail: "Paper order preflight blocked" };
+    deps = { ...deps, ...prepared.update };
+    const age = deps.clock.now().getTime() - features.asOf.getTime();
+    if (!fixture && (age < 0 || age >= 120000)) return { kind: "BLOCKED", reason: "STALE_PREFLIGHT_FEATURES", detail: "Features expired during quote preparation" };
+    decision = decide({ ...deps.decisionContext,
+      decisionId: `dec-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
+      strategyVersionId: deps.strategyVersionId, features, scoring, parameters: deps.parameters,
+    });
   }
 
   /* ---------------------------------------------- 7. Gelegenheiten */

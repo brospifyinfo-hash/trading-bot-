@@ -49,13 +49,13 @@ das 2-%-Budget ueberschreiten; der Rechner vergroessert deshalb nicht den Einsat
 Die Opportunity-Pipeline nimmt einen bewerteten `riskBasedEntry` entgegen und
 speichert ihn als RISK_BASED. Sie blockiert abweichende Auftragsgroessen.
 
-Der Produktionsworker verwendet weiterhin seine bisherige Version. Vor einer
-Aktivierung sind Depot/Exposure, Kosten aller Fills, Quote-Rohmenge und
-Waehrungsbewertung aus echten Daten anzuschliessen; bestehende Positionen muessen
-ihre eigene Strategieversion behalten. Der Monitor liest seit §131 die gespeicherte Version jeder Position und bucht
-Teil- und Vollverkaeufe atomar. Die Fiat-Referenzbewertung ist angeschlossen,
-ihr erfolgreicher Abruf im Produktionsnetz ist aber noch zu belegen. Das Profil allein aktiviert oder garantiert daher weder
-die neuen Pausenregeln noch einen produktiven Handel.
+Seit §134 kann der Worker den Kandidaten ausdruecklich ueber
+`PAPER_STRATEGY=memecoin-risk-managed-v1` auswaehlen. Kontorechnung,
+Budgetbegrenzung, mengenabhaengige Kauf-/Ausstiegsquotes und Verlustsperren sind
+angeschlossen. Der lokale Fixture-Zyklus prueft Kauf, Teilverkauf und Endausstieg.
+Der Schalter wurde nicht in der Zielumgebung gesetzt; ein dortiger vollstaendiger
+Papierzyklus mit externen Kursen ist noch nicht nachgewiesen. Ablauf und
+Sperrgruende stehen in [PAPER-TESTSTART.md](PAPER-TESTSTART.md).
 
 ## Wann der Ansatz als brauchbar gelten kann
 

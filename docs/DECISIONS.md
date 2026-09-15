@@ -5325,3 +5325,77 @@ ist noch nicht implementiert. Keine Produktionsmigration und kein Deployment.
 Validierung: 142 Testdateien mit 1520 Tests bestanden; Lint und Typpruefung
 aller 20 Teilprojekte bestanden. Kontosperrgruende erscheinen im Bewertungslauf
 als BLOCKED_<Grund> statt als undifferenzierter Einstiegsversuch.
+
+## §134 — Kandidaten-Handler mit mengenabhaengigem Quote-Vorlauf
+
+Datum: 2026-09-14
+
+`PAPER_STRATEGY=memecoin-risk-managed-v1` waehlt jetzt ausdruecklich den
+separaten Papierkandidaten aus. Ohne Auswahl oder mit `legacy` bleibt der alte
+Pfad bestehen. Andere Werte blockieren den Handler. Die neue Strategieversion
+wird idempotent angelegt, mit ihrem gespeicherten Parametersatz verglichen und
+niemals ueberschrieben. Eine stillgelegte oder abweichende Version verlangt
+eine neue Version. Der bisherige Default wird nicht umetikettiert.
+
+Der Kandidat liest sein gebuchtes Guthaben und abgeschlossene Nettorenditen
+seiner eigenen Version. Die Stichprobe ist bereits netto; zukuenftige Kosten
+werden gesondert im Vorlauf geprueft, nicht nochmals von historischen
+Nettorenditen abgezogen. Das ist noch keine nach Marktregime/Score getrennte
+Out-of-Sample-Auswertung. Die Groesse bleibt bei Konfidenz null konservativ.
+
+Nur nach gueltigen Daten-/Bereitschaftstoren und einem vorlaeufigen ENTER wird
+`preparePaperEntry` aufgerufen. Er bewertet den budgetbegrenzten USDC-Einsatz
+am Fiat-Ask, holt den Kaufquote und daraus mengenabhaengige Verkaufquotes:
+alle nichtleeren Teilstufen plus Rest, voller Ausstieg und die konfigurierte
+Kapazitaetsmenge (derzeit dreifache Position). Bis zu sieben Quote-Requests je
+qualifiziertem Token; eine Fehlantwort beendet den Versuch ohne Sofort-Retry.
+Ein Quote muss positiv, frisch und innerhalb der Impact-Grenze liegen.
+
+Die Kostenreserve ist das Kaufmodell plus das groessere aktuelle Szenario aus
+vollstaendigem Ausstieg und Teilverkaufsleiter. Zusaetzlich wird ein beobachteter
+Ruecktausch-/Fiat-Spread (positiver Unterschied zwischen Einsatz und bewerteten
+Quote-Erloesen) beruecksichtigt. Die bestehende Modellrechnung enthaelt bereits
+Impact-/DEX-Anteile; die zusaetzliche Quote-Verlustrechnung ist daher bewusst
+konservativ und kein exakt gemessener Gebuehrennachweis. Es werden keine
+zukuenftigen Zielpreise als aktuelle Quotes ausgegeben. Hohe Kosten vergroessern
+den Einsatz nicht: der Versuch wird gesperrt. Reserve und Einsatz muessen in
+Guthaben, Exposure und die Kostenquote passen.
+
+Der Executor bekommt exakt den geprueften Kaufquote und Betrag. Abweichende
+Mints/Mengen/Waehrungen oder abgelaufene Quote-/Fiatreferenzen liefern ABORTED.
+Es gibt beim Ausfuehren keinen zweiten unbeprueften Kaufquote. Nach dem Vorlauf
+entscheidet die Engine nochmals mit der tatsaechlich bewerteten Groesse;
+veraltete LIVE-Features blockieren. Der Kandidaten-Platzhalterexecutor kann
+nur abbrechen und hat weder festen 150-EUR-SOL-Kurs noch festen Kaufbetrag.
+Die alte 100-EUR-Diagnose wird fuer den Kandidaten nicht als seine Groesse
+angezeigt. Konkrete Vorlauf-Sperren stehen in den gezaehlten Ergebnissen.
+
+Ausgeloeste Tages-/Serienverlustsperren bei der atomaren Kaufpruefung werden
+jetzt je Strategiefamilie in circuit_breaker_state festgehalten. Tagesverlust
+bleibt bis zum naechsten UTC-Tag gesperrt; eine Serienverlustsperre bleibt bis
+zur ausdruecklichen fachlichen Pruefung/Ruecksetzung offen. Neustart oder
+kurzzeitige Erholung hebt die Sperre nicht auf. Das sind Einstiegssperren;
+Ausstiege bleiben moeglich. Es ist keine Behauptung einer laufenden Intraday-
+Risikoauswertung ohne Einstiegsversuch und kein automatisch optimierter Reset.
+
+Auch ein fehlgeschlagener simulierter Ausstieg bucht nun EXIT_FAILED mit Kosten,
+aber ohne Tokenverkauf oder erfolgreiche Teilstufe. Kontorechnung und
+Versionsschutz beruecksichtigen dieses Ereignis. Die Buchung nimmt dieselbe
+Familiensperre wie ein erfolgreicher Verkauf. Damit verschwinden modellierte
+Fehlversuchskosten weder auf der Kauf- noch auf der Verkaufsseite.
+
+Isolierte Tests decken Kauf -> Teilverkauf -> Endausstieg mit persistierten
+Mengen/Ergebnis/Kosten ab. Die dort verwendeten Marktdaten, Kurse und Positionen
+sind Test-Fixtures; sie belegen Mechanik, keine erzielbare Rendite. Weitere
+Tests pruefen Kosten/Spread, fehlende Ausstiegskapazitaet, spaet abgelaufene
+Quotes, unveraenderliche Versionen und dauerhafte Verlustsperren.
+
+Der Schalter wurde nicht in Railway gesetzt. Ein kompletter Papierzyklus mit
+aktuellen externen Kursen in der Zielumgebung bleibt nach Deployment zu
+beobachten. Die bisherigen direkten Coinbase-Abrufe waren nicht erfolgreich.
+Ein unbekannter Referenzkurs blockiert weiterhin, statt Paritaet zu erfinden.
+
+Abschlusspruefung am 2026-09-15: 144 Testdateien / 1530 Tests bestanden,
+Lint und Typpruefung aller 20 Teilprojekte bestanden. Gegenproben ohne
+Ruecktausch-Spread und ohne angeschlossenen Vorlauf liessen jeweils den
+Regressionstest scheitern; beide Mutationen wurden entfernt.

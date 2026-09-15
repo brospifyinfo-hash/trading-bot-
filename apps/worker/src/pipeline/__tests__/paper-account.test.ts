@@ -81,3 +81,15 @@ describe("reconciled paper account", () => {
     expect(account.portfolio.consecutiveLosses).toBe(1);
   });
 });
+
+it("deducts failed-exit costs while preserving the remaining amount and basis", () => {
+  const result = reconcilePaperAccount({ ...input, positions: [{ ...position, costsPaidMinor: 130n }],
+    events: [...events, { positionId: "p", kind: "EXIT_FAILED", at, detail: { costsMinor: "10", currency: "EUR" } }],
+  });
+  expect(result.kind).toBe("READY");
+  if (result.kind === "READY") {
+    expect(result.cash).toEqual(eur(2948.69));
+    expect(result.portfolio.realizedTodayPnl).toEqual(eur(16.37));
+    expect(result.portfolio.openPositions[0]?.notional).toEqual(eur(66.68));
+  }
+});

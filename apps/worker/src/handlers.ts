@@ -1,3 +1,4 @@
+import { ensurePaperCandidateVersion, usesPaperCandidate, PAPER_CANDIDATE_SELECTOR } from "./pipeline/paper-candidate-version";
 import { systemClock, tokenId as asTokenId } from "@sae/core";
 import {
   countSnapshots,
@@ -343,7 +344,12 @@ class EvaluateOpportunityHandler implements JobHandler {
     // Die Strategieversion, auf die sich jede Entscheidung beruft. Sie fehlte
     // in der Produktionsdatenbank vollstaendig; ohne sie waere der erste
     // echte Entscheidungsversuch an einem Fremdschluessel gescheitert.
-    const strategy = await ensureActiveStrategyVersion({
+    const selector = this.deps.env["PAPER_STRATEGY"];
+    if (selector !== undefined && selector !== "legacy" && selector !== PAPER_CANDIDATE_SELECTOR) {
+      return waitingForData("Ungueltige PAPER_STRATEGY-Konfiguration");
+    }
+    const candidate = usesPaperCandidate(this.deps.env);
+    const strategy = candidate ? await ensurePaperCandidateVersion(this.deps.db, systemClock.now()) : await ensureActiveStrategyVersion({
       db: this.deps.db,
       parameters: DEFAULT_STRATEGY_PARAMETERS,
       at: systemClock.now(),
@@ -377,6 +383,7 @@ class EvaluateOpportunityHandler implements JobHandler {
     // die spaetere Statistik haette keine Chance, das noch zu bemerken.
     const providerEnv = loadEnv(providerEnvSchema, this.deps.env);
     const quotes = buildQuoteSource(providerEnv);
+    const loadValuation = buildPaperValuation(providerEnv);
 
     // Die Ordergroesse in der kleinsten Einheit des Ankers — GELESEN, nicht
     // abgeschrieben. Dass USDC sechs Stellen hat, ist bekannt; eine bekannte
@@ -424,6 +431,7 @@ class EvaluateOpportunityHandler implements JobHandler {
         snapshotCount,
         providerReports: reports,
         quotes,
+        loadValuation,
         // Dieselbe Kette wie beim Auffrischen der Marktdaten. Hier stand
         // vorher eine leere Map — siehe die Begruendung an `DecisionRunDeps`.
         adapters: this.deps.adapters ?? new Map(),
@@ -489,7 +497,8 @@ class EvaluateOpportunityHandler implements JobHandler {
       roundComplete: run.completed,
       bestScore: bester,
       entryThreshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
-      sizing: paperSizingDiagnostics(),
+      sizing: candidate ? null : paperSizingDiagnostics(),
+      strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
     };
   }
 }

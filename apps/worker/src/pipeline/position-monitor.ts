@@ -189,7 +189,17 @@ export async function monitorPaperPositions(
         maxSlippageBps: bps(parameters.risk.maxSlippageBps), plannedAt: now,
       };
       const fill = await executor.execute(plan);
-      if (fill.kind !== "FILLED") { zaehle(`EXIT_${fill.kind}`); break; }
+      if (fill.kind !== "FILLED") {
+        if (fill.kind === "FAILED") {
+          if (fill.costs.total.currency !== position.currency || fill.costs.total.minor < 0n) throw new Error("Invalid failed-exit costs");
+          const booked = await repo.applyFill({ positionId: position.id, expectedVersion: position.version,
+            soldAmountRaw: 0n, realizedPnlMinorDelta: 0n, costsPaidMinorDelta: fill.costs.total.minor,
+            at: fill.failedAt, kind: "EXIT_FAILED", detail: { costsMinor: fill.costs.total.minor.toString(),
+              currency: position.currency, reason: fill.reason } });
+          if (booked.kind === "STALE") zaehle("STALE_EXIT_FAILURE");
+        }
+        zaehle(`EXIT_${fill.kind}`); break;
+      }
       const valuation = await pricing.valueFill({ amountRaw: fill.outAmount, mint: deps.quoteMint, currency: position.currency, at: fill.filledAt });
       const age = valuation === null ? NaN : fill.filledAt.getTime() - valuation.observedAt.getTime();
       if (valuation === null || !Number.isFinite(age) || age < 0 || age >= 120_000 ||

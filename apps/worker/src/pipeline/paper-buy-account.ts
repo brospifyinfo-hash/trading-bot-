@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { eur, money } from "@sae/core";
 import { strategyParametersSchema, MEMECOIN_PAPER_CANDIDATE } from "@sae/config";
 import { schema, type Database } from "@sae/db";
@@ -57,14 +57,28 @@ export async function withPaperBuyAccount(input: {
       .where(eq(schema.tradeIntents.idempotencyKey, key)).limit(1);
     if (attempt !== undefined) return blocked("ATTEMPT_ALREADY_RECORDED");
     const now = deps.clock.now();
+    const lockPrefix = `PAPER:${version.strategyId}:`;
+    const locks = await tx.select().from(schema.circuitBreakerState).where(inArray(schema.circuitBreakerState.name,
+      [`${lockPrefix}DAILY_LOSS`, `${lockPrefix}CONSECUTIVE_LOSSES`]));
+    const activeLock = locks.find((lock) => lock.state === "OPEN" && (lock.cooldownUntil === null || lock.cooldownUntil > now));
+    if (activeLock !== undefined) return blocked(activeLock.name.slice(lockPrefix.length));
+    const latch = async (reason: "DAILY_LOSS" | "CONSECUTIVE_LOSSES") => {
+      const midnight = new Date(now); midnight.setUTCDate(midnight.getUTCDate() + 1); midnight.setUTCHours(0, 0, 0, 0);
+      const values = { state: "OPEN" as const, openedAt: now, updatedAt: now,
+        cooldownUntil: reason === "DAILY_LOSS" ? midnight : null, reason,
+        detail: { scope: "PAPER_ENTRIES_ONLY", strategyId: version.strategyId } };
+      await tx.insert(schema.circuitBreakerState).values({ name: `${lockPrefix}${reason}`, ...values })
+        .onConflictDoUpdate({ target: schema.circuitBreakerState.name, set: values });
+      return blocked(reason);
+    };
     const age = now.getTime() - order.quotedAt!.getTime();
     if (!Number.isFinite(age) || age < 0 || age >= 120_000) return blocked("STALE_COST_RESERVATION");
     const account = await loadPaperAccount({ db: tx, strategyId: version.strategyId, initialCash: PAPER_INITIAL_CASH, asOf: now });
     if (account.kind !== "READY") return blocked(account.reason);
     if (account.portfolio.openPositions.some((position) => position.tokenId === input.tokenId)) return blocked("DUPLICATE_TOKEN");
     if (account.cash.minor < order.notional.minor + reserve.minor) return blocked("INSUFFICIENT_PAPER_CASH");
-    if (dailyLossPct(account.portfolio) >= deps.parameters.risk.maxDailyLossPct) return blocked("DAILY_LOSS");
-    if (account.portfolio.consecutiveLosses >= deps.parameters.risk.maxConsecutiveLosses) return blocked("CONSECUTIVE_LOSSES");
+    if (dailyLossPct(account.portfolio) >= deps.parameters.risk.maxDailyLossPct) return latch("DAILY_LOSS");
+    if (account.portfolio.consecutiveLosses >= deps.parameters.risk.maxConsecutiveLosses) return latch("CONSECUTIVE_LOSSES");
     const exposure = checkExposure(account.portfolio, money(order.notional.minor + reserve.minor, order.notional.currency), deps.parameters);
     if (!exposure.withinLimits) return blocked(exposure.violations.join(","));
     // Re-evaluate with current cash, not the stale balance used before waiting.

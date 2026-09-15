@@ -380,3 +380,17 @@ it("rejects a stale snapshot before requesting a sale quote", async () => {
   expect(result.decisions["STALE_PRICE"]).toBe(1);
   expect(calls).toBe(0);
 });
+
+it("books failed-exit costs without selling tokens or marking a take-profit hit", async () => {
+  const id = await position();
+  await snapshot(1, 60, "failed-entry-reference");
+  await snapshot(.7, 0, "failed-exit-reference");
+  await monitor({ db, logger, quotes: guterKurs, quoteMint: USDC, clock: new FixedClock(T0), random: () => 0 });
+  const [row] = await db.select().from(schema.paperPositions).where(eq(schema.paperPositions.id, id));
+  expect(row?.remainingAmountRaw).toBe(1_000_000n);
+  expect(row?.closedAt).toBeNull();
+  expect(row!.costsPaidMinor).toBeGreaterThan(0n);
+  const events = await db.select().from(schema.paperPositionEvents).where(eq(schema.paperPositionEvents.positionId, id));
+  expect(events.some((event) => event.kind === "EXIT_FAILED")).toBe(true);
+  expect(events.some((event) => event.kind === "PARTIAL_TP")).toBe(false);
+});

@@ -212,6 +212,14 @@ export class PaperPositionRepository {
     readonly detail: Readonly<Record<string, unknown>>;
   }): Promise<{ readonly kind: "APPLIED"; readonly version: number } | { readonly kind: "STALE" }> {
     return this.db.transaction(async (tx) => {
+      const [family] = await tx.select({ id: strategyVersions.strategyId, sizing: paperPositions.sizingMode, source: paperPositions.sourceType })
+        .from(paperPositions).innerJoin(strategyVersions, eq(strategyVersions.id, paperPositions.strategyVersionId))
+        .where(eq(paperPositions.id, input.positionId)).limit(1);
+      if (family?.sizing === "RISK_BASED" && family.source === "LIVE") {
+        // Same order as funded buys: strategy family first, then position.
+        // Exit fees must not change cash between an entry check and its booking.
+        await tx.select({ id: strategies.id }).from(strategies).where(eq(strategies.id, family.id)).for("update");
+      }
       const updated = await tx
         .update(paperPositions)
         .set({

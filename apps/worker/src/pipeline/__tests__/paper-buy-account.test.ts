@@ -113,6 +113,21 @@ describe("funded paper entry transaction", () => {
       expect(h.executions()).toBe(0);
     } finally { await h.close(); }
   });
+  it("persists a triggered daily entry lock even if the next balance recovers", async () => {
+    const h = await setup();
+    try {
+      await h.run(await h.opportunity(), {}, true);
+      // Isolated fixture accounting changes stand in for a large booked loss and recovery.
+      await h.db.update(schema.executions).set({ actualCostMinor: 9000n });
+      expect(await h.run(await h.opportunity())).toMatchObject({ kind: "ACCOUNT_BLOCKED", reason: "DAILY_LOSS" });
+      const [lock] = await h.db.select().from(schema.circuitBreakerState);
+      expect(lock?.state).toBe("OPEN");
+      expect(lock?.cooldownUntil?.toISOString()).toBe("2026-09-15T00:00:00.000Z");
+      await h.db.update(schema.executions).set({ actualCostMinor: 0n });
+      expect(await h.run(await h.opportunity())).toMatchObject({ kind: "ACCOUNT_BLOCKED", reason: "DAILY_LOSS" });
+      expect(h.executions()).toBe(1);
+    } finally { await h.close(); }
+  });
   it("rolls back the position when the actual modeled fill exceeds the reserved costs", async () => {
     const h = await setup();
     try {

@@ -93,6 +93,11 @@ export function reconcilePaperAccount(input: {
         gross += proceeds - allocated;
         saleCosts += costs;
         if (event.at >= midnight) today += proceeds - allocated - costs;
+      } else if (event.kind === "EXIT_FAILED") {
+        const costs = integer(detail["costsMinor"]);
+        if (costs === null || costs < 0n || detail["currency"] !== row.currency) return blocked;
+        saleCosts += costs;
+        if (event.at >= midnight) today -= costs;
       } else if (event.kind !== "CLOSED") {
         // Unknown balance-changing legacy event semantics are not spendable cash.
         return blocked;
