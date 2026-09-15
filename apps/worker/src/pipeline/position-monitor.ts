@@ -1,5 +1,5 @@
-import { bps, eur, systemClock, type Clock, type Money } from "@sae/core";
-import { DEFAULT_STRATEGY_PARAMETERS, type StrategyParameters } from "@sae/config";
+import { bps, money, mulDiv, systemClock, type Clock, type Currency, type Money } from "@sae/core";
+import { strategyParametersSchema, type StrategyParameters } from "@sae/config";
 import { LivePitReader, PaperPositionRepository, schema, type Database } from "@sae/db";
 import { tally, type Logger } from "@sae/observability";
 import { DEFAULT_FEES, DEFAULT_LATENCY } from "@sae/simulation";
@@ -11,7 +11,7 @@ import {
   type PositionState,
   type QuoteSource,
 } from "@sae/trading";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 /**
  * Offene Papier-Positionen ueberwachen.
@@ -36,7 +36,7 @@ import { eq } from "drizzle-orm";
  *
  * Der Router wird trotzdem gefragt, aber nur beim tatsaechlichen VERKAUF: dort
  * geht es um Ausfuehrungskosten, und die kennt nur, wer eine Route rechnet.
- * Verkaeufe sind selten, das Kontingent traegt sie.
+ * Jede ausgeloeste Teilstufe braucht ihren eigenen Quote; ohne Route bleibt sie offen.
  *
  * ### Was der Einstiegspreis hier IST
  *
@@ -52,7 +52,18 @@ export interface PositionMonitorDeps {
   readonly logger: Logger;
   readonly quotes: QuoteSource;
   readonly clock?: Clock;
-  readonly parameters?: StrategyParameters;
+  /** Explicit cost-model input in the position's currency; missing is not 150 EUR. */
+  readonly solPrice?: Money;
+  readonly random?: () => number;
+  /** Loaded only when a sale is due; no new requests for an empty book or HOLD. */
+  readonly loadValuation?: (currency: Currency) => Promise<{
+    readonly solPrice: Money;
+    readonly valueFill: NonNullable<PositionMonitorDeps["valueFill"]>;
+  } | null>;
+  /** Value the actual received anchor amount, never the signal's price ratio. */
+  readonly valueFill?: (input: { readonly amountRaw: bigint; readonly mint: string; readonly currency: Currency; readonly at: Date }) => Promise<{
+    readonly proceeds: Money; readonly observedAt: Date; readonly source: string;
+  } | null>;
   /** Der Anker, gegen den verkauft wird. */
   readonly quoteMint: string;
 }
@@ -65,8 +76,6 @@ export interface PositionMonitorResult {
   readonly decisions: Readonly<Record<string, number>>;
 }
 
-/** Portfoliowaehrung der Simulation. Dieselbe Annahme wie im Entscheidungslauf. */
-const CURRENCY = "EUR" as const;
 
 export async function monitorPaperPositions(
   deps: PositionMonitorDeps,
@@ -77,18 +86,10 @@ export async function monitorPaperPositions(
   const offen = await repo.openPositions();
   if (offen.length === 0) return { status: "NO_POSITIONS", processed: 0, closed: 0, decisions: {} };
 
-  const parameters = deps.parameters ?? DEFAULT_STRATEGY_PARAMETERS;
+  const versions = await deps.db.select({ id: schema.strategyVersions.id, parameters: schema.strategyVersions.parameters })
+    .from(schema.strategyVersions).where(inArray(schema.strategyVersions.id, [...new Set(offen.map((p) => p.strategyVersionId))]));
+  const parametersByVersion = new Map(versions.map((v) => [v.id, strategyParametersSchema.safeParse(v.parameters)]));
   const pit = new LivePitReader(deps.db, clock);
-  const executor = new PaperExecutor({
-    clock,
-    quotes: deps.quotes,
-    fees: DEFAULT_FEES,
-    latency: DEFAULT_LATENCY,
-    solPrice: eur(150),
-    dexFeeBps: bps(25),
-    random: Math.random,
-    driftSample: () => 0,
-  });
 
   const decisions: Record<string, number> = {};
   const zaehle = (was: string): void => {
@@ -98,7 +99,11 @@ export async function monitorPaperPositions(
 
   let closed = 0;
 
-  for (const position of offen) {
+  for (const initial of offen) {
+    let position = initial;
+    const parsed = parametersByVersion.get(position.strategyVersionId);
+    if (parsed === undefined || !parsed.success) { zaehle("INVALID_STRATEGY_VERSION"); continue; }
+    const parameters = parsed.data;
     const [token] = await deps.db
       .select({ mint: schema.tokens.mint })
       .from(schema.tokens)
@@ -132,7 +137,18 @@ export async function monitorPaperPositions(
       continue;
     }
 
-    const decision = evaluatePosition(stateOf(position, parameters), market);
+    if (jetzt === null || now.getTime() - jetzt.observedAt.getTime() >= 120_000) {
+      zaehle("STALE_PRICE"); continue;
+    }
+    const events = await deps.db.select({ detail: schema.paperPositionEvents.detail }).from(schema.paperPositionEvents)
+      .where(and(eq(schema.paperPositionEvents.positionId, position.id), eq(schema.paperPositionEvents.kind, "PARTIAL_TP")));
+    const hitLevels = new Set(events.flatMap((e) => {
+      const detail = (e.detail !== null && typeof e.detail === "object" ? e.detail : {}) as Record<string, unknown>;
+      const level = detail["levelIndex"] ?? detail["level"];
+      return typeof level === "number" && Number.isInteger(level) ? [level] : [];
+    }));
+    const state = stateOf(position, parameters);
+    const decision = evaluatePosition({ ...state, takeProfits: state.takeProfits.map((tp) => ({ ...tp, hit: hitLevels.has(tp.index) })) }, market);
     const aktion = decision.actions[0] ?? { kind: "HOLD" as const };
     zaehle(aktion.kind);
 
@@ -142,48 +158,67 @@ export async function monitorPaperPositions(
     const mfe = Math.max(position.maxFavorableExcursion ?? market.priceRatio, market.priceRatio);
     const mae = Math.min(position.maxAdverseExcursion ?? market.priceRatio, market.priceRatio);
 
-    if (aktion.kind !== "EXIT_ALL") {
-      if (mfe !== position.maxFavorableExcursion || mae !== position.maxAdverseExcursion) {
-        await deps.db
-          .update(schema.paperPositions)
-          .set({ maxFavorableExcursion: mfe, maxAdverseExcursion: mae })
-          .where(eq(schema.paperPositions.id, position.id));
-      }
-      continue;
+    if (mfe !== position.maxFavorableExcursion || mae !== position.maxAdverseExcursion) {
+      const [updated] = await deps.db.update(schema.paperPositions)
+        .set({ maxFavorableExcursion: mfe, maxAdverseExcursion: mae, version: sql`${schema.paperPositions.version} + 1` })
+        .where(and(eq(schema.paperPositions.id, position.id), eq(schema.paperPositions.version, position.version), sql`${schema.paperPositions.closedAt} is null`)).returning();
+      if (updated === undefined) { zaehle("STALE"); continue; }
+      position = updated;
     }
-
-    // Erst hier wird der Router gefragt: es geht um Ausfuehrungskosten, und
-    // die kennt nur, wer eine Route rechnet.
-    const plan: ExecutionPlan = {
-      intentId: `exit-${position.id}`,
-      side: "sell",
-      inputMint: token.mint as ExecutionPlan["inputMint"],
-      outputMint: deps.quoteMint as ExecutionPlan["outputMint"],
-      inAmount: position.remainingAmountRaw,
-      notional: notionalOf(position.entryNotionalMinor, market.priceRatio),
-      maxSlippageBps: bps(parameters.risk.maxSlippageBps),
-      plannedAt: now,
-    };
-    const fill = await executor.execute(plan);
-    if (fill.kind !== "FILLED") {
-      // Kein Fill, keine Schliessung. Eine Position ohne Ausstiegspreis zu
-      // schliessen hiesse, den Gewinn zu erfinden.
-      zaehle(`EXIT_${fill.kind}`);
-      continue;
+    const sells = decision.actions.filter((a) => a.kind === "EXIT_ALL" || a.kind === "SELL_PORTION");
+    if (sells.length === 0) continue;
+    const pricing = deps.loadValuation === undefined ? deps : await deps.loadValuation(position.currency);
+    if (pricing === null || pricing.valueFill === undefined) { zaehle("NO_VALUATION"); continue; }
+    if (pricing.solPrice === undefined || pricing.solPrice.currency !== position.currency || pricing.solPrice.minor <= 0n) {
+      zaehle("NO_COST_BASIS"); continue;
     }
-
-    const result = await repo.close({
-      positionId: position.id,
-      expectedVersion: position.version,
-      closedAt: now,
-      exitReason: decision.signals[0]?.ruleId ?? "EXIT_ALL",
-      maxAdverseExcursion: mae,
-      maxFavorableExcursion: mfe,
-      // Wie viel des erreichbaren Hochs tatsaechlich realisiert wurde.
-      exitEfficiency: mfe > 1 ? (market.priceRatio - 1) / (mfe - 1) : null,
+    const executor = new PaperExecutor({
+      clock, quotes: deps.quotes, fees: DEFAULT_FEES, latency: DEFAULT_LATENCY,
+      solPrice: pricing.solPrice, dexFeeBps: bps(25), random: deps.random ?? Math.random, driftSample: () => 0,
     });
-    if (result.kind === "CLOSED") closed += 1;
-    else zaehle("STALE");
+    for (const action of sells) {
+      const requested = action.kind === "EXIT_ALL" ? position.remainingAmountRaw
+        : mulDiv(position.entryAmountRaw, BigInt(action.portionBps), 10_000n, "floor");
+      const sold = requested < position.remainingAmountRaw ? requested : position.remainingAmountRaw;
+      if (sold <= 0n) { zaehle("DUST_PORTION"); continue; }
+      const plan: ExecutionPlan = {
+        intentId: `exit-${position.id}-${position.version}`,
+        side: "sell", inputMint: token.mint as ExecutionPlan["inputMint"],
+        outputMint: deps.quoteMint as ExecutionPlan["outputMint"], inAmount: sold,
+        notional: notionalOf(position.entryNotionalMinor, sold, position.entryAmountRaw, market.priceRatio, position.currency),
+        maxSlippageBps: bps(parameters.risk.maxSlippageBps), plannedAt: now,
+      };
+      const fill = await executor.execute(plan);
+      if (fill.kind !== "FILLED") {
+        if (fill.kind === "FAILED") {
+          if (fill.costs.total.currency !== position.currency || fill.costs.total.minor < 0n) throw new Error("Invalid failed-exit costs");
+          const booked = await repo.applyFill({ positionId: position.id, expectedVersion: position.version,
+            soldAmountRaw: 0n, realizedPnlMinorDelta: 0n, costsPaidMinorDelta: fill.costs.total.minor,
+            at: fill.failedAt, kind: "EXIT_FAILED", detail: { costsMinor: fill.costs.total.minor.toString(),
+              currency: position.currency, reason: fill.reason } });
+          if (booked.kind === "STALE") zaehle("STALE_EXIT_FAILURE");
+        }
+        zaehle(`EXIT_${fill.kind}`); break;
+      }
+      const valuation = await pricing.valueFill({ amountRaw: fill.outAmount, mint: deps.quoteMint, currency: position.currency, at: fill.filledAt });
+      const age = valuation === null ? NaN : fill.filledAt.getTime() - valuation.observedAt.getTime();
+      if (valuation === null || !Number.isFinite(age) || age < 0 || age >= 120_000 ||
+        valuation.proceeds.currency !== position.currency || valuation.proceeds.minor < 0n || valuation.source.length === 0) {
+        zaehle("NO_VALUATION"); break;
+      }
+      const reason = action.kind === "SELL_PORTION" ? `TAKE_PROFIT_${action.levelIndex}`
+        : decision.signals.find((signal) => signal.action.kind === "EXIT_ALL")?.ruleId ?? "EXIT_ALL";
+      const settled = await repo.settleSale({
+        positionId: position.id, expectedVersion: position.version, soldAmountRaw: sold,
+        proceeds: valuation.proceeds, costs: fill.costs.total, at: fill.filledAt,
+        reason, levelIndex: action.kind === "SELL_PORTION" ? action.levelIndex : null,
+        maxAdverseExcursion: mae, maxFavorableExcursion: mfe,
+        valuation: { source: valuation.source, observedAt: valuation.observedAt.toISOString(), amountRaw: fill.outAmount.toString(), mint: deps.quoteMint },
+      });
+      if (settled.kind === "STALE") { zaehle("STALE"); break; }
+      position = settled.position;
+      if (position.closedAt !== null) { closed += 1; break; }
+    }
   }
 
   deps.logger.info(
@@ -246,9 +281,10 @@ function marketStateOf(input: {
   readonly haltedauerSekunden: number;
 }): PositionMarketState | null {
   const { jetztPreis, einstiegPreis } = input;
-  if (jetztPreis === null || einstiegPreis === null || einstiegPreis <= 0) return null;
+  if (jetztPreis === null || einstiegPreis === null || !Number.isFinite(jetztPreis) || !Number.isFinite(einstiegPreis) || jetztPreis < 0 || einstiegPreis <= 0) return null;
 
   const priceRatio = jetztPreis / einstiegPreis;
+  if (!Number.isFinite(priceRatio) || !Number.isSafeInteger(Math.round(priceRatio * 1_000_000))) return null;
 
   // Der Kaufanteil nur, wenn BEIDE Zahlen da sind. Ein fehlender Wert als 0
   // gelesen machte aus „unbekannt" ein „niemand hat verkauft" — und der
@@ -283,7 +319,7 @@ function marketStateOf(input: {
 }
 
 /** Der aktuelle Gegenwert der Position, fuer die Kostenrechnung des Ausstiegs. */
-function notionalOf(entryNotionalMinor: bigint, priceRatio: number): Money {
-  const minor = BigInt(Math.max(0, Math.round(Number(entryNotionalMinor) * priceRatio)));
-  return { minor, currency: CURRENCY } as Money;
+function notionalOf(entry: bigint, sold: bigint, total: bigint, ratio: number, currency: Currency): Money {
+  const reference = mulDiv(entry, sold, total, "floor");
+  return money(mulDiv(reference, BigInt(Math.round(ratio * 1_000_000)), 1_000_000n, "floor"), currency);
 }

@@ -1,3 +1,5 @@
+import type { PreparedPaperEntry } from "./prepare-paper-entry";
+import { withPaperBuyAccount } from "./paper-buy-account";
 import { createHash } from "node:crypto";
 import {
   assertProvenanceConsistent,
@@ -88,8 +90,12 @@ export interface PipelineDeps {
    * entschieden, aber nicht ausgefuehrt.
    */
   readonly entryAmountRaw: bigint | null;
+  /** Explicit quote-valued order for a separately versioned risk-based experiment. */
+  readonly riskBasedEntry?: { readonly amountRaw: bigint; readonly notional: Money; readonly roundTripCosts?: Money; readonly quotedAt?: Date };
   /** Wie lange eine Manual-Gelegenheit auf Antwort wartet. */
   readonly manualRespondMs: number;
+  /** Lazy preflight only after data gates and a preliminary ENTER. */
+  readonly prepareEntry?: () => Promise<PreparedPaperEntry>;
   /** Zusatzangaben, die der Live-Pfad nicht selbst herleiten kann. */
   readonly decisionContext: Omit<
     DecisionContext,
@@ -139,6 +145,8 @@ export interface DecisionRecord {
 }
 
 export type AutoPaperResult =
+  | { readonly kind: "ACCOUNT_BLOCKED"; readonly reason: string }
+  | { readonly kind: "ORDER_SIZE_MISMATCH" }
   | { readonly kind: "OPENED"; readonly positionId: string; readonly outcome: ExecutionOutcome }
   | { readonly kind: "ALREADY_OPEN"; readonly positionId: string }
   /** Die simulierte Ausfuehrung ist gescheitert — kein Fill, keine Position. */
@@ -213,7 +221,7 @@ export async function runOpportunityPipeline(
 
   /* ---------------------------------------------- 5. Entscheidung */
   const decisionAt = deps.clock.now();
-  const decision = decide({
+  let decision = decide({
     ...deps.decisionContext,
     decisionId: `dec-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
     strategyVersionId: deps.strategyVersionId,
@@ -273,6 +281,18 @@ export async function runOpportunityPipeline(
       detail: blocked?.detail ?? "Kein Strom geoeffnet.",
       ...(blocked?.missing === undefined ? {} : { missing: blocked.missing }),
     };
+  }
+
+  if (decision.kind === "ENTER" && deps.prepareEntry !== undefined) {
+    const prepared = await deps.prepareEntry();
+    if (prepared.kind === "BLOCKED") return { kind: "BLOCKED", reason: prepared.reason, detail: "Paper order preflight blocked" };
+    deps = { ...deps, ...prepared.update };
+    const age = deps.clock.now().getTime() - features.asOf.getTime();
+    if (!fixture && (age < 0 || age >= 120000)) return { kind: "BLOCKED", reason: "STALE_PREFLIGHT_FEATURES", detail: "Features expired during quote preparation" };
+    decision = decide({ ...deps.decisionContext,
+      decisionId: `dec-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
+      strategyVersionId: deps.strategyVersionId, features, scoring, parameters: deps.parameters,
+    });
   }
 
   /* ---------------------------------------------- 7. Gelegenheiten */
@@ -394,13 +414,18 @@ export async function runOpportunityPipeline(
     return { kind: "NO_ENTRY", decision, created, persisted };
   }
 
-  const autoPosition = await openAutoPaperPosition({
+  const openInput = {
     deps,
     opportunityId: auto.opportunityId,
     tokenId: String(features.tokenId),
     provenance,
     decidedAt: decision.decidedAt,
-  });
+  };
+  const autoPosition = deps.riskBasedEntry !== undefined && provenance.sourceType === "LIVE"
+    ? await withPaperBuyAccount({ deps, opportunityId: auto.opportunityId, tokenId: String(features.tokenId),
+        executeAndOpen: (db) => openAutoPaperPosition({ ...openInput, deps: { ...deps, db } }),
+      })
+    : await openAutoPaperPosition(openInput);
 
   /* ---------------------------------------------- 9. Manual bleibt offen */
   // Ausdruecklich KEINE Aktion fuer MANUAL_PAPER. Die Gelegenheit steht auf
@@ -427,8 +452,16 @@ async function openAutoPaperPosition(input: {
 }): Promise<AutoPaperResult> {
   const { deps } = input;
 
-  const entryAmountRaw = deps.entryAmountRaw;
+  const entryAmountRaw = deps.riskBasedEntry?.amountRaw ?? deps.entryAmountRaw;
   if (entryAmountRaw === null) return { kind: "NO_ORDER_SIZE" };
+  const notional = deps.riskBasedEntry?.notional ?? PAPER_NOTIONAL;
+  const approved = deps.decisionContext.sizing;
+  // Never execute the old fixed order when the decision approved another size.
+  // Raw units must come from the caller's quote/FX valuation, not cent scaling.
+  if (!approved.tradeable || entryAmountRaw <= 0n || notional.minor <= 0n ||
+    notional.currency !== approved.size.currency || notional.minor !== approved.size.minor) {
+    return { kind: "ORDER_SIZE_MISMATCH" };
+  }
 
   const plan: ExecutionPlan = {
     intentId: `auto-${input.opportunityId}`,
@@ -443,7 +476,7 @@ async function openAutoPaperPosition(input: {
     inAmount: entryAmountRaw,
     // Der Gegenwert in Portfoliowaehrung bleibt die Grundlage der
     // Kostenrechnung — das war hier immer richtig.
-    notional: PAPER_NOTIONAL,
+    notional,
     maxSlippageBps: bps(deps.parameters.risk.maxSlippageBps),
     plannedAt: input.decidedAt,
   };
@@ -458,8 +491,8 @@ async function openAutoPaperPosition(input: {
     opportunityId: input.opportunityId,
     tokenId: input.tokenId,
     stream: "AUTO_PAPER",
-    sizingMode: "FIXED_100",
-    entryNotional: PAPER_NOTIONAL,
+    sizingMode: deps.riskBasedEntry === undefined ? "FIXED_100" : "RISK_BASED",
+    entryNotional: notional,
     entryAmountRaw: outcome.outAmount,
     strategyVersionId: String(deps.strategyVersionId),
     openedAt: outcome.filledAt,

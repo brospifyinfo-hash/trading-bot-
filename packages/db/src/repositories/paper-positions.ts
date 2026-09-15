@@ -1,7 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
-import { isTestFixture, type Money, type SizingMode, type SourceType, type TradingStream } from "@sae/core";
+import { isTestFixture, mulDiv, type Money, type SizingMode, type SourceType, type TradingStream } from "@sae/core";
 
 import type { Database } from "../client";
+import { strategies, strategyVersions } from "../schema/strategy";
 import { opportunities, paperPositionEvents, paperPositions } from "../schema/opportunities";
 
 /**
@@ -57,6 +58,70 @@ export interface OpenPositionInput {
 
 export class PaperPositionRepository {
   constructor(private readonly db: Database) {}
+
+  /** Book a valued sale and, on the final fill, close in the SAME transaction. */
+  async settleSale(input: {
+    readonly positionId: string;
+    readonly expectedVersion: number;
+    readonly soldAmountRaw: bigint;
+    readonly proceeds: Money;
+    readonly costs: Money;
+    readonly at: Date;
+    readonly reason: string;
+    readonly levelIndex: number | null;
+    readonly maxAdverseExcursion: number;
+    readonly maxFavorableExcursion: number;
+    readonly valuation: Readonly<Record<string, unknown>>;
+  }): Promise<{ readonly kind: "SETTLED"; readonly position: typeof paperPositions.$inferSelect } | { readonly kind: "STALE" }> {
+    if (input.soldAmountRaw <= 0n || input.proceeds.minor < 0n || input.costs.minor < 0n) {
+      throw new RangeError("Invalid sale quantities");
+    }
+    return this.db.transaction(async (tx) => {
+      const [family] = await tx.select({ id: strategyVersions.strategyId, sizing: paperPositions.sizingMode, source: paperPositions.sourceType })
+        .from(paperPositions).innerJoin(strategyVersions, eq(strategyVersions.id, paperPositions.strategyVersionId))
+        .where(eq(paperPositions.id, input.positionId)).limit(1);
+      if (family?.sizing === "RISK_BASED" && family.source === "LIVE") {
+        // Same order as funded buys: strategy family first, then position.
+        // Exit fees must not change cash between an entry check and its booking.
+        await tx.select({ id: strategies.id }).from(strategies).where(eq(strategies.id, family.id)).for("update");
+      }
+      const [row] = await tx.select().from(paperPositions).where(eq(paperPositions.id, input.positionId)).limit(1);
+      if (row === undefined || row.closedAt !== null || row.version !== input.expectedVersion) return { kind: "STALE" as const };
+      if (row.currency !== input.proceeds.currency || row.currency !== input.costs.currency) throw new TypeError("Sale currency mismatch");
+      if (input.at < row.openedAt || input.soldAmountRaw > row.remainingAmountRaw || row.entryAmountRaw <= 0n) throw new RangeError("Invalid sale state");
+      // Cumulative allocation conserves every cent across arbitrarily rounded partials.
+      const soldBefore = row.entryAmountRaw - row.remainingAmountRaw;
+      const basis = mulDiv(row.entryNotionalMinor, soldBefore + input.soldAmountRaw, row.entryAmountRaw, "floor")
+        - mulDiv(row.entryNotionalMinor, soldBefore, row.entryAmountRaw, "floor");
+      const remaining = row.remainingAmountRaw - input.soldAmountRaw;
+      const final = remaining === 0n;
+      const [updated] = await tx.update(paperPositions).set({
+        remainingAmountRaw: remaining,
+        // Gross realized result; costs are stored separately, never silently zeroed.
+        realizedPnlMinor: row.realizedPnlMinor + input.proceeds.minor - basis,
+        costsPaidMinor: row.costsPaidMinor + input.costs.minor,
+        maxAdverseExcursion: input.maxAdverseExcursion,
+        maxFavorableExcursion: input.maxFavorableExcursion,
+        closedAt: final ? input.at : null,
+        exitReason: final ? input.reason : null,
+        version: row.version + 1,
+      }).where(and(eq(paperPositions.id, row.id), eq(paperPositions.version, row.version), sql`${paperPositions.closedAt} is null`)).returning();
+      if (updated === undefined) return { kind: "STALE" as const };
+      await tx.insert(paperPositionEvents).values({
+        positionId: row.id, kind: final ? "EXIT_FILL" : "PARTIAL_TP", at: input.at,
+        detail: {
+          levelIndex: input.levelIndex, soldAmountRaw: input.soldAmountRaw.toString(),
+          proceedsMinor: input.proceeds.minor.toString(), costBasisMinor: basis.toString(),
+          costsMinor: input.costs.minor.toString(), currency: row.currency,
+          reason: input.reason, valuation: input.valuation,
+        },
+      });
+      if (final) await tx.insert(paperPositionEvents).values({
+        positionId: row.id, kind: "CLOSED", at: input.at, detail: { exitReason: input.reason },
+      });
+      return { kind: "SETTLED" as const, position: updated };
+    });
+  }
 
   async open(input: OpenPositionInput): Promise<OpenResult> {
     return this.db.transaction(async (tx) => {
@@ -118,6 +183,7 @@ export class PaperPositionRepository {
         at: input.openedAt,
         detail: {
           entryNotionalMinor: input.entryNotional.minor.toString(),
+          entryCostsMinor: input.entryCostsMinor.toString(),
           currency: input.entryNotional.currency,
           sizingMode: input.sizingMode,
         },
@@ -146,6 +212,14 @@ export class PaperPositionRepository {
     readonly detail: Readonly<Record<string, unknown>>;
   }): Promise<{ readonly kind: "APPLIED"; readonly version: number } | { readonly kind: "STALE" }> {
     return this.db.transaction(async (tx) => {
+      const [family] = await tx.select({ id: strategyVersions.strategyId, sizing: paperPositions.sizingMode, source: paperPositions.sourceType })
+        .from(paperPositions).innerJoin(strategyVersions, eq(strategyVersions.id, paperPositions.strategyVersionId))
+        .where(eq(paperPositions.id, input.positionId)).limit(1);
+      if (family?.sizing === "RISK_BASED" && family.source === "LIVE") {
+        // Same order as funded buys: strategy family first, then position.
+        // Exit fees must not change cash between an entry check and its booking.
+        await tx.select({ id: strategies.id }).from(strategies).where(eq(strategies.id, family.id)).for("update");
+      }
       const updated = await tx
         .update(paperPositions)
         .set({

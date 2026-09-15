@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_STRATEGY_PARAMETERS } from "@sae/config";
-import { ensureActiveStrategyVersion, schema, type Database } from "@sae/db";
+import { ensureActiveStrategyVersion, schema, loadLatestDecisionRun, type Database } from "@sae/db";
 import { createTestDatabase } from "@sae/db/testing";
 import { createLogger } from "@sae/observability";
 import { providerId } from "@sae/core";
@@ -142,6 +142,19 @@ describe("Gelegenheitspruefung", () => {
     // richtige Auskunft — und sie steht jetzt da.
     expect(Object.keys(result.outcomes)).toHaveLength(1);
     expect(result.outcomes["NO_SOURCE"]).toBe(1);
+
+    // Die echte Handler-Ausgabe durch die Persistenz bis zum Dashboard lesen.
+    // Ein Test mit separat nachgebautem Diagnoseobjekt saehe fehlende Felder nie.
+    await db.insert(schema.jobQueue).values({ kind: job.kind, dedupeKey: "diagnostic-roundtrip",
+      state: "DONE", attempts: 1, finishedAt: T0, result });
+    const reported = await loadLatestDecisionRun(db);
+    expect(reported?.outcomes).toEqual({ NO_SOURCE: 1 });
+    expect(reported?.missingFields).toEqual({});
+    expect(reported?.tracked).toBe(1);
+    expect(reported?.sizing).toMatchObject({
+      minimumMinor: "10000", portfolioCapMinor: "9000", confidenceCapMinor: "3750",
+      maximumMinor: "3750", tradeable: false,
+    });
   });
 
   /**

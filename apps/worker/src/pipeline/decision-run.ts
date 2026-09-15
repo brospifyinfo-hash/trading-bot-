@@ -1,6 +1,13 @@
-import { bps, eur, systemClock, tokenId as asTokenId, strategyVersionId as asStrategyVersionId, type Money } from "@sae/core";
+import { eq } from "drizzle-orm";
+import { usesPaperCandidate } from "./paper-candidate-version";
+import { loadPaperAccount } from "./paper-account";
+import { PAPER_INITIAL_CASH } from "./paper-buy-account";
+import { preparePaperEntry } from "./prepare-paper-entry";
+import type { PaperValuation } from "./paper-valuation";
+import { bps, eur, systemClock, tokenId as asTokenId, strategyVersionId as asStrategyVersionId, money, type Currency, type Money } from "@sae/core";
 import {
   DEFAULT_STRATEGY_PARAMETERS,
+  MEMECOIN_PAPER_CANDIDATE,
   DEFAULT_SYSTEM_STATE,
   type KnownProviderId,
 } from "@sae/config";
@@ -14,7 +21,7 @@ import {
   type ProviderStatusReport,
 } from "@sae/providers";
 import type { Logger } from "@sae/observability";
-import { LivePitReader, type Database } from "@sae/db";
+import { LivePitReader, schema, type Database } from "@sae/db";
 import type { MarketDataAdapter } from "@sae/pipeline";
 
 import {
@@ -117,6 +124,7 @@ export interface DecisionRunDeps {
    * denn dann bliebe der eigentliche Ablehnungsgrund unsichtbar.
    */
   readonly quotes: QuoteSource;
+  readonly loadValuation?: (currency: Currency) => Promise<PaperValuation | null>;
   /** Marktkapitalisierung des Tokens, fuer die Liquiditaetsgrenze der Groesse. */
   readonly liquidityUsd: number | null;
 }
@@ -130,6 +138,36 @@ export interface DecisionRunDeps {
  */
 const MAX_POOL_SHARE = 0.02;
 
+/** Derselbe Rechner fuer Entscheidung und Betriebsdiagnose. Kein zweites Regelwerk. */
+export function paperSizing(liquidityUsd: number | null) {
+  const parameters = DEFAULT_STRATEGY_PARAMETERS;
+  const maxNotionalByLiquidity = liquidityUsd === null
+    ? PAPER_PORTFOLIO
+    : eur(Math.round(liquidityUsd * MAX_POOL_SHARE * 100));
+  return computePositionSize({
+    portfolioValue: PAPER_PORTFOLIO,
+    stopDistance: parameters.exit.stopLossBps / 10_000,
+    maxNotionalByLiquidity,
+    evConfidence: 0,
+    minimumNotional: PAPER_NOTIONAL,
+    parameters,
+  });
+}
+
+/** JSON-faehig, Betraege bleiben Cent-Zeichenketten statt gerundeter Messwerte. */
+export function paperSizingDiagnostics() {
+  const sizing = paperSizing(null);
+  return {
+    currency: PAPER_NOTIONAL.currency,
+    minimumMinor: PAPER_NOTIONAL.minor.toString(),
+    portfolioCapMinor: sizing.candidates.PORTFOLIO_CAP.minor.toString(),
+    confidenceCapMinor: sizing.candidates.CONFIDENCE.minor.toString(),
+    maximumMinor: sizing.size.minor.toString(),
+    tradeable: sizing.tradeable,
+    bindingConstraint: sizing.bindingConstraint,
+  };
+}
+
 export async function runDecision(deps: DecisionRunDeps): Promise<{
   readonly outcome: string;
   readonly detail: string;
@@ -140,30 +178,25 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
   /** Namen fehlender Pflichtfelder aus geschlossener Aufzaehlung. Sonst leer. */
   readonly missing: readonly string[];
 }> {
-  const parameters = DEFAULT_STRATEGY_PARAMETERS;
-
-  // Die Liquiditaetsgrenze der Positionsgroesse. Ohne bekannte Liquiditaet
-  // gibt es keine Obergrenze aus dem Markt — dann bindet eine andere.
-  const maxNotionalByLiquidity: Money =
-    deps.liquidityUsd === null
-      ? PAPER_PORTFOLIO
-      : eur(Math.round(deps.liquidityUsd * MAX_POOL_SHARE * 100));
-
-  const sizing = computePositionSize({
-    portfolioValue: PAPER_PORTFOLIO,
-    stopDistance: parameters.exit.stopLossBps / 10_000,
-    maxNotionalByLiquidity,
-    // Ohne Historie ist die Zuversicht nicht hoch, und sie wird auch nicht
-    // dazu erklaert. Der EV-Rechner unten sagt dasselbe mit eigenen Worten.
-    evConfidence: 0,
-    minimumNotional: PAPER_NOTIONAL,
-    parameters,
-  });
-
-  // Ohne abgeschlossene Trades liefert der Rechner von sich aus UNKNOWN. Das
-  // ist die richtige Auskunft — und sie entsteht durch Rechnen.
+  const candidate = usesPaperCandidate(deps.env);
+  const parameters = candidate ? MEMECOIN_PAPER_CANDIDATE.parameters : DEFAULT_STRATEGY_PARAMETERS;
+  const [version] = candidate ? await deps.db.select().from(schema.strategyVersions)
+    .where(eq(schema.strategyVersions.id, deps.strategyVersionId)).limit(1) : [];
+  const account = candidate && version !== undefined ? await loadPaperAccount({ db: deps.db,
+    strategyId: version.strategyId, initialCash: PAPER_INITIAL_CASH, asOf: systemClock.now() }) : null;
+  if (candidate && (account === null || account.kind !== "READY")) {
+    const reason = account?.kind === "BLOCKED" ? account.reason : "INVALID_STRATEGY_VERSION";
+    return { outcome: "BLOCKED", detail: reason, label: `BLOCKED_${reason}`, finalScore: null, missing: [] };
+  }
+  const sizing = candidate ? computePositionSize({
+    portfolioValue: account?.kind === "READY" ? account.portfolio.value : eur(0),
+    stopDistance: parameters.exit.stopLossBps / 10000, evConfidence: 0,
+    maxNotionalByLiquidity: account?.kind === "READY" ? account.cash : eur(0),
+    minimumNotional: money(1n, "EUR"), parameters,
+  }) : paperSizing(deps.liquidityUsd);
   const ev = estimateEv({
-    sample: [],
+    sample: account?.kind === "READY" ? account.closedReturns.filter((trade) => trade.strategyVersionId === deps.strategyVersionId) : [],
+    // Samples are already net; charge future modeled costs in the separate preflight gate.
     expectedCostFraction: 0,
     minSampleSize: parameters.entryGates.minEvSampleSize,
   });
@@ -177,7 +210,7 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     fleet: summarizeFleet(deps.providerReports),
     snapshotCount: deps.snapshotCount,
     minSnapshotsForAnalysis: MIN_SNAPSHOTS_FOR_ANALYSIS,
-    executor: new PaperExecutor({
+    executor: candidate ? { mode: "paper", execute: async () => ({ kind: "ABORTED", reason: "POLICY", abortedAt: systemClock.now() }) } : new PaperExecutor({
       clock: systemClock,
       quotes: deps.quotes,
       fees: DEFAULT_FEES,
@@ -190,7 +223,7 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     // Gekauft wird MIT dem Anker, nicht mit dem Token selbst (§120).
     inputMint: deps.quoteMint,
     outputMint: deps.mint,
-    entryAmountRaw: deps.entryAmountRaw,
+    entryAmountRaw: candidate ? null : deps.entryAmountRaw,
     manualRespondMs: MANUAL_RESPOND_MS,
     decisionContext: {
       executionMode: "paper",
@@ -208,6 +241,14 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     },
   };
 
+  const executionDeps: PipelineDeps = candidate ? { ...pipelineDeps, prepareEntry: async () => {
+      if (version === undefined || account === null) return { kind: "BLOCKED", reason: "INVALID_STRATEGY_VERSION" };
+      if (account.kind !== "READY") return { kind: "BLOCKED", reason: account.reason };
+      return preparePaperEntry({ account, valuation: await deps.loadValuation?.("EUR") ?? null,
+        quotes: deps.quotes, clock: systemClock, parameters, inputMint: deps.quoteMint, outputMint: deps.mint,
+        tokenId: deps.tokenId, context: pipelineDeps.decisionContext });
+    } } : pipelineDeps;
+
   const result: PipelineOutcome = await runOpportunityPipeline(
     {
       kind: "LIVE",
@@ -223,7 +264,7 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
       env: deps.env,
       allowDegraded: false,
     },
-    pipelineDeps,
+    executionDeps,
   );
 
   return {
@@ -273,6 +314,7 @@ export function labelOf(result: PipelineOutcome): string {
       // Ein Einstieg, dem die Ausfuehrung nicht gefolgt ist, ist kein
       // Einstieg. Beides unter `ENTERED` zu zaehlen waere die schmeichelhafte
       // Variante und im Betrieb die gefaehrliche.
+      if (result.autoPosition.kind === "ACCOUNT_BLOCKED") return `BLOCKED_${result.autoPosition.reason}`;
       return result.autoPosition.kind === "OPENED"
         ? "ENTERED"
         : `ENTERED_${result.autoPosition.kind}`;

@@ -1,3 +1,4 @@
+import { ensurePaperCandidateVersion, usesPaperCandidate, PAPER_CANDIDATE_SELECTOR } from "./pipeline/paper-candidate-version";
 import { systemClock, tokenId as asTokenId } from "@sae/core";
 import {
   countSnapshots,
@@ -20,13 +21,14 @@ import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
 import { enrichSecurity } from "./pipeline/security-enrichment";
 import { monitorPaperPositions } from "./pipeline/position-monitor";
+import { buildPaperValuation } from "./pipeline/paper-valuation";
 import {
   anchorUnitsToRaw,
   buildDecimalsReader,
   QUOTE_ANCHOR_MINT,
   QUOTE_PROBE_NOTIONAL,
 } from "./pipeline/quote-market-source";
-import { runDecision } from "./pipeline/decision-run";
+import { runDecision, paperSizingDiagnostics } from "./pipeline/decision-run";
 import { buildAuthorityReader } from "./pipeline/authorities";
 import { runTokenDiscovery } from "./pipeline/discovery-run";
 import { resolveMarketInput } from "./pipeline/market-input";
@@ -342,7 +344,12 @@ class EvaluateOpportunityHandler implements JobHandler {
     // Die Strategieversion, auf die sich jede Entscheidung beruft. Sie fehlte
     // in der Produktionsdatenbank vollstaendig; ohne sie waere der erste
     // echte Entscheidungsversuch an einem Fremdschluessel gescheitert.
-    const strategy = await ensureActiveStrategyVersion({
+    const selector = this.deps.env["PAPER_STRATEGY"];
+    if (selector !== undefined && selector !== "legacy" && selector !== PAPER_CANDIDATE_SELECTOR) {
+      return waitingForData("Ungueltige PAPER_STRATEGY-Konfiguration");
+    }
+    const candidate = usesPaperCandidate(this.deps.env);
+    const strategy = candidate ? await ensurePaperCandidateVersion(this.deps.db, systemClock.now()) : await ensureActiveStrategyVersion({
       db: this.deps.db,
       parameters: DEFAULT_STRATEGY_PARAMETERS,
       at: systemClock.now(),
@@ -376,6 +383,7 @@ class EvaluateOpportunityHandler implements JobHandler {
     // die spaetere Statistik haette keine Chance, das noch zu bemerken.
     const providerEnv = loadEnv(providerEnvSchema, this.deps.env);
     const quotes = buildQuoteSource(providerEnv);
+    const loadValuation = buildPaperValuation(providerEnv);
 
     // Die Ordergroesse in der kleinsten Einheit des Ankers — GELESEN, nicht
     // abgeschrieben. Dass USDC sechs Stellen hat, ist bekannt; eine bekannte
@@ -423,6 +431,7 @@ class EvaluateOpportunityHandler implements JobHandler {
         snapshotCount,
         providerReports: reports,
         quotes,
+        loadValuation,
         // Dieselbe Kette wie beim Auffrischen der Marktdaten. Hier stand
         // vorher eine leere Map — siehe die Begruendung an `DecisionRunDeps`.
         adapters: this.deps.adapters ?? new Map(),
@@ -476,7 +485,21 @@ class EvaluateOpportunityHandler implements JobHandler {
       },
       "Gelegenheiten geprueft",
     );
-    return { status: "OK", processed: run.processed, outcomes };
+    // Der Consumer persistiert das Ergebnis ohnehin. Die Diagnose darf nicht
+    // nur im Log stehen, wo der Betreiber sie ohne Hilfe nicht auswerten kann.
+    return {
+      status: "OK",
+      processed: run.processed,
+      outcomes,
+      missingFields: fehlendeFelder,
+      tracked: tokens.length,
+      skipped: run.skipped,
+      roundComplete: run.completed,
+      bestScore: bester,
+      entryThreshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+      sizing: candidate ? null : paperSizingDiagnostics(),
+      strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
+    };
   }
 }
 
@@ -593,7 +616,10 @@ class EnrichSecurityHandler implements JobHandler {
  */
 class MonitorPaperPositionHandler implements JobHandler {
   readonly wiring = "DEDICATED" as const;
-  constructor(private readonly deps: HandlerDeps) {}
+  private readonly valuation: ReturnType<typeof buildPaperValuation>;
+  constructor(private readonly deps: HandlerDeps) {
+    this.valuation = buildPaperValuation(loadEnv(providerEnvSchema, deps.env));
+  }
 
   async handle(job: ClaimedJob): Promise<unknown> {
     void job;
@@ -604,6 +630,7 @@ class MonitorPaperPositionHandler implements JobHandler {
       // Derselbe Anker, gegen den auch der Marktpreis gemessen wird.
       quoteMint: QUOTE_ANCHOR_MINT,
       quotes: buildQuoteSource(env),
+      loadValuation: this.valuation,
     });
   }
 }

@@ -5016,3 +5016,386 @@ Signatur.
 Dazu im Log jetzt `skipped`, `beobachtet` und `rundeFertig` an der
 Entscheidungszeile. Die erste Zahl ist die, an der sich überhaupt ablesen
 lässt, ob rotiert wird.
+
+## §129 — Der Einsatz ist kein Gewinnziel, und die Diagnose muss im Dashboard ankommen
+
+Datum: 2026-09-13
+
+Der Betreiber hat die Bestandsaufnahme zur Umsetzung freigegeben und nach
+anderen Memecoin-Bots sowie einer Alternative zur 3-Prozent-Grenze gefragt.
+Diese Grenze betrifft den Einsatz, nicht die Rendite. Die Primaerquellen,
+offiziellen Jupiter-Limits und die konkrete Entscheidungsvorlage stehen in
+`BOT-RESEARCH-2026-09-13.md`.
+
+### Ein weiterer Widerspruch vor dem Einstieg
+
+3.000 EUR Papierdepot ergeben bei 3 Prozent maximal 90 EUR Position. Der
+Mindestbetrag ist 100 EUR. Noch enger bindet EV-Konfidenz 0: das Risikosizing
+erlaubt dann nur 37,50 EUR. Der Code kann diese Mindestgroesse nie erreichen.
+Das Anheben nur einer Grenze ist deshalb verworfen. Risikowerte und
+Gewinnziele bleiben unveraendert bis zur konkreten Betreiberentscheidung.
+
+`paperSizing` ist jetzt die gemeinsame Aufrufstelle des bestehenden Rechners
+fuer Entscheidung und Diagnose. Das Ergebnis wird vor einer Marktbegrenzung
+als erklaerte Konfiguration ausgewiesen, nicht als Depotmessung. Es werden
+keine Tore umgangen und keine Positionen zum Testen in Produktion angelegt.
+
+### Die Ausgabe war nur im Log vollstaendig
+
+Der Handler gab nur processed und outcomes zurueck. Fehlende Felder,
+Rotationsgroesse und Score gingen nicht in das ohnehin persistierte
+`job_queue.result`. Diese Daten werden nun mitgefuehrt; das Dashboard zeigt
+den letzten tatsaechlich ausgefuehrten Bewertungslauf mit Abschlusszeit und
+Groessenwiderspruch. Alte Ergebnisse bleiben unvollstaendig, statt rueckwirkend
+ergaenzt zu werden. Ein SUPERSEDED-Auftrag ist kein Bewertungslauf.
+
+Der Integrationstest nimmt die echte Handler-Ausgabe und liest sie nach dem
+Speichern ueber dieselbe Abfrage wie das Dashboard. Damit wird gerade die
+Naht geprueft, die bei den vorherigen Reparaturen fehlte.
+
+Gegengeprueft: mit dem alten Handler-Ergebnis scheitert er an
+`expected null to deeply equal {}`. Weitere Gegenproben stellen die drei
+Fehler wieder her: veraltete Messung als aktuell, SUPERSEDED als Lauf und
+abgeschlossener Auftrag als Wiederholung. Alle drei werden von den Tests
+erkannt. Danach wurde der korrigierte Code wieder eingesetzt.
+
+### Kein gruenes Signal aus einer Konstante
+
+Die Statusleiste zeigte fest 0 offene Positionen und zweimal laeuft. Sie zeigt
+jetzt die tatsaechlichen Produktions-Papierzaehlungen; der nicht verdrahtete
+Emergency-Knopf ist deaktiviert und als solcher benannt. Eine alte oder in der
+Zukunft liegende Provider-Messung begruendet keinen aktuellen Zustand mehr.
+Die Anbieterpruefung wird nicht mehr als Beweis fuer den Consumer bezeichnet.
+Ein UNAVAILABLE ohne Erfolgs- oder Fehlermessung wird als UNGEPRUEFT gezeigt;
+es wurde kein Routerausfall gemessen und kein Erfolg hinzuerfunden.
+
+### Zwei belegte Kosten-/Zaehlerfehler
+
+`loadProviderStatus` versprach DISTINCT ON im Kommentar, lud aber die gesamte
+Historie und filterte erst in JavaScript. Es waehlt jetzt in SQL den letzten
+Datensatz je Anbieter. Die Anzeige in Wiederholung zaehlte auch fertige und
+tote Jobs mit mehreren Versuchen; jetzt zaehlen nur QUEUED und RUNNING.
+
+### Grenzen
+
+Dies ist der erste Diagnose-/Betriebsbaustein. Authentifizierung, konsistente
+variable Ordergroessen, reale Waehrungs-/Kostenquellen, Portfolioeingaben,
+Budgetsteuerung und der Nachweis von 100 echten Papierabschluessen sind damit
+noch nicht geloest. Kein Push auf main, keine Produktionsmigration, keine
+Bestandskorrektur und kein Live-Handel sind Teil dieser Aenderung.
+
+
+## §130 — Eine gewaehlte Teststrategie ist noch kein Gewinnnachweis
+
+Datum: 2026-09-14
+
+Der Betreiber hat die Auswahl jetzt ausdruecklich delegiert: andere Memecoin-Bots
+vergleichen und den sinnvoll erscheinenden Ansatz uebernehmen. Damit ist die in
+§129 offene Auswahl fuer den Papier-Test getroffen; es ist keine Live-Freigabe.
+
+BONKbot dokumentiert Teilverkaeufe/Limit Sells und Trailing Stops, Warp getrennte
+Kaufbetraege und TP/SL, Hummingbot den Positions-Lebenszyklus mit Zeitlimit. Keine
+dieser Quellen belegt die langfristige Profitabilitaet unserer Parameter. Quellen
+und Auswahl stehen in `MEMECOIN-PAPER-CANDIDATE-2026-09-14.md`.
+
+Der neue, separat bezeichnete Kandidat `memecoin-risk-managed` Version 1.0.0
+verwendet 0,5 Prozent Stop-Risikobudget vor Kosten, maximal 3 Prozent Einsatz,
+10 Prozent Gesamt-Exposure, 3 Prozent Tagesverlust und hoechstens vier Positionen.
+Die 3 Prozent bleiben eine Obergrenze, keine feste Groesse und kein Gewinnziel.
+Ein Stop ist keine Garantie gegen Totalverlust. Die Gewinnleiter verkauft 40/30/20
+Prozent der Ursprungsposition bei +25/+50/+100 Prozent; 10 Prozent bleiben uebrig.
+20 Prozent Stopabstand, 15 Prozent Basis-Trailing und sechs Stunden Zeitlimit sind
+unvalidierte Versuchseinstellungen. Sicherheits- und Einstiegsschwellen bleiben
+im Kandidaten unveraendert. Keine Optimierung anhand erfundener Gewinner.
+
+Der neue Kosten-Groessenrechner verlangt eine gleichwaehrige Schaetzung fuer Kauf
+UND alle geplanten Verkaeufe, Quote-basierte Kapazitaet und verbleibendes Exposure.
+Das Mindestvolumen folgt aus diesem Kostenbetrag und dem expliziten Kostenbudget
+von 2 Prozent. Es ist kein abgesenkter fester Mindestbetrag. Ist die erlaubte
+Position zu klein fuer ihre Kosten, bleibt der Einstieg blockiert. Fehlende Angaben
+sind kein Nullwert. Verbleibendes Exposure reserviert die modellierten Kosten.
+Die Kosten muessen fuer die vorgeschlagene Groesse und Zahl der Fills neu bewertet
+werden; dieser reine Rechner beschafft keine Quotes und keinen Wechselkurs.
+
+Die Ausfuehrungsnaht nimmt nun optional einen explizit bewerteten risikobasierten
+Auftrag entgegen. Betrag und Rohmenge gehen unveraendert an den Executor, derselbe
+Geldbetrag an die Buchhaltung, mit `RISK_BASED` statt `FIXED_100`. Weicht der Auftrag
+von der genehmigten Groesse ab, erfolgt keine Ausfuehrung. Insbesondere wird ein
+fehlender variabler Auftrag nicht durch den alten festen 100er-Kauf ersetzt.
+
+Der Kandidat ersetzt nicht still die bestehende Default-Version. Im laufenden
+Worker fehlen nach wie vor reale Portfolio-/Exposure-Eingaben, vollstaendige
+Kosten-/FX-Bewertung und ein versionsgebundener Positionsmonitor. Eine Aktivierung
+mit diesen Platzhaltern wuerde Testparameter als gemessenen Betrieb ausgeben. Der
+Code ist deshalb ein implementierter Testkandidat mit integrierter Ausfuehrungsnaht,
+noch kein aktivierter produktiver Papierlauf. Bestehende Daten wurden nicht
+geaendert; keine Migration, keine Wallet-Aktion. GitHub-Schreiben war zuletzt
+mit HTTP 403 blockiert.
+
+Die Regression prueft berechnete Groesse -> Executor -> gespeicherte Position und
+einen absichtlich davon abweichenden festen Auftrag. Mechaniktests pruefen die
+Teilverkaufsleiter, Verlustausstieg, Trailing und Zeitablauf. Saemtliche dortigen
+Positionen sind TEST_FIXTURE; sie belegen keine Rendite.
+
+Gegenprobe: den bewerteten variablen Betrag wieder durch PAPER_NOTIONAL ersetzt.
+Der Integrationstest scheitert mit `expected undefined to be 20000000n`, weil
+der falsche Auftrag nicht mehr zur genehmigten Groesse passt. Mutation danach
+vollstaendig zurueckgenommen.
+
+
+## §131 — Teilverkaeufe erkennen ist nicht Teilverkaeufe buchen
+
+Datum: 2026-09-14
+
+Der Positionsmonitor wertete die globale Default-Konfiguration aus statt der
+Version der Position. Er las nur die erste Aktion, ignorierte SELL_PORTION und
+schloss bei EXIT_ALL nach einem Quote ohne Verkaufsmenge, Erloes oder Kosten
+zu buchen. So konnte weder eine Gewinnleiter noch eine Nettoauswertung stimmen.
+
+Jetzt werden die gespeicherten Parameter je referenzierter Version validiert;
+auch stillgelegte Versionen gelten weiter fuer ihre offenen Positionen. Ungueltige
+Parameter sind INVALID_STRATEGY_VERSION, kein Anlass fuer globale Ersatzregeln.
+Erfolgreiche Teilstufen werden aus Ereignissen rekonstruiert und nach einem
+Neustart nicht nochmals verkauft. Uebersprungene Stufen werden der Reihe nach
+ausgefuehrt. Ein Fehlschlag unterbricht diesen Versuch, keine Stufe wird als
+erfolgreich markiert. Veraltete Markt-Snapshots loesen keine Verkaeufe aus.
+
+`settleSale` bucht verbleibende Rohmenge, Bruttoergebnis, Kosten, Ereignis und
+gegebenenfalls Schliessung in einer Transaktion mit Versionsvergleich. Der
+Einstand wird kumulativ in ganzen Cent aufgeteilt; der letzte Verkauf erhaelt
+den Rundungsrest. Derselbe Versionsstand kann nicht zweimal gebucht werden.
+Kosten bleiben separat: Netto ist Brutto minus Kosten. Keine bestehende Zeile
+in der Produktionsdatenbank wurde im Rahmen der Entwicklung angefasst.
+
+Eine Preisbewegung des Signals ist kein Verkaufserloes. Der Monitor verlangt
+eine Bewertung der tatsaechlich vom simulierten Executor erhaltenen Anker-Menge.
+Dafuer ist jetzt ein separater Coinbase-Referenzkursadapter angeschlossen:
+SOL/EUR bzw. SOL/USD (Ask fuer Kosten), USDC/EUR bzw. USDC/USD (Bid fuer
+Erloesbewertung). Dezimalstellen werden vom konfigurierten Solana-RPC gelesen,
+nicht als 6 festgeschrieben. Ein unbekanntes oder nicht verfuegbares Handelspaar
+liefert keine Bewertung. Es gibt weder USDC/EUR-Paritaet noch feste 150 EUR/SOL.
+
+Der Vertrag stammt aus der offiziellen Dokumentation:
+https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-ticker
+
+Geprueft werden Dezimalstrings, Bid/Ask-Reihenfolge und der gelieferte Zeitstempel
+(maximal 120 Sekunden, keine Zukunftszeit). Cache und Zusammenfassen paralleler
+Abrufe begrenzen Requests auf einen je Produkt pro 30 Sekunden; 5 Sekunden
+Timeout, keine sofortigen Retry-Schleifen. Der Handler laedt Bewertungen erst
+bei einem faelligen Verkauf, nicht bei leerem Buch oder HOLD. Quelle, Zeitpunkt,
+Anker-Menge und Waehrung stehen am Verkaufsereignis. Das ist eine Fiat-
+Referenzbewertung, kein tatsaechlich ausgefuehrter Coinbase-Tausch.
+
+Der produktive Abruf dieses zusaetzlichen Hosts ist noch nicht nachgewiesen:
+Die beiden direkten Tests aus dieser Arbeitsumgebung endeten mit Timeout.
+Adapter- und Integrationstests verwenden ausdrueckliche Fixtures und belegen
+nur den Vertrag und die Buchungsnaht. NO_VALUATION bzw. NO_COST_BASIS halten eine
+Position offen, wenn benoetigte Angaben fehlen. Bestehende Gebuehren-/Latenz-/
+Fehlschlagannahmen des PaperExecutors sind weiterhin Modellwerte, keine
+gemessenen Chain-Kosten; diese Umstellung ist kein Profitabilitaetsnachweis.
+
+Offen bleiben insbesondere: Einstieg mit dem ausgewaehlten Kandidaten,
+versionsgebundene Einstiegskonfiguration, konsistente Depot-/Exposure-Eingaben,
+aktuelle groessenabhaengige Gesamtkosten und ein beobachteter kompletter
+Papierzyklus nach Deployment. Keine automatische Freigabe fuer Live-Handel.
+
+Die Gegenproben sind ausgefuehrt: globale Defaults statt Positionsversion,
+Vergessen bereits verkaufter Stufen und Weglassen der Ergebnisbuchung lassen
+jeweils den zugehoerigen Integrationstest scheitern. Danach alle Mutationen
+vollstaendig zurueckgenommen.
+
+## §132 — Spendierbares Papierguthaben aus Buchungen statt Startkonstante
+
+Datum: 2026-09-14
+
+Die Kaufseite braucht eine belastbare Kontorechnung, bevor sie den Kandidaten
+aktivieren darf. `reconcilePaperAccount` rekonstruiert freies Guthaben aus dem
+expliziten Anfangsguthaben plus realisiertem Bruttoergebnis minus saemtlichen
+gebuchten Kosten minus dem verbleibenden Einstand offener Positionen. Der
+Einstand folgt derselben kumulativen Ganzzahlaufteilung wie `settleSale`.
+Teilverkaeufe geben ausschliesslich bewertete Erloese frei. Offene Kursgewinne
+werden nicht zu spendierbarem Guthaben. Buchwert und freies Guthaben sind
+getrennt; als konservative Groessenbasis ist nur positives freies Guthaben
+vorgesehen. Das ist keine Mark-to-Market-Depotbewertung.
+
+Vor einer Berechnung werden Rohmengen, Einstand, Ergebnis und Kosten mit den
+OPENED/PARTIAL_TP/EXIT_FILL-Ereignissen abgeglichen. Fehlende, widerspruechliche,
+zukunftsdatierte oder unbekannte Buchungen liefern UNRECONCILED_PAPER_ACCOUNT.
+Ein frueherer asOf bei bereits spaeter veraenderten Positionen ist kein Replay
+und wird abgewiesen. Ein Ueberzug bleibt negativ sichtbar, niemals wird das
+Anfangsguthaben neu eingesetzt. Neue OPENED-Ereignisse dokumentieren die
+Einstiegskosten explizit; alte vollstaendig dokumentierte Ereignisketten koennen
+sie aus Gesamtkosten minus Verkaufskosten rekonstruieren. Keine Nachmigration.
+
+`loadPaperAccount` liest Positionen samt Ereignissen in EINEM SQL-Statement,
+damit beide denselben Datenbank-Snapshot sehen. Der Kontoumfang ist genau eine
+Strategiefamilie ueber ihre Versionen hinweg, AUTO_PAPER/RISK_BASED/LIVE ohne
+Fixtures. Manual-, FIXED_100- und fremde Strategiepositionen werden getrennt.
+Tagesnetto folgt dem UTC-Buchungstag inklusive Einstiegskosten; Verlustserien
+und abgeschlossene Nettorenditen bleiben aus den persistierten Trades lesbar.
+Diese Ausgabe ist noch kein dauerhaft gespeicherter Circuit-Breaker-Lockout.
+
+Die Fiat-Bewertung kann nun auch Kaeufe vorbereiten. Ein freigegebener Fiatbetrag
+wird am USDC-Ask in die groesste bezahlbare Rohmenge umgerechnet, abgerundet
+mit bigint. Die anschliessende Ask-Bewertung wird auf Cent aufgerundet und
+ueberschreitet trotzdem niemals das Budget. Beide Referenzen (USDC und SOL)
+muessen beim Verwenden frisch sein. Das gilt jetzt auch fuer Verkaufsbewertungen;
+ein zwischen Laden und Verwenden veralteter SOL-Kostenkurs gilt nicht weiter.
+
+Nachweis: Rechenfaelle einschliesslich Teilverkaufs-Rundungsrest, Gebuehren,
+Ueberzug, Fremdwaehrung und kaputter Historie; Datenbankintegration mit echten
+Repository-Buchungen in isoliertem PGlite sowie getrennten Versionen und
+Kontoumfaengen. Gegenproben ohne Kostenabzug und mit Aufrunden der Kaufmenge
+liessen die zugehoerigen Tests scheitern und wurden anschliessend entfernt.
+Gesamtlauf: 141 Testdateien / 1515 Tests bestanden, Lint und Typpruefung
+aller 20 Teilprojekte bestanden. Keine Renditebehauptung.
+
+Noch nicht angeschlossen: Der laufende Entscheidungs-Handler benutzt weiter
+seinen bisherigen Groessenpfad. Diese Kontorechnung und Kaufbewertung sind
+vorbereitete, getestete Bausteine, keine aktivierte Kaufstrategie. Vor Aktivierung
+fehlen insbesondere der atomare Budgetvergleich samt Positionsanlage gegen
+parallele Worker, versionsgebundene Kaufparameter, groessenabhaengige Kauf- und
+Ausstiegsquotes samt Gesamtkostentor, sowie die Buchung fehlgeschlagener
+Einstiegsversuche. Letztere koennen Gebuehren ohne Position verursachen und
+duerfen nicht durch eine reine Positionssumme verschwinden. Erst nach dieser
+Verbindung und einem beobachteten Papierzyklus ist ein Teststart vertretbar.
+
+## §133 — Finanzierung und fehlgeschlagene Paper-Kaeufe gemeinsam buchen
+
+Datum: 2026-09-14
+
+Der AUTO_PAPER/RISK_BASED-Pfad mit LIVE-Marktdaten ruft jetzt vor der
+simulierten Ausfuehrung `withPaperBuyAccount` auf. Ein Auftrag braucht eine
+explizite Gesamtkostenreserve samt Zeitstempel. Fehlt sie, bleibt der Auftrag
+MISSING_COST_RESERVATION; der feste Legacy-Pfad und Fixtures bekommen keine
+heimlichen Ersatzkosten. Das Anfangsguthaben ist explizit 3000 EUR je
+Strategiefamilie, keine Kontomessung.
+
+Die Strategiezeile wird mit SELECT FOR UPDATE gesperrt. Unter derselben
+Transaktion werden gespeicherte Parameter, Gelegenheit, Wiederholungen,
+Kontostand, Token-Duplikate, Exposure, Tagesverlust und Verlustserie geprueft.
+Nach dem Warten auf die Sperre wird die Groessenobergrenze aus dem aktuellen
+freien Guthaben erneut berechnet. Dabei bleibt Konfidenz konservativ null;
+eine spaetere Hoeherstufung aus belastbaren Stichproben ist nicht vorweggenommen.
+Kostenreserve und Auftrag muessen gemeinsam in Guthaben und Exposure passen,
+die Reserve muss innerhalb der Kandidaten-Kostengrenze liegen. Die Parameter
+duerfen nicht von der gespeicherten, nicht stillgelegten Version abweichen.
+
+Die Sperre umfasst Ausfuehrung und Positionsanlage. Auch `settleSale` nimmt sie
+fuer denselben LIVE/RISK_BASED-Kontoumfang vor seiner Positionsbuchung. Dadurch
+koennen Ausstiegsgebuehren den Kontostand nicht zwischen Kaufpruefung und
+Kaufbuchung veraendern. Der Kontoleser nimmt dieselbe Sperre, wenn er Positionen
+samt Ereignissen und separat fehlgeschlagene Kaufversuche liest. Sperrreihenfolge
+ist Familie vor Position. Verschiedene Versionen derselben Familie teilen das
+Budget und die Sperre.
+
+Fehlgeschlagene Einstiege erzeugen jetzt einen paper/auto/buy-TradeIntent und
+einen Execution-Kosteneintrag unter dem eindeutigen Schluessel
+`funded-paper-buy:<opportunityId>`. Eine Wiederholung derselben Gelegenheit darf
+weder einen zweiten Fill noch erneut kostenlose Versuche produzieren. Ein
+ABORTED vor Ausfuehrung bleibt ohne Gebuehren. Erfolgreiche Kosten stehen
+weiter an der Position; die Kontorechnung liest zusaetzlich ausschliesslich
+FAILED-Intents dieses Kontopfades. So werden Erfolgskosten nicht zweimal
+abgezogen. Fehlende oder doppelte Execution-Buchungen sperren die Kontorechnung.
+Das Feld actualCostMinor traegt hier ausdruecklich ein simuliertes Ergebnis des
+bestehenden Paper-Kostenmodells, keine gemessene Chain-Gebuehr. Auch bei FAILED
+wird dessen bisheriges Gesamtkostenmodell verwendet, konservativ inklusive
+modellierter Impact-/Latenzanteile; eine Kalibrierung bleibt offen.
+
+Ueberschreitet ein simulierter erfolgreicher Fill seine Kostenreserve, wird die
+ganze Transaktion zurueckgerollt. Das ist ausschliesslich fuer Paper zulaessig:
+Es wurde nichts signiert oder an eine Chain gesendet. Live-Executors werden an
+dieser Schnittstelle abgewiesen.
+
+Tests in isoliertem PGlite pruefen Wiederholung, zwei parallele Aufrufe,
+Gebuehren ohne Position, reduzierte Folgegroesse, veraltete/fehlende Reserven,
+Parameterabweichung und Rollback. PGlite serialisiert Transaktionen selbst;
+das ist kein Lasttest fuer PostgreSQL-Worker. Die produktive Synchronisation
+beruht auf der expliziten Datenbanksperre, nicht auf einer Prozesssperre. Eine
+Gegenprobe ohne Abzug fehlgeschlagener Versuche liess den zugehoerigen Test
+scheitern; danach wurde die Mutation entfernt.
+
+Weiterhin nicht aktiviert: Der Handler stellt noch keine Kandidaten-Auftraege
+mit aktuellen groessenabhaengigen Ein-/Ausstiegsquotes und Kostenreserven her.
+Diese Vorpruefung ist angeschlossen, aber sie ersetzt den noch fehlenden
+Auftragsvorbereiter nicht. Tages-/Seriengrenzen werden hier aus Buchungen neu
+geprueft; ein separat dauerhaft verriegelter Circuit Breaker samt Ruecksetzung
+ist noch nicht implementiert. Keine Produktionsmigration und kein Deployment.
+
+Validierung: 142 Testdateien mit 1520 Tests bestanden; Lint und Typpruefung
+aller 20 Teilprojekte bestanden. Kontosperrgruende erscheinen im Bewertungslauf
+als BLOCKED_<Grund> statt als undifferenzierter Einstiegsversuch.
+
+## §134 — Kandidaten-Handler mit mengenabhaengigem Quote-Vorlauf
+
+Datum: 2026-09-14
+
+`PAPER_STRATEGY=memecoin-risk-managed-v1` waehlt jetzt ausdruecklich den
+separaten Papierkandidaten aus. Ohne Auswahl oder mit `legacy` bleibt der alte
+Pfad bestehen. Andere Werte blockieren den Handler. Die neue Strategieversion
+wird idempotent angelegt, mit ihrem gespeicherten Parametersatz verglichen und
+niemals ueberschrieben. Eine stillgelegte oder abweichende Version verlangt
+eine neue Version. Der bisherige Default wird nicht umetikettiert.
+
+Der Kandidat liest sein gebuchtes Guthaben und abgeschlossene Nettorenditen
+seiner eigenen Version. Die Stichprobe ist bereits netto; zukuenftige Kosten
+werden gesondert im Vorlauf geprueft, nicht nochmals von historischen
+Nettorenditen abgezogen. Das ist noch keine nach Marktregime/Score getrennte
+Out-of-Sample-Auswertung. Die Groesse bleibt bei Konfidenz null konservativ.
+
+Nur nach gueltigen Daten-/Bereitschaftstoren und einem vorlaeufigen ENTER wird
+`preparePaperEntry` aufgerufen. Er bewertet den budgetbegrenzten USDC-Einsatz
+am Fiat-Ask, holt den Kaufquote und daraus mengenabhaengige Verkaufquotes:
+alle nichtleeren Teilstufen plus Rest, voller Ausstieg und die konfigurierte
+Kapazitaetsmenge (derzeit dreifache Position). Bis zu sieben Quote-Requests je
+qualifiziertem Token; eine Fehlantwort beendet den Versuch ohne Sofort-Retry.
+Ein Quote muss positiv, frisch und innerhalb der Impact-Grenze liegen.
+
+Die Kostenreserve ist das Kaufmodell plus das groessere aktuelle Szenario aus
+vollstaendigem Ausstieg und Teilverkaufsleiter. Zusaetzlich wird ein beobachteter
+Ruecktausch-/Fiat-Spread (positiver Unterschied zwischen Einsatz und bewerteten
+Quote-Erloesen) beruecksichtigt. Die bestehende Modellrechnung enthaelt bereits
+Impact-/DEX-Anteile; die zusaetzliche Quote-Verlustrechnung ist daher bewusst
+konservativ und kein exakt gemessener Gebuehrennachweis. Es werden keine
+zukuenftigen Zielpreise als aktuelle Quotes ausgegeben. Hohe Kosten vergroessern
+den Einsatz nicht: der Versuch wird gesperrt. Reserve und Einsatz muessen in
+Guthaben, Exposure und die Kostenquote passen.
+
+Der Executor bekommt exakt den geprueften Kaufquote und Betrag. Abweichende
+Mints/Mengen/Waehrungen oder abgelaufene Quote-/Fiatreferenzen liefern ABORTED.
+Es gibt beim Ausfuehren keinen zweiten unbeprueften Kaufquote. Nach dem Vorlauf
+entscheidet die Engine nochmals mit der tatsaechlich bewerteten Groesse;
+veraltete LIVE-Features blockieren. Der Kandidaten-Platzhalterexecutor kann
+nur abbrechen und hat weder festen 150-EUR-SOL-Kurs noch festen Kaufbetrag.
+Die alte 100-EUR-Diagnose wird fuer den Kandidaten nicht als seine Groesse
+angezeigt. Konkrete Vorlauf-Sperren stehen in den gezaehlten Ergebnissen.
+
+Ausgeloeste Tages-/Serienverlustsperren bei der atomaren Kaufpruefung werden
+jetzt je Strategiefamilie in circuit_breaker_state festgehalten. Tagesverlust
+bleibt bis zum naechsten UTC-Tag gesperrt; eine Serienverlustsperre bleibt bis
+zur ausdruecklichen fachlichen Pruefung/Ruecksetzung offen. Neustart oder
+kurzzeitige Erholung hebt die Sperre nicht auf. Das sind Einstiegssperren;
+Ausstiege bleiben moeglich. Es ist keine Behauptung einer laufenden Intraday-
+Risikoauswertung ohne Einstiegsversuch und kein automatisch optimierter Reset.
+
+Auch ein fehlgeschlagener simulierter Ausstieg bucht nun EXIT_FAILED mit Kosten,
+aber ohne Tokenverkauf oder erfolgreiche Teilstufe. Kontorechnung und
+Versionsschutz beruecksichtigen dieses Ereignis. Die Buchung nimmt dieselbe
+Familiensperre wie ein erfolgreicher Verkauf. Damit verschwinden modellierte
+Fehlversuchskosten weder auf der Kauf- noch auf der Verkaufsseite.
+
+Isolierte Tests decken Kauf -> Teilverkauf -> Endausstieg mit persistierten
+Mengen/Ergebnis/Kosten ab. Die dort verwendeten Marktdaten, Kurse und Positionen
+sind Test-Fixtures; sie belegen Mechanik, keine erzielbare Rendite. Weitere
+Tests pruefen Kosten/Spread, fehlende Ausstiegskapazitaet, spaet abgelaufene
+Quotes, unveraenderliche Versionen und dauerhafte Verlustsperren.
+
+Der Schalter wurde nicht in Railway gesetzt. Ein kompletter Papierzyklus mit
+aktuellen externen Kursen in der Zielumgebung bleibt nach Deployment zu
+beobachten. Die bisherigen direkten Coinbase-Abrufe waren nicht erfolgreich.
+Ein unbekannter Referenzkurs blockiert weiterhin, statt Paritaet zu erfinden.
+
+Abschlusspruefung am 2026-09-15: 144 Testdateien / 1530 Tests bestanden,
+Lint und Typpruefung aller 20 Teilprojekte bestanden. Gegenproben ohne
+Ruecktausch-Spread und ohne angeschlossenen Vorlauf liessen jeweils den
+Regressionstest scheitern; beide Mutationen wurden entfernt.

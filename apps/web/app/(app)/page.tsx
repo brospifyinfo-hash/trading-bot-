@@ -1,9 +1,10 @@
-import { loadDashboardState, type Panel } from "@sae/db";
+import { loadDashboardState, isRecentObservation, type Panel } from "@sae/db";
 
 import { db } from "@/lib/db";
 import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/readiness";
 
 import { BotStatusBar } from "@/components/BotStatusBar";
+import { OperatingStatus } from "@/components/OperatingStatus";
 
 /**
  * Dashboard.
@@ -163,7 +164,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
 
   return (
     <>
-      <BotStatusBar />
+      <BotStatusBar paper={state.paperCounts} />
 
       <section className="headline" data-connected={state.marketDataConnected}>
         <h1>{state.headline}</h1>
@@ -177,6 +178,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
       </section>
 
       <main className="workspace">
+        <OperatingStatus run={state.latestDecisionRun} now={state.generatedAt} />
         <section className="panel">
           <h2>Datenquellen</h2>
           {state.providers.length === 0 ? (
@@ -199,12 +201,17 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
               </thead>
               <tbody>
                 {state.providers.map((p) => (
-                  <tr key={p.providerId} data-status={p.status}>
+                  <tr key={p.providerId} data-status={isRecentObservation(p.observedAt, state.generatedAt) ? p.status : "UNAVAILABLE"}>
                     <td>
                       {p.providerId}
                       <span className="caps">{p.capabilities.join(", ")}</span>
                     </td>
-                    <td className="status">{STATUS_LABEL[p.status] ?? p.status}</td>
+                    <td className="status">
+                      {!isRecentObservation(p.observedAt, state.generatedAt) ? "MESSUNG VERALTET"
+                        : p.status === "UNAVAILABLE" && p.lastSuccessAt === null && p.lastFailureAt === null
+                          ? "UNGEPRUEFT" : STATUS_LABEL[p.status] ?? p.status}
+                      {p.detail !== null && <span className="caps">{p.detail}</span>}
+                    </td>
                     <td>{p.latencyMsP95 === null ? "—" : `${p.latencyMsP95.toFixed(0)} ms`}</td>
                     <td>
                       {p.dataFreshnessSeconds === null
@@ -246,7 +253,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
                   <dd>{v.snapshotCount}</dd>
                 </div>
                 <div>
-                  <dt>Tokens</dt>
+                  <dt>Tokens mit Snapshots</dt>
                   <dd>{v.distinctTokens}</dd>
                 </div>
                 <div>
@@ -381,8 +388,8 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
               <dd>{state.systemState.phase}</dd>
             </div>
             <div>
-              <dt>Worker</dt>
-              <dd>{state.systemState.workerAlive ? "aktiv" : "keine Messung"}</dd>
+              <dt>Anbieterpruefung</dt>
+              <dd>{state.systemState.workerAlive ? "aktuelle Messung" : "keine aktuelle Messung"}</dd>
             </div>
             <div>
               <dt>Letzte Messung</dt>
