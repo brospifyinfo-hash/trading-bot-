@@ -90,7 +90,8 @@ const win = <R, T>(
   // `m5?: R | undefined`, und Zods `passthrough()` liefert das Zweite.
   raw:
     | { m5?: R | undefined; h1?: R | undefined; h6?: R | undefined; h24?: R | undefined }
-    | undefined,
+    | undefined
+    | null,
   map: (value: R) => T,
 ): DexScreenerWindows<T> => {
   const one = (value: R | undefined): T | null => (value === undefined ? null : map(value));
@@ -117,7 +118,7 @@ export function normalizePair(raw: DexScreenerPairRaw): DexScreenerMarket {
 
     baseMint: raw.baseToken.address,
     baseSymbol: raw.baseToken.symbol ?? null,
-    quoteMint: raw.quoteToken.address,
+    quoteMint: raw.quoteToken.address ?? "", // No identity: rejected before pool selection.
     quoteSymbol: raw.quoteToken.symbol ?? null,
 
     priceUsd: raw.priceUsd ?? null,
@@ -141,14 +142,15 @@ export function normalizePair(raw: DexScreenerPairRaw): DexScreenerMarket {
     })),
     priceChangePct: win<number, number>(raw.priceChange, (p) => p),
 
-    pairCreatedAt: raw.pairCreatedAt === undefined ? null : new Date(raw.pairCreatedAt),
+    pairCreatedAt: raw.pairCreatedAt === undefined || raw.pairCreatedAt === null ? null : new Date(raw.pairCreatedAt),
 
     observedAt: null,
   };
 }
 
 /**
- * Der geprüfte Vertrag.
+ * Der geprüfte Vertrag. Nullable-Erweiterung: offizielle API-Referenz vom
+ * 2026-09-15; urspruengliche Felder anhand der Antwort vom 2026-09-03.
  *
  * `verified: true`, weil das Schema aus einer **echten Antwort der API**
  * stammt — der unmittelbarsten Primaerquelle, die es gibt. Die Version traegt
@@ -163,6 +165,6 @@ export function normalizePair(raw: DexScreenerPairRaw): DexScreenerMarket {
 export const DEXSCREENER_MARKET_CONTRACT: ResponseContract<readonly DexScreenerMarket[]> =
   zodContract({
     schema: dexScreenerResponseSchema.transform((pairs) => pairs.map(normalizePair)),
-    schemaVersion: "dexscreener-tokens-v1@2026-09-03",
+    schemaVersion: "dexscreener-tokens-v2@2026-09-15",
     verified: true,
   });

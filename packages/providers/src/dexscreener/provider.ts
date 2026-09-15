@@ -143,6 +143,16 @@ export class DexScreenerMarketAdapter {
    * auf — wenn also am wenigsten Zeit ist, es zu bemerken.
    */
   async fetchMarkets(mints: readonly string[]): Promise<MarketFetchOutcome> {
+    return this.fetchUrl(this.url(mints));
+  }
+
+  /** All pools for one token; bounded fallback when the bulk endpoint is incomplete. */
+  async fetchTokenPools(mint: string): Promise<MarketFetchOutcome> {
+    const base = this.#deps.baseUrl ?? DEXSCREENER_BASE_URL;
+    return this.fetchUrl(`${base}/token-pairs/v1/solana/${encodeURIComponent(mint)}`);
+  }
+
+  private async fetchUrl(url: string): Promise<MarketFetchOutcome> {
     const { clock } = this.#deps;
     const startedAt = clock.now().getTime();
     const elapsed = (): number => Math.max(0, clock.now().getTime() - startedAt);
@@ -167,7 +177,7 @@ export class DexScreenerMarketAdapter {
     let response: Response;
     let body: string;
     try {
-      response = await fetchImpl(this.url(mints), {
+      response = await fetchImpl(url, {
         method: "GET",
         headers: { accept: "application/json" },
         signal: controller.signal,

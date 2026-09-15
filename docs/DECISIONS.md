@@ -5432,3 +5432,39 @@ Dashboard nach Teilverkauf, Endausstieg und fehlgeschlagenem Kauf und pruefen
 die Trennung anderer Konten. Gegenprobe ohne Abzug fehlgeschlagener Kaufkosten
 scheitert erwartungsgemaess; Mutation entfernt und Regression erneut bestanden.
 Lint, Typpruefung aller 20 Projekte und Next-Produktionsbuild bestanden.
+
+## §136 — Vollstaendigere DexScreener-Marktdaten (2026-09-15)
+
+Die offizielle API-Referenz erlaubt null fuer priceUsd, liquidity, liquidity.usd,
+marketCap, fdv, priceChange, pairCreatedAt und Quote-Identitaetsfelder.
+Quelle: https://docs.dexscreener.com/api/reference (abgerufen 2026-09-15).
+Unser Schema akzeptierte nur fehlende Felder, wodurch ein dokumentierter
+null-Wert den gesamten Antwort-Batch mitsamt gueltigen Nachbarpools verwarf.
+Vertrag v2 akzeptiert diese Werte als unbekannt. Fehlende Quote-Adressen bleiben
+nicht auswaehlbar; keine Kennzahl wird zu null Euro, keine FDV zu Market Cap
+und kein Abrufzeitpunkt zum Anbieterzeitstempel umgedeutet.
+
+Der Worker fragt zusaetzlich /token-pairs/v1/solana/{mint} ab, wenn der erste
+Tokens-Abruf leer ist, kein Pool die bestehenden Pruefungen besteht oder dem
+ausgewaehlten Pool Marktkapitalisierung bzw. Volumenfenster fehlen.
+Maximal ein weiterer Abruf pro Adapter-Aufruf, mit demselben Timeout,
+Rate-Budget und Vertrag. Kein Retry bei Fehler/429 des ersten Abrufs.
+Pools werden anhand ihrer Adresse dedupliziert und erneut durch dieselben
+Identitaets-, Liquiditaets-, Alters- und Plausibilitaetspruefungen geschickt.
+Bei fehlerhafter Zusatzantwort bleibt der vorhandene Datensatz erhalten.
+Das gilt auch fuer die DexScreener-Begleitdaten im Jupiter-Quote-Pfad.
+
+Keine Strategiegrenzen wurden gelockert, kein kostenpflichtiger Anbieter
+aktiviert und keine Produktionsdaten manuell geschrieben. Diese Korrektur
+beweist noch nicht, dass fehlende Live-Marktdaten saemtlicher Coins verfuegbar
+werden. Direkte API-Probes aus dieser Arbeitsumgebung endeten mit HTTP 403;
+der bestehende Produktions-Healthcheck meldete DexScreener erreichbar.
+Die genaue Ursache der produktiven Datenluecken ist damit nicht abschliessend
+belegt. Weitere Provider oder Marktuniversums-Aenderungen sind separate Arbeit.
+
+Pruefung: 145 Testdateien / 1539 Tests bestanden; Lint und Typpruefung aller
+20 Projekte bestanden. Sechs neue Regressionen pruefen leeren Bulk-Abruf,
+unvollstaendige Felder, Deduplizierung, unnoetige Zusatzaufrufe, unsichere Pools,
+fehlerhafte Zusatzantwort und null-Felder in Nachbarpools.
+Gegenproben ohne Null-Unterstuetzung bzw. ohne zusaetzlichen Pool-Abruf scheiterten
+erwartungsgemaess; beide Mutationen entfernt, gezielte Tests erneut bestanden.
