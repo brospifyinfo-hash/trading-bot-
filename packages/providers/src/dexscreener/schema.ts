@@ -1,6 +1,12 @@
 import { z } from "zod";
 
 /**
+ * Nullable fields aligned with the official API reference on 2026-09-15.
+ * https://docs.dexscreener.com/api/reference
+ * Unknown quote identity remains unselectable; null metrics never become zero.
+ */
+
+/**
  * Das Antwortformat von `GET /tokens/v1/{chainId}/{tokenAddresses}`.
  *
  * Abgeleitet aus einer **echten Antwort** der API vom 2026-09-03, nicht aus
@@ -97,31 +103,35 @@ export const dexScreenerPairSchema = z
     dexId: z.string().min(1),
     pairAddress: z.string().min(1),
     baseToken: tokenRefSchema,
-    quoteToken: tokenRefSchema,
+    quoteToken: tokenRefSchema.extend({
+      address: z.string().min(1).nullish(),
+      name: z.string().nullish(),
+      symbol: z.string().nullish(),
+    }),
 
-    priceUsd: numericText.optional(),
+    priceUsd: numericText.nullish(),
     priceNative: numericText.optional(),
 
     txns: windowsOf(txnWindowSchema).optional(),
     volume: windowsOf(z.number().finite().nonnegative()).optional(),
     // Preisaenderungen duerfen negativ sein — hier waere `nonnegative()` ein Fehler.
-    priceChange: windowsOf(z.number().finite()).optional(),
+    priceChange: windowsOf(z.number().finite()).nullish(),
 
     liquidity: z
       .object({
-        usd: z.number().finite().nonnegative().optional(),
+        usd: z.number().finite().nonnegative().nullish(),
         base: z.number().finite().nonnegative().optional(),
         quote: z.number().finite().nonnegative().optional(),
       })
       .passthrough()
-      .optional(),
+      .nullish(),
 
     // In der geprueften Antwort NICHT enthalten. Siehe Kopfkommentar.
-    fdv: z.number().finite().nonnegative().optional(),
-    marketCap: z.number().finite().nonnegative().optional(),
+    fdv: z.number().finite().nonnegative().nullish(),
+    marketCap: z.number().finite().nonnegative().nullish(),
 
     /** Epoch-Millisekunden. In der Stichprobe 1669602450000 = 2022-11-28. */
-    pairCreatedAt: z.number().int().positive().optional(),
+    pairCreatedAt: z.number().int().positive().nullish(),
   })
   .passthrough();
 

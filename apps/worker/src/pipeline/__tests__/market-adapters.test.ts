@@ -314,3 +314,79 @@ describe("Wogegen der Pool gehandelt hat", () => {
     expect(key).not.toContain(" ");
   });
 });
+
+describe("Additional token-pool market data", () => {
+  async function withResponses(bodies: unknown[], run: (adapter: ReturnType<typeof buildMarketAdapters>, urls: string[]) => Promise<void>) {
+    const original = globalThis.fetch;
+    const urls: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      urls.push(String(url));
+      const body = bodies[urls.length - 1];
+      if (body === undefined) throw new Error("Unexpected extra request");
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) } as Response;
+    }) as typeof fetch;
+    try {
+      await run(buildMarketAdapters({ env: { DEXSCREENER_BASE_URL: "https://api.example.invalid" }, clock: fixedClock }), urls);
+    } finally { globalThis.fetch = original; }
+  }
+
+  it("loads the token-pools endpoint after an empty bulk response", async () => {
+    await withResponses([[], [pair({ marketCap: 2400000, volume: { h24: 95000, m5: 2000 } })]], async (adapters, urls) => {
+      const out = await adapters.get("dexscreener")!.fetchMarket(MEME);
+      expect(out?.value.marketCapUsd).toBe(2400000);
+      expect(out?.value.liquidityUsd).toBe(180000);
+      expect(out?.value.volume5mUsd).toBe(2000);
+      expect(out?.observedAt).toBeNull();
+      expect(urls).toHaveLength(2);
+      expect(urls[1]).toBe("https://api.example.invalid/token-pairs/v1/solana/" + MEME);
+    });
+  });
+
+  it("recovers additional pool fields without adding duplicate liquidity", async () => {
+    await withResponses([[pair()], [pair({ marketCap: 2400000, volume: { h24: 95000, m5: 2000 } })]], async (adapters, urls) => {
+      const out = await adapters.get("dexscreener")!.fetchMarket(MEME);
+      expect(out?.value.marketCapUsd).toBe(2400000);
+      expect(out?.value.liquidityUsd).toBe(180000);
+      expect(urls).toHaveLength(2);
+    });
+  });
+
+  it("does not make an additional request for complete data", async () => {
+    await withResponses([[pair({ marketCap: 2400000, volume: { h24: 95000, m5: 2000 } })]], async (adapters, urls) => {
+      expect(await adapters.get("dexscreener")!.fetchMarket(MEME)).not.toBeNull();
+      expect(urls).toHaveLength(1);
+    });
+  });
+
+  it("still rejects unsafe and unrelated fallback pools", async () => {
+    await withResponses([[], [
+      pair({ liquidity: { usd: 100 } }),
+      pair({ pairAddress: POOL_DUENN, baseToken: { address: USDC } }),
+    ]], async (adapters, urls) => {
+      expect(await adapters.get("dexscreener")!.fetchMarket(MEME)).toBeNull();
+      expect(urls).toHaveLength(2);
+    });
+  });
+
+  it("keeps available data if the additional response is invalid", async () => {
+    await withResponses([[pair()], { invalid: true }], async (adapters) => {
+      const out = await adapters.get("dexscreener")!.fetchMarket(MEME);
+      expect(out?.value.liquidityUsd).toBe(180000);
+      expect(out?.value.marketCapUsd).toBeNull();
+    });
+  });
+
+  it("accepts documented null fields without losing another complete pool", async () => {
+    await withResponses([[
+      pair({ pairAddress: POOL_DUENN, priceUsd: null, liquidity: null,
+        marketCap: null, fdv: null, pairCreatedAt: null, priceChange: null,
+        quoteToken: { address: null, name: null, symbol: null } }),
+      pair({ marketCap: 2400000, volume: { h24: 95000, m5: 2000 } }),
+    ]], async (adapters, urls) => {
+      const out = await adapters.get("dexscreener")!.fetchMarket(MEME);
+      expect(out?.value.liquidityUsd).toBe(180000);
+      expect(out?.value.marketCapUsd).toBe(2400000);
+      expect(urls).toHaveLength(1);
+    });
+  });
+});

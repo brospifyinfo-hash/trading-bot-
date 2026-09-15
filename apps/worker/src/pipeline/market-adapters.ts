@@ -257,7 +257,13 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
       if (!isBase58Address(rawMint)) return null;
       const wanted = toMint(rawMint);
 
-      const outcome = await inner.fetchMarkets([rawMint]);
+      let outcome = await inner.fetchMarkets([rawMint]);
+      // NO_DATA can mean no bulk result although the token-pools endpoint has pools.
+      let poolsFetched = false;
+      if (outcome.kind === "NO_DATA") {
+        outcome = await inner.fetchTokenPools(rawMint);
+        poolsFetched = true;
+      }
       // NO_DATA, FAILED und SCHEMA_REJECTED fuehren alle zu `null`: kein
       // Marktwert. Die Unterscheidung dazwischen gehoert in die
       // Provider-Health und ist dort bereits festgehalten — hier wuerde sie zu
@@ -276,7 +282,7 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
         candidates.push(candidate);
       }
 
-      const selection = selectMarket({
+      const select = () => selectMarket({
         mint: wanted,
         candidates,
         now: deps.clock.now(),
@@ -290,6 +296,21 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
         },
       });
 
+      let selection = select();
+      const first = selection.chosen === null ? undefined : byPool.get(selection.chosen.poolAddress);
+      if (!poolsFetched && (first === undefined || first.marketCapUsd === null ||
+          first.volumeUsd.h24 === null || first.volumeUsd.m5 === null)) {
+        const pools = await inner.fetchTokenPools(rawMint);
+        if (pools.kind === "OK") {
+          // Replace by pool identity; never add liquidity/volume across overlapping pools.
+          for (const market of pools.markets) {
+            if (toCandidate(market) !== null) byPool.set(market.pairAddress, market);
+          }
+          candidates.splice(0, candidates.length, ...[...byPool.values()]
+            .flatMap((market) => { const c = toCandidate(market); return c === null ? [] : [c]; }));
+          selection = select();
+        }
+      }
       const chosen = selection.chosen;
       if (chosen === null) {
         // Kein waehlbarer Markt. Der Grund steht in `selection.rejected` und

@@ -120,7 +120,7 @@ describe("Vertrag gegen die echte Antwort", () => {
   it("meldet den Vertrag als geprueft und nennt den Stand", () => {
     const adapter = new DexScreenerMarketAdapter({ clock: new FixedClock(T0) });
     expect(adapter.contractVerified).toBe(true);
-    expect(adapter.schemaVersion).toBe("dexscreener-tokens-v1@2026-09-03");
+    expect(adapter.schemaVersion).toBe("dexscreener-tokens-v2@2026-09-15");
   });
 
   it("lehnt eine Antwort ab, die vom Vertrag abweicht", async () => {
