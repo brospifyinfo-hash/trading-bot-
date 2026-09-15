@@ -5399,3 +5399,36 @@ Abschlusspruefung am 2026-09-15: 144 Testdateien / 1530 Tests bestanden,
 Lint und Typpruefung aller 20 Teilprojekte bestanden. Gegenproben ohne
 Ruecktausch-Spread und ohne angeschlossenen Vorlauf liessen jeweils den
 Regressionstest scheitern; beide Mutationen wurden entfernt.
+
+## §135 — Live aktualisiertes Paper-Konto im Dashboard (2026-09-15)
+
+Das Dashboard zeigt fuer die Strategiefamilie memecoin-risk-managed das
+verfuegbare virtuelle Guthaben, verbleibenden Einstandswert offener Positionen,
+Gesamtnettoergebnis und UTC-Tagesnetto. Offene Positionen und die letzten 100
+abgeschlossenen Trades zeigen Token, Zeiten, Einsatz, Kosten und realisierten
+Nettoerfolg. Die Gesamtsummen umfassen weiterhin die gesamte Historie.
+AUTO_PAPER/LIVE/RISK_BASED ist ein eigenes Konto; Fixtures, manuelle Trades,
+FIXED_100 und andere Familien werden nicht hineingemischt.
+
+Die vorhandene Worker-Kontorechnung und das virtuelle Startkapital 3000 EUR
+liegen jetzt gemeinsam in @sae/db. Worker-Importpfade bleiben kompatibel.
+Die Anzeige verwendet dieselbe Ereignisabstimmung inklusive fehlgeschlagener
+Kaufkosten. Sie liest Konto und Positionen in einer Repeatable-Read-Transaktion
+mit accessMode read only; sie nimmt keine Familiensperre und schreibt nichts.
+Fehlende Familien zeigen WAITING, widerspruechliche Buchungen unbekannte Werte.
+Offene Marktwerte oder nicht realisierte Gewinne werden nicht erfunden.
+Gesamtnetto ist Buchwert minus Startkapital, inklusive schon gebuchter Kosten
+offener Positionen. Es ist keine Mark-to-Market-Rendite.
+
+Ein Client-Timer aktualisiert die Serveransicht alle 15 Sekunden; in verborgenen
+Tabs und waehrend laufender Aktualisierung pausiert er. Datenstand wird in UTC
+angezeigt. Leere Tabellen erklaeren, dass noch keine Position bzw. kein
+abgeschlossener Trade vorliegt. Keine Produktionsdaten, Live-Schalter oder
+Strategieparameter wurden geaendert.
+
+Validierung: bestehende 144 Testdateien / 1530 Tests bestanden; zusaetzlich drei
+Render-/Geldformatierungstests bestanden. Datenbanktests vergleichen Worker und
+Dashboard nach Teilverkauf, Endausstieg und fehlgeschlagenem Kauf und pruefen
+die Trennung anderer Konten. Gegenprobe ohne Abzug fehlgeschlagener Kaufkosten
+scheitert erwartungsgemaess; Mutation entfernt und Regression erneut bestanden.
+Lint, Typpruefung aller 20 Projekte und Next-Produktionsbuild bestanden.

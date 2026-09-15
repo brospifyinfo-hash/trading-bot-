@@ -1,5 +1,6 @@
 import { DEFAULT_SYSTEM_STATE } from "@sae/config";
-import type { PaperSummary } from "@sae/db";
+import { paperMoney } from "./PaperTrading";
+import type { PaperTrading, PaperSummary } from "@sae/db";
 
 /**
  * Statusleiste.
@@ -8,7 +9,7 @@ import type { PaperSummary } from "@sae/db";
  * kein Beweis fuer einen laufenden Prozess. Der bisher wirkungslose
  * Notstopp-Knopf darf keine Bedienbarkeit behaupten.
  */
-export function BotStatusBar({ paper }: { readonly paper: readonly PaperSummary[] }) {
+export function BotStatusBar({ paper, account }: { readonly paper: readonly PaperSummary[]; readonly account: PaperTrading }) {
   const state = DEFAULT_SYSTEM_STATE;
   const isLive = state.liveTradingEnabled && !state.emergencyStop;
   const open = (stream: string) => paper.filter((row) => row.stream === stream)
@@ -17,12 +18,12 @@ export function BotStatusBar({ paper }: { readonly paper: readonly PaperSummary[
   return (
     <header className="statusbar">
       <div>
-        <div className="label">Portfolio</div>
-        <div className="value">—</div>
+        <div className="label">Paper-Guthaben</div>
+        <div className="value">{account.kind === "READY" ? paperMoney(account.account.cash.minor) : "—"}</div>
       </div>
       <div>
         <div className="label">PnL heute</div>
-        <div className="value">—</div>
+        <div className="value">{account.kind === "READY" ? paperMoney(account.account.portfolio.realizedTodayPnl.minor) : "—"}</div>
       </div>
       <div>
         <div className="label">Offene Papier-Positionen</div>
