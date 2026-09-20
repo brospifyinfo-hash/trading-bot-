@@ -310,6 +310,7 @@ export async function selectTokensNeedingSecurity(
   db: Database,
   limit: number,
   staleBefore: Date,
+  preferredIds: readonly string[] = [],
 ): Promise<readonly TrackedToken[]> {
   const rows = await db.execute<{ id: string; mint: string; first_seen_at: Date }>(sql`
     select t.id, t.mint, t.first_seen_at
@@ -327,7 +328,9 @@ export async function selectTokensNeedingSecurity(
         letzter.observed_at is null
         or letzter.observed_at < ${staleBefore.toISOString()}::timestamptz
       )
-    order by t.first_seen_at desc
+    order by ${preferredIds.length === 0 ? sql`(0 + 0)` :
+      sql`case when t.id in (${sql.join(preferredIds.map((id) => sql`${id}::uuid`), sql`, `)}) then 0 else 1 end`},
+      t.first_seen_at desc
     limit ${limit}
   `);
   // Wie in `hasOpenWork`: `execute` liefert je nach Treiber die Zeilen direkt
@@ -391,4 +394,32 @@ export async function recordSecurityFinding(
     securityScore: finding.securityScore,
     findings: finding.findings,
   });
+}
+
+/** Budgeted active cohort from observed markets, not a claim of whole-market coverage.
+ * Latest LIVE observation wins, including deterioration; never cherry-pick old good data.
+ */
+export async function selectActivePaperTokens(db: Database, now: Date, limit = 20): Promise<readonly TrackedToken[]> {
+  const rows = await db.execute<{ id: string; mint: string; first_seen_at: Date }>(sql`
+    select t.id, t.mint, t.first_seen_at
+    from tokens t
+    join lateral (
+      select s.liquidity_usd, s.market_cap_usd, s.volume_24h_usd, s.price_usd, s.observed_at
+      from token_snapshots s
+      where s.token_id = t.id and s.source_provider_id in ('jupiter-quote', 'dexscreener')
+        and s.observed_at <= ${now.toISOString()}::timestamptz
+      order by s.observed_at desc, s.id desc limit 1
+    ) latest on true
+    where t.blacklisted_at is null and t.state <> 'REJECTED'
+      and latest.observed_at >= ${new Date(now.getTime() - 6 * 3600000).toISOString()}::timestamptz
+      and latest.price_usd > 0 and latest.liquidity_usd >= 25000
+      and latest.market_cap_usd > 0 and latest.market_cap_usd <= 20000000
+      and latest.volume_24h_usd > 0
+    order by latest.liquidity_usd desc, t.id
+    limit ${limit}
+  `);
+  const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] }).rows ?? []);
+  return (list as { id: string; mint: string; first_seen_at: Date | string }[])
+    .map((r) => ({ id: r.id, mint: r.mint, firstSeenAt: new Date(r.first_seen_at) }))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }

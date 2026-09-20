@@ -5468,3 +5468,56 @@ unvollstaendige Felder, Deduplizierung, unnoetige Zusatzaufrufe, unsichere Pools
 fehlerhafte Zusatzantwort und null-Felder in Nachbarpools.
 Gegenproben ohne Null-Unterstuetzung bzw. ohne zusaetzlichen Pool-Abruf scheiterten
 erwartungsgemaess; beide Mutationen entfernt, gezielte Tests erneut bestanden.
+
+## §137 — Aktive Paper-Auswahl statt zu langsamer Vollrotation (2026-09-20)
+
+Der Nutzer verlangt einen tatsaechlich laufenden Paper-Versuch und weniger
+strenge Einstiege. Die Live-Anzeige am 2026-09-20 meldet weiterhin null Trades,
+500 Tokens in der Rotation und fuenf Bearbeitungen pro Lauf. Marktdaten kommen
+alle 20 Sekunden, Bewertungen jede Minute: eine 500er-Runde benoetigt nominal
+33 bzw. 100 Minuten, waehrend das Momentum einen Vergleichspunkt vor fuenf
+Minuten mit nur 90 Sekunden Toleranz verlangt. Warten allein schliesst diese
+strukturelle Historienluecke nicht.
+
+Nur im explizit aktivierten Paper-Kandidaten:
+- Bis zu 20 aktive Tokens aus den bekannten, nicht gesperrten/verworfen Tokens.
+  Der neueste Snapshot aus Jupiter-Quote oder DexScreener muss innerhalb der
+  letzten sechs Stunden liegen; positive Preise/Volumen/Marktkapitalisierung,
+  mindestens 25000 USD Liquiditaet und maximal 20 Mio. USD Market Cap.
+  Ranking nach Liquiditaet, deterministische ID-Reihenfolge fuer die Rotation.
+  Spaetere Verschlechterung ersetzt fruehere gute Daten; Zukunftsdaten und
+  Fixture-Provider werden nicht ausgewaehlt. Diese Vorauswahl ist KEINE
+  Einstiegsfreigabe: frische Quotes und alle Handelspruefungen bleiben noetig.
+- Vier der fuenf Refresh-Plaetze sind fuer die aktive Liste reserviert,
+  mindestens einer fuer die Erkundung unter bis zu 10000 weiteren bekannten
+  Tokens. Ungenutzte aktive Plaetze gehen an die Erkundung. Fuenf nominale
+  20-Sekunden-Laeufe decken die 20 aktiven Tokens ab; Job-/API-Verzoegerungen
+  koennen diesen Abstand verlaengern.
+- Entscheidungen rotieren ueber dieselbe aktive Liste; Sicherheitsabrufe
+  priorisieren deren fehlende/veraltete Befunde. Eigene Checkpoint-Schluessel
+  vermeiden Vermischung mit der alten 500er-Rotation.
+- Vor Router/RPC-Abfragen werden die DexScreener-Pooldaten geprueft. Ohne
+  brauchbaren Pool/Market Cap/Volumen werden keine knappen Quote-Aufrufe bezahlt.
+
+Paper-Strategie 1.1.0 ist eine neue unveraenderliche Version in derselben Familie.
+Finalscore 65 statt 75, Momentum-Score 50 statt 60, Market-Cap-Deckel 20 statt
+5 Mio. USD. Dies ist ein ausdruecklich unvalidierter aktiverer Paper-Versuch,
+keine aus Renditen optimierte oder profitable Strategie. Kapital-/Tagesrisiko,
+Positionszahl, Kostenpruefung, Ausstiegskapazitaet und Sicherheitsgrenzen
+bleiben unveraendert. Alte Positionen behalten ihre gespeicherten Parameter;
+die Familien-Kontorechnung umfasst weiterhin alle Versionen. Die Diagnose
+zeigt die tatsaechliche Kandidatenschwelle.
+
+Die Discovery durchsucht weiterhin ihre angebundenen Quellen. Weder die
+bekannte Tokenmenge noch diese Erweiterung decken den kompletten Solana-Markt
+ab. Es gibt keine Tages-Tradequote und keine erzwungenen oder erfundenen Fills.
+
+Validierung: gesamte Suite 146 Dateien/1540 Tests bestanden; danach die zwei
+zusaetzlichen Tests fuer Handler-Budget und Router-Vorfilter bestanden
+(insgesamt 1542 Tests). Lint und Typpruefung aller 20 Projekte bestanden,
+Worker nach den letzten Tests nochmals typgeprueft. DB-Regression prueft
+aktuelle versus veraltete/kuenftige/verschlechterte/Fixture-Daten und
+Sicherheitspriorisierung. Handler-Test deckt 20 aktive plus fuenf weitere Coins
+in fuenf Laeufen bei maximal fuenf Verarbeitungen je Lauf ab. Gegenprobe mit
+nur einem aktiven Platz scheitert; Mutation entfernt und Test erneut bestanden.
+Produktive Einstiege und Handelsfrequenz sind noch nicht nachgewiesen.

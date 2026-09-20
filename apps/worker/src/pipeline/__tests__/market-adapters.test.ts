@@ -390,3 +390,24 @@ describe("Additional token-pool market data", () => {
     });
   });
 });
+
+it("does not spend Jupiter or RPC calls when pool data cannot support an entry", async () => {
+  const original = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    urls.push(String(url));
+    return new Response("[]", { status: 200 });
+  }) as typeof fetch;
+  try {
+    const adapters = buildMarketAdapters({ clock: fixedClock, env: {
+      DEXSCREENER_BASE_URL: "https://dex.example.invalid",
+      JUPITER_BASE_URL: "https://quote.example.invalid",
+      SOLANA_RPC_URL: "https://rpc.example.invalid",
+    } });
+    const adapter = adapters.get("jupiter-quote");
+    expect(adapter).toBeDefined();
+    expect(await adapter!.fetchMarket(MEME)).toBeNull();
+    expect(urls).toHaveLength(2);
+    expect(urls.every((url) => url.startsWith("https://dex.example.invalid/"))).toBe(true);
+  } finally { globalThis.fetch = original; }
+});

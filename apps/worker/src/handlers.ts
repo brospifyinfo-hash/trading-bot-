@@ -9,13 +9,14 @@ import {
   ProviderReadinessStore,
   PostgresCheckpointStore,
   selectTrackedTokens,
+  selectActivePaperTokens,
   type ClaimedJob,
   type Database,
 } from "@sae/db";
 import { tally, type Logger } from "@sae/observability";
 import type { ProviderStatus, ProviderStatusReport } from "@sae/providers";
 import { buildMarketDataChain, runResumable, type MarketDataAdapter } from "@sae/pipeline";
-import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
+import { MEMECOIN_PAPER_CANDIDATE, DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
@@ -365,8 +366,12 @@ class EvaluateOpportunityHandler implements JobHandler {
     // unten, welcher Ausschnitt an der Reihe ist. Hier stand
     // `MAX_TOKENS_PER_RUN`, und damit sah dieser Lauf immer dieselben fuenf
     // juengsten Token — die am wenigsten fertigen, die es gibt (§128).
-    const tokens = await selectTrackedTokens(this.deps.db, MAX_TOKENS_TRACKED);
-    if (tokens.length === 0) return waitingForData("Keine beobachteten Tokens.");
+    const tokens = candidate
+      ? await selectActivePaperTokens(this.deps.db, systemClock.now())
+      : await selectTrackedTokens(this.deps.db, MAX_TOKENS_TRACKED);
+    if (tokens.length === 0) return waitingForData(candidate
+      ? "Keine Coins mit ausreichenden aktuellen Marktdaten in der aktiven Paper-Liste; die breite Suche laeuft weiter."
+      : "Keine beobachteten Tokens.");
 
     // Die Anbieterlage aus den PERSISTIERTEN Messungen. Ohne Messung gilt ein
     // Anbieter als nicht erreichbar — dieselbe pessimistische Vorgabe wie
@@ -414,7 +419,7 @@ class EvaluateOpportunityHandler implements JobHandler {
     // Dieselbe Rotation wie beim Marktdaten-Lauf, mit eigenem Schluessel.
     // Ohne sie bewertet dieser Lauf jede Minute erneut dieselben fuenf Token.
     const run = await runResumable<(typeof tokens)[number], void>({
-      jobKey: ROTATION_DECISION,
+      jobKey: candidate ? ROTATION_DECISION + ":active-v2" : ROTATION_DECISION,
       units: tokens,
       unitId: (token) => token.id,
       store: new PostgresCheckpointStore(this.deps.db),
@@ -480,7 +485,7 @@ class EvaluateOpportunityHandler implements JobHandler {
           ? {}
           : {
               bestScore: bester,
-              entrySchwelle: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+              entrySchwelle: candidate ? MEMECOIN_PAPER_CANDIDATE.parameters.entryGates.minFinalScore : DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
             }),
       },
       "Gelegenheiten geprueft",
@@ -496,7 +501,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       skipped: run.skipped,
       roundComplete: run.completed,
       bestScore: bester,
-      entryThreshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+      entryThreshold: candidate ? MEMECOIN_PAPER_CANDIDATE.parameters.entryGates.minFinalScore : DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
     };
@@ -519,7 +524,7 @@ class MarketRefreshHandler implements JobHandler {
     // `ROTATION_MARKET`. `job.dedupeKey` bleibt die Idempotenz der QUEUE; das
     // ist eine andere Frage als die, wo die Rotation stehengeblieben ist.
     void job;
-    return refreshMarketData(ROTATION_MARKET, {
+    const refreshDeps = {
       db: this.deps.db,
       logger: this.deps.logger,
       env: this.deps.env,
@@ -529,7 +534,23 @@ class MarketRefreshHandler implements JobHandler {
       ...(this.deps.rejections !== undefined ? { rejections: this.deps.rejections } : {}),
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       maxTokens: MAX_TOKENS_TRACKED,
+    };
+    if (!usesPaperCandidate(this.deps.env)) return refreshMarketData(ROTATION_MARKET, refreshDeps);
+    const active = await selectActivePaperTokens(this.deps.db, systemClock.now());
+    const activeIds = new Set(active.map((t) => t.id));
+    const broad = (await selectTrackedTokens(this.deps.db, 10000)).filter((t) => !activeIds.has(t.id));
+    const focused = await refreshMarketData(ROTATION_MARKET + ":active-v2", {
+      ...refreshDeps, tokens: active, maxUnitsPerRun: 4,
     });
+    const exploration = await refreshMarketData(ROTATION_MARKET + ":explore-v2", {
+      ...refreshDeps, tokens: broad, maxUnitsPerRun: Math.max(1, 5 - focused.processed),
+    });
+    return { status: "OK", activeTokens: active.length, explorationTokens: broad.length,
+      processed: focused.processed + exploration.processed,
+      ingested: focused.ingested + exploration.ingested,
+      entryReady: focused.entryReady + exploration.entryReady,
+      focused, exploration };
+
   }
 }
 
@@ -594,7 +615,10 @@ class EnrichSecurityHandler implements JobHandler {
   async handle(job: ClaimedJob): Promise<unknown> {
     void job;
     const env = loadEnv(providerEnvSchema, this.deps.env);
+    const preferred = usesPaperCandidate(this.deps.env)
+      ? await selectActivePaperTokens(this.deps.db, systemClock.now()) : [];
     const result = await enrichSecurity({
+      preferredIds: preferred.map((t) => t.id),
       db: this.deps.db,
       logger: this.deps.logger,
       ...(env.RUGCHECK_BASE_URL !== undefined ? { baseUrl: env.RUGCHECK_BASE_URL } : {}),

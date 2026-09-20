@@ -232,7 +232,21 @@ function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
       : { onUnusable: (mint: string, reason: string) => deps.rejections?.record(mint, [reason]) }),
   });
 
-  return quoteDeps === null ? null : quoteMarketAdapter(quoteDeps);
+  if (quoteDeps === null) return null;
+  const adapter = quoteMarketAdapter(quoteDeps);
+  return {
+    ...adapter,
+    async fetchMarket(mint) {
+      // Spend scarce router calls only after the inexpensive pool checks pass.
+      const market = await begleiter.fetchMarket(mint);
+      if (market === null || market.value.liquidityUsd === null ||
+          market.value.marketCapUsd === null || market.value.volume24hUsd === null) {
+        deps.rejections?.record(mint, ["INCOMPLETE_POOL_MARKET"]);
+        return null;
+      }
+      return quoteMarketAdapter({ ...quoteDeps, companion: async () => market.value }).fetchMarket(mint);
+    },
+  };
 }
 
 function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
