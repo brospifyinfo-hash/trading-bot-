@@ -536,7 +536,7 @@ class MarketRefreshHandler implements JobHandler {
       maxTokens: MAX_TOKENS_TRACKED,
     };
     if (!usesPaperCandidate(this.deps.env)) return refreshMarketData(ROTATION_MARKET, refreshDeps);
-    const active = await selectActivePaperTokens(this.deps.db, systemClock.now());
+    const active = await selectActivePaperTokens(this.deps.db, systemClock.now(), 20, true);
     const activeIds = new Set(active.map((t) => t.id));
     const broad = (await selectTrackedTokens(this.deps.db, 10000)).filter((t) => !activeIds.has(t.id));
     const focused = await refreshMarketData(ROTATION_MARKET + ":active-v2", {

@@ -5493,11 +5493,15 @@ Nur im explizit aktivierten Paper-Kandidaten:
   Tokens. Ungenutzte aktive Plaetze gehen an die Erkundung. Fuenf nominale
   20-Sekunden-Laeufe decken die 20 aktiven Tokens ab; Job-/API-Verzoegerungen
   koennen diesen Abstand verlaengern.
+- Offene LIVE/AUTO/RISK_BASED-Paper-Positionen bleiben priorisiert in der
+  schnellen Liste, auch ohne brauchbaren Snapshot oder nach Verschlechterung.
+  Das erlaubt weitere Messungen fuer Ausstiege; ein neuer Einstieg muss weiterhin
+  die unveraenderten Konten- und Sicherheitspruefungen bestehen.
 - Entscheidungen rotieren ueber dieselbe aktive Liste; Sicherheitsabrufe
   priorisieren deren fehlende/veraltete Befunde. Eigene Checkpoint-Schluessel
   vermeiden Vermischung mit der alten 500er-Rotation.
-- Vor Router/RPC-Abfragen werden die DexScreener-Pooldaten geprueft. Ohne
-  brauchbaren Pool/Market Cap/Volumen werden keine knappen Quote-Aufrufe bezahlt.
+- Der bestehende Quote-Pfad bleibt auch bei verschlechterten Pooldaten
+  erreichbar, damit offene Positionen weiterhin Kursmessungen erhalten.
 
 Paper-Strategie 1.1.0 ist eine neue unveraenderliche Version in derselben Familie.
 Finalscore 65 statt 75, Momentum-Score 50 statt 60, Market-Cap-Deckel 20 statt
@@ -5512,12 +5516,13 @@ Die Discovery durchsucht weiterhin ihre angebundenen Quellen. Weder die
 bekannte Tokenmenge noch diese Erweiterung decken den kompletten Solana-Markt
 ab. Es gibt keine Tages-Tradequote und keine erzwungenen oder erfundenen Fills.
 
-Validierung: gesamte Suite 146 Dateien/1540 Tests bestanden; danach die zwei
-zusaetzlichen Tests fuer Handler-Budget und Router-Vorfilter bestanden
-(insgesamt 1542 Tests). Lint und Typpruefung aller 20 Projekte bestanden,
-Worker nach den letzten Tests nochmals typgeprueft. DB-Regression prueft
-aktuelle versus veraltete/kuenftige/verschlechterte/Fixture-Daten und
-Sicherheitspriorisierung. Handler-Test deckt 20 aktive plus fuenf weitere Coins
-in fuenf Laeufen bei maximal fuenf Verarbeitungen je Lauf ab. Gegenprobe mit
-nur einem aktiven Platz scheitert; Mutation entfernt und Test erneut bestanden.
+Validierung: gesamte Suite 146 Dateien/1540 Tests bestanden; der zusaetzliche
+Handler-Budgettest ebenfalls bestanden (insgesamt 1541 Tests). Lint und
+Typpruefung aller 20 Projekte bestanden, Worker nochmals typgeprueft.
+DB-Regression prueft aktuelle versus veraltete/kuenftige/verschlechterte/
+Fixture-Daten und Sicherheitspriorisierung. Offene Positionen ohne brauchbaren
+Snapshot bleiben im aktiven Universum (Repository-Regression).
+Handler-Test deckt 20 aktive plus fuenf weitere Coins in fuenf Laeufen bei
+maximal fuenf Verarbeitungen je Lauf ab. Gegenprobe mit nur einem aktiven Platz
+scheitert; Mutation entfernt und Test erneut bestanden.
 Produktive Einstiege und Handelsfrequenz sind noch nicht nachgewiesen.
