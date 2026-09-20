@@ -30,10 +30,11 @@ export function OperatingStatus({ run, now }: {
         <div><dt>In dieser Runde zuvor bearbeitet</dt><dd>{run.skipped ?? "nicht aufgezeichnet"}</dd></div>
         <div><dt>Runde abgeschlossen</dt><dd>{run.roundComplete === null ? "nicht aufgezeichnet" : run.roundComplete ? "ja" : "nein"}</dd></div>
         <div><dt>Bester Score dieses Laufs</dt><dd>{run.bestScore ?? "nicht berechenbar oder nicht aufgezeichnet"}</dd></div>
-        <div><dt>Einstiegsschwelle des Workers</dt><dd>{run.entryThreshold ?? "nicht aufgezeichnet"}</dd></div>
+        <div><dt>Einstiegsschwelle des Workers</dt><dd>{run.accounts?.map((a) => `${a.label}: ${a.entryThreshold}`).join(" · ") || (run.entryThreshold ?? "nicht aufgezeichnet")}</dd></div>
       </dl>
       <h3>Warum zuletzt nicht gekauft?</h3>
-      <Counts values={run.outcomes} />
+      {run.accounts && run.accounts.length > 0 ? run.accounts.map((account) => <div key={account.label}>
+        <h4>{account.label}</h4><Counts values={account.outcomes} /></div>) : <Counts values={run.outcomes} />}
       <h3>Fehlende Pflichtfelder</h3>
       <Counts values={run.missingFields} />
       <p>Ein Token kann mehrere fehlende Felder haben. Die Zahlen oben beschreiben diesen

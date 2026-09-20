@@ -120,7 +120,7 @@ describe("Doppelte Gelegenheiten", () => {
     `);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.indexdef).toMatch(/UNIQUE/i);
-    for (const column of ["token_id", "stream", "decided_at"]) {
+    for (const column of ["token_id", "stream", "decided_at", "strategy_version_id"]) {
       expect(rows[0]!.indexdef).toContain(column);
     }
   });

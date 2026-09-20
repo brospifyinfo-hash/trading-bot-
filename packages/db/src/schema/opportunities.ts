@@ -181,7 +181,7 @@ export const opportunities = pgTable(
   },
   (t) => [
     // Verhindert doppelte Gelegenheiten aus zwei gleichzeitigen Worker-Laeufen.
-    uniqueIndex("opportunities_unique").on(t.tokenId, t.stream, t.decidedAt),
+    uniqueIndex("opportunities_unique").on(t.tokenId, t.stream, t.decidedAt, t.strategyVersionId),
     index("opportunities_decision_idx").on(t.decisionId),
     index("opportunities_state_idx").on(t.state),
     index("opportunities_stream_time_idx").on(t.stream, t.decidedAt),

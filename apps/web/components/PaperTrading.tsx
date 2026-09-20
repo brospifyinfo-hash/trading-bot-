@@ -8,11 +8,12 @@ export function paperMoney(minor: bigint, currency = "EUR") {
 }
 const date = (at: Date) => at.toLocaleString("de-DE", { timeZone: "UTC" }) + " UTC";
 
-export function PaperTrading({ data }: { readonly data: TradingState }) {
+export function PaperTrading({ data, label = "Standard", description, refresh = true }: { readonly data: TradingState; readonly label?: string; readonly description?: string; readonly refresh?: boolean }) {
   return <section className="panel paper-account">
-    <div className="paper-heading"><h2>Mein Paper-Konto</h2><PaperRefresh /></div>
+    <div className="paper-heading"><h2>Paper-Konto · {label}</h2>{refresh && <PaperRefresh />}</div>
     <p>Simulierter Handel mit Solana-Tokens über Jupiter-Router-Quotes. Kein echtes Geld.
-      Konto der Strategie memecoin-risk-managed; manuelle Trades und Testdaten sind separat.</p>
+      Beide Konten handeln unabhängig mit jeweils eigenem Startkapital.</p>
+    {description && <p>{description}</p>}
     <p className="muted">Datenstand: {date(data.updatedAt)}</p>
     {data.kind !== "READY" ? <p role="status">{data.kind === "WAITING"
       ? "Das Paper-Konto wurde vom Worker noch nicht initialisiert."

@@ -1,14 +1,13 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, eq } from "drizzle-orm";
-import { MEMECOIN_PAPER_CANDIDATE, strategyParametersSchema } from "@sae/config";
+import { MEMECOIN_PAPER_CANDIDATE, strategyParametersSchema, type StrategyParameters } from "@sae/config";
 import { schema, type Database } from "@sae/db";
 
 export const PAPER_CANDIDATE_SELECTOR = "memecoin-risk-managed-v1";
 export const usesPaperCandidate = (env: NodeJS.ProcessEnv): boolean => env["PAPER_STRATEGY"] === PAPER_CANDIDATE_SELECTOR;
 
 /** Called only for an explicitly selected paper candidate; never overwrites a version. */
-export async function ensurePaperCandidateVersion(db: Database, at: Date) {
-  const candidate = MEMECOIN_PAPER_CANDIDATE;
+export async function ensurePaperCandidateVersion(db: Database, at: Date, candidate: { strategyId: string; version: string; parameters: StrategyParameters } = MEMECOIN_PAPER_CANDIDATE) {
   return db.transaction(async (tx) => {
     await tx.insert(schema.strategies).values({ name: candidate.strategyId }).onConflictDoNothing();
     const [strategy] = await tx.select().from(schema.strategies).where(eq(schema.strategies.name, candidate.strategyId)).for("update");

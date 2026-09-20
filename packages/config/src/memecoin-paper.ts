@@ -4,19 +4,13 @@ import { parseStrategyParameters } from "./strategy-schema";
 /** Research candidate, not an activation flag or a profitability claim (§130). */
 export const MEMECOIN_PAPER_CANDIDATE = {
   strategyId: "memecoin-risk-managed",
-  version: "1.1.0",
+  version: "1.0.0",
   executionMode: "paper",
   validationStatus: "UNVALIDATED",
   // Total modeled entry + all planned exits; no substitution for measured fees.
   maxRoundTripCostBps: 200,
   parameters: parseStrategyParameters({
     ...DEFAULT_STRATEGY_PARAMETERS,
-    entryGates: {
-      ...DEFAULT_STRATEGY_PARAMETERS.entryGates,
-      minFinalScore: 65,
-      minMomentumScore: 50,
-      maxMarketCapUsd: 20_000_000,
-    },
     risk: {
       ...DEFAULT_STRATEGY_PARAMETERS.risk,
       riskPerTradePct: 0.5,
@@ -39,3 +33,32 @@ export const MEMECOIN_PAPER_CANDIDATE = {
     },
   }),
 } as const;
+
+/** Separate virtual account; experimental, never an update to Standard's ledger. */
+export const MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE = {
+  ...MEMECOIN_PAPER_CANDIDATE,
+  strategyId: "memecoin-active-paper",
+  parameters: parseStrategyParameters({
+    ...MEMECOIN_PAPER_CANDIDATE.parameters,
+    entryGates: {
+      ...MEMECOIN_PAPER_CANDIDATE.parameters.entryGates,
+      minFinalScore: 65,
+      minMomentumScore: 50,
+      maxMarketCapUsd: 20_000_000,
+    },
+    risk: {
+      ...MEMECOIN_PAPER_CANDIDATE.parameters.risk,
+      riskPerTradePct: 1,
+      maxPositionPct: 5,
+      maxPortfolioExposurePct: 20,
+      maxDailyLossPct: 5,
+      maxOpenPositions: 6,
+      maxConsecutiveLosses: 4,
+    },
+  }),
+} as const;
+
+export const PAPER_PROFILES = [
+  { label: "Standard", candidate: MEMECOIN_PAPER_CANDIDATE },
+  { label: "Offensiv", candidate: MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE },
+] as const;

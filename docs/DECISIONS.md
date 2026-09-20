@@ -5526,3 +5526,16 @@ Handler-Test deckt 20 aktive plus fuenf weitere Coins in fuenf Laeufen bei
 maximal fuenf Verarbeitungen je Lauf ab. Gegenprobe mit nur einem aktiven Platz
 scheitert; Mutation entfernt und Test erneut bestanden.
 Produktive Einstiege und Handelsfrequenz sind noch nicht nachgewiesen.
+
+## §138 — Zwei isolierte Paper-Konten statt Standard-Regeln zu ersetzen (2026-09-20)
+
+Nutzerentscheidung: bestehende Risikobereitschaft behalten und ein zweites,
+offensiveres Paper-Konto parallel betreiben. Die in §137 vorgeschlagene einzelne
+Version 1.1.0 wird vor Veröffentlichung durch zwei Profile ersetzt: Standard
+bleibt `memecoin-risk-managed@1.0.0`, Offensiv verwendet die eigene Familie
+`memecoin-active-paper@1.0.0`. Parameter, Grenzen, Migration und koordinierter
+Rollout stehen in `docs/PAPER_ACCOUNTS.md`. Buchungen und Verlustgrenzen bleiben
+familiengebunden; Opportunity-Unique-Index und Entscheidungsschlüssel werden
+strategieversionsgebunden. Dashboard und Worker-Diagnose unterscheiden beide
+Konten. Die aktive Marktauswahl aus §137 bleibt erhalten. Birdeye/Helius bleiben
+ohne implementierte Adapter nicht angebunden; die Anzeige erklärt dies.

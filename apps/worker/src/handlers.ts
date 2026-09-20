@@ -16,7 +16,7 @@ import {
 import { tally, type Logger } from "@sae/observability";
 import type { ProviderStatus, ProviderStatusReport } from "@sae/providers";
 import { buildMarketDataChain, runResumable, type MarketDataAdapter } from "@sae/pipeline";
-import { MEMECOIN_PAPER_CANDIDATE, DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
+import { MEMECOIN_PAPER_CANDIDATE, PAPER_PROFILES, DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
@@ -350,17 +350,16 @@ class EvaluateOpportunityHandler implements JobHandler {
       return waitingForData("Ungueltige PAPER_STRATEGY-Konfiguration");
     }
     const candidate = usesPaperCandidate(this.deps.env);
-    const strategy = candidate ? await ensurePaperCandidateVersion(this.deps.db, systemClock.now()) : await ensureActiveStrategyVersion({
-      db: this.deps.db,
-      parameters: DEFAULT_STRATEGY_PARAMETERS,
-      at: systemClock.now(),
-    });
-    if (strategy.created) {
-      this.deps.logger.info(
-        { role: "decision", version: strategy.version },
-        "Strategieversion angelegt — Startparameter, ausdruecklich nicht validiert",
-      );
-    }
+    const strategies = candidate
+      ? await Promise.all(PAPER_PROFILES.map(async (profile) => ({
+          ...await ensurePaperCandidateVersion(this.deps.db, systemClock.now(), profile.candidate),
+          label: profile.label, threshold: profile.candidate.parameters.entryGates.minFinalScore,
+        })))
+      : [{ ...await ensureActiveStrategyVersion({ db: this.deps.db,
+          parameters: DEFAULT_STRATEGY_PARAMETERS, at: systemClock.now() }),
+          label: "Legacy", threshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore }];
+    const accounts = strategies.map((strategy) => ({ label: strategy.label,
+      entryThreshold: strategy.threshold, outcomes: {} as Record<string, number> }));
 
     // Die GANZE Liste, nicht nur ein Lauf voll: die Rotation entscheidet
     // unten, welcher Ausschnitt an der Reihe ist. Hier stand
@@ -426,6 +425,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       clock: systemClock,
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       process: async (token) => {
+      for (const [index, strategy] of strategies.entries()) {
       const result = await runDecision({
         db: this.deps.db,
         logger: this.deps.logger,
@@ -449,12 +449,16 @@ class EvaluateOpportunityHandler implements JobHandler {
       // Gezaehlt wird das Etikett MIT Grund, nicht die blosse Ergebnisart.
       // `NO_ENTRY=5` sagte, dass nichts gekauft wurde, und verschwieg warum —
       // genau die Auskunft, die beim Pruefen gebraucht wird (§122).
+      const account = accounts[index]!;
+      const accountSeen = account.outcomes[result.label];
+      account.outcomes[result.label] = accountSeen === undefined ? 1 : accountSeen + 1;
       const seen = outcomes[result.label];
       outcomes[result.label] = seen === undefined ? 1 : seen + 1;
       if (result.finalScore !== null) scores.push(result.finalScore);
       for (const feld of result.missing) {
         const bisher = fehlendeFelder[feld];
         fehlendeFelder[feld] = bisher === undefined ? 1 : bisher + 1;
+      }
       }
       },
     });
@@ -504,6 +508,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       entryThreshold: candidate ? MEMECOIN_PAPER_CANDIDATE.parameters.entryGates.minFinalScore : DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
+      accounts,
     };
   }
 }
