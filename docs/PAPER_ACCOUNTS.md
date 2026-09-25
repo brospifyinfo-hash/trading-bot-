@@ -7,9 +7,9 @@ keine neue Worker-Variable sind dafür erforderlich.
 | Regel | Standard | Offensiv |
 | --- | --- | --- |
 | Strategiefamilie | memecoin-risk-managed | memecoin-active-paper |
-| Version | 1.0.0 (unverändert) | 1.0.0 |
+| Version | 1.0.0 (unverändert) | 1.1.0 |
 | Virtuelles Startkapital je Familie | 3.000 EUR | 3.000 EUR |
-| Mindestscore | 75 | 65 |
+| Mindestscore | 75 | 50 |
 | Mindestmomentum | 60 | 50 |
 | Maximale Marktkapitalisierung | 5 Mio. USD | 20 Mio. USD |
 | Risikobudget pro Trade | 0,5 % | 1 % |
