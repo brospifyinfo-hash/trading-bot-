@@ -92,6 +92,13 @@
       "when": 1789073416168,
       "tag": "0013_snapshot_exit_capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789891200000,
+      "tag": "0014_paper_account_opportunities",
+      "breakpoints": true
     }
   ]
 }

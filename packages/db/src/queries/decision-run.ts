@@ -22,6 +22,7 @@ export interface DecisionRunReport {
   readonly bestScore: number | null;
   readonly entryThreshold: number | null;
   readonly sizing: SizingReport | null;
+  readonly accounts?: readonly { label: string; entryThreshold: number; outcomes: Readonly<Record<string, number>> }[];
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -69,6 +70,14 @@ export function parseDecisionRun(result: unknown, finishedAt: Date): DecisionRun
     bestScore: count(r?.bestScore),
     entryThreshold: count(r?.entryThreshold),
     sizing: sizingReport(r?.sizing),
+    ...(Array.isArray(r?.accounts) ? { accounts: r.accounts.flatMap((value: unknown) => {
+      const a = record(value);
+      const threshold = count(a?.entryThreshold);
+      const outcomes = counts(a?.outcomes);
+      return a !== null && (a.label === "Standard" || a.label === "Offensiv" || a.label === "Legacy")
+        && threshold !== null && outcomes !== null
+        ? [{ label: a.label, entryThreshold: threshold, outcomes }] : [];
+    }) } : {}),
   };
 }
 

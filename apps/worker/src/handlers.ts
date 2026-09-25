@@ -9,13 +9,14 @@ import {
   ProviderReadinessStore,
   PostgresCheckpointStore,
   selectTrackedTokens,
+  selectActivePaperTokens,
   type ClaimedJob,
   type Database,
 } from "@sae/db";
 import { tally, type Logger } from "@sae/observability";
 import type { ProviderStatus, ProviderStatusReport } from "@sae/providers";
 import { buildMarketDataChain, runResumable, type MarketDataAdapter } from "@sae/pipeline";
-import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
+import { MEMECOIN_PAPER_CANDIDATE, PAPER_PROFILES, DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
@@ -349,24 +350,27 @@ class EvaluateOpportunityHandler implements JobHandler {
       return waitingForData("Ungueltige PAPER_STRATEGY-Konfiguration");
     }
     const candidate = usesPaperCandidate(this.deps.env);
-    const strategy = candidate ? await ensurePaperCandidateVersion(this.deps.db, systemClock.now()) : await ensureActiveStrategyVersion({
-      db: this.deps.db,
-      parameters: DEFAULT_STRATEGY_PARAMETERS,
-      at: systemClock.now(),
-    });
-    if (strategy.created) {
-      this.deps.logger.info(
-        { role: "decision", version: strategy.version },
-        "Strategieversion angelegt — Startparameter, ausdruecklich nicht validiert",
-      );
-    }
+    const strategies = candidate
+      ? await Promise.all(PAPER_PROFILES.map(async (profile) => ({
+          ...await ensurePaperCandidateVersion(this.deps.db, systemClock.now(), profile.candidate),
+          label: profile.label, threshold: profile.candidate.parameters.entryGates.minFinalScore,
+        })))
+      : [{ ...await ensureActiveStrategyVersion({ db: this.deps.db,
+          parameters: DEFAULT_STRATEGY_PARAMETERS, at: systemClock.now() }),
+          label: "Legacy", threshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore }];
+    const accounts = strategies.map((strategy) => ({ label: strategy.label,
+      entryThreshold: strategy.threshold, outcomes: {} as Record<string, number> }));
 
     // Die GANZE Liste, nicht nur ein Lauf voll: die Rotation entscheidet
     // unten, welcher Ausschnitt an der Reihe ist. Hier stand
     // `MAX_TOKENS_PER_RUN`, und damit sah dieser Lauf immer dieselben fuenf
     // juengsten Token — die am wenigsten fertigen, die es gibt (§128).
-    const tokens = await selectTrackedTokens(this.deps.db, MAX_TOKENS_TRACKED);
-    if (tokens.length === 0) return waitingForData("Keine beobachteten Tokens.");
+    const tokens = candidate
+      ? await selectActivePaperTokens(this.deps.db, systemClock.now())
+      : await selectTrackedTokens(this.deps.db, MAX_TOKENS_TRACKED);
+    if (tokens.length === 0) return waitingForData(candidate
+      ? "Keine Coins mit ausreichenden aktuellen Marktdaten in der aktiven Paper-Liste; die breite Suche laeuft weiter."
+      : "Keine beobachteten Tokens.");
 
     // Die Anbieterlage aus den PERSISTIERTEN Messungen. Ohne Messung gilt ein
     // Anbieter als nicht erreichbar — dieselbe pessimistische Vorgabe wie
@@ -414,13 +418,14 @@ class EvaluateOpportunityHandler implements JobHandler {
     // Dieselbe Rotation wie beim Marktdaten-Lauf, mit eigenem Schluessel.
     // Ohne sie bewertet dieser Lauf jede Minute erneut dieselben fuenf Token.
     const run = await runResumable<(typeof tokens)[number], void>({
-      jobKey: ROTATION_DECISION,
+      jobKey: candidate ? ROTATION_DECISION + ":active-v2" : ROTATION_DECISION,
       units: tokens,
       unitId: (token) => token.id,
       store: new PostgresCheckpointStore(this.deps.db),
       clock: systemClock,
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       process: async (token) => {
+      for (const [index, strategy] of strategies.entries()) {
       const result = await runDecision({
         db: this.deps.db,
         logger: this.deps.logger,
@@ -444,12 +449,16 @@ class EvaluateOpportunityHandler implements JobHandler {
       // Gezaehlt wird das Etikett MIT Grund, nicht die blosse Ergebnisart.
       // `NO_ENTRY=5` sagte, dass nichts gekauft wurde, und verschwieg warum —
       // genau die Auskunft, die beim Pruefen gebraucht wird (§122).
+      const account = accounts[index]!;
+      const accountSeen = account.outcomes[result.label];
+      account.outcomes[result.label] = accountSeen === undefined ? 1 : accountSeen + 1;
       const seen = outcomes[result.label];
       outcomes[result.label] = seen === undefined ? 1 : seen + 1;
       if (result.finalScore !== null) scores.push(result.finalScore);
       for (const feld of result.missing) {
         const bisher = fehlendeFelder[feld];
         fehlendeFelder[feld] = bisher === undefined ? 1 : bisher + 1;
+      }
       }
       },
     });
@@ -480,7 +489,7 @@ class EvaluateOpportunityHandler implements JobHandler {
           ? {}
           : {
               bestScore: bester,
-              entrySchwelle: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+              entrySchwelle: candidate ? MEMECOIN_PAPER_CANDIDATE.parameters.entryGates.minFinalScore : DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
             }),
       },
       "Gelegenheiten geprueft",
@@ -496,9 +505,10 @@ class EvaluateOpportunityHandler implements JobHandler {
       skipped: run.skipped,
       roundComplete: run.completed,
       bestScore: bester,
-      entryThreshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+      entryThreshold: candidate ? MEMECOIN_PAPER_CANDIDATE.parameters.entryGates.minFinalScore : DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
+      accounts,
     };
   }
 }
@@ -519,7 +529,7 @@ class MarketRefreshHandler implements JobHandler {
     // `ROTATION_MARKET`. `job.dedupeKey` bleibt die Idempotenz der QUEUE; das
     // ist eine andere Frage als die, wo die Rotation stehengeblieben ist.
     void job;
-    return refreshMarketData(ROTATION_MARKET, {
+    const refreshDeps = {
       db: this.deps.db,
       logger: this.deps.logger,
       env: this.deps.env,
@@ -529,7 +539,23 @@ class MarketRefreshHandler implements JobHandler {
       ...(this.deps.rejections !== undefined ? { rejections: this.deps.rejections } : {}),
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       maxTokens: MAX_TOKENS_TRACKED,
+    };
+    if (!usesPaperCandidate(this.deps.env)) return refreshMarketData(ROTATION_MARKET, refreshDeps);
+    const active = await selectActivePaperTokens(this.deps.db, systemClock.now(), 20, true);
+    const activeIds = new Set(active.map((t) => t.id));
+    const broad = (await selectTrackedTokens(this.deps.db, 10000)).filter((t) => !activeIds.has(t.id));
+    const focused = await refreshMarketData(ROTATION_MARKET + ":active-v2", {
+      ...refreshDeps, tokens: active, maxUnitsPerRun: 4,
     });
+    const exploration = await refreshMarketData(ROTATION_MARKET + ":explore-v2", {
+      ...refreshDeps, tokens: broad, maxUnitsPerRun: Math.max(1, 5 - focused.processed),
+    });
+    return { status: "OK", activeTokens: active.length, explorationTokens: broad.length,
+      processed: focused.processed + exploration.processed,
+      ingested: focused.ingested + exploration.ingested,
+      entryReady: focused.entryReady + exploration.entryReady,
+      focused, exploration };
+
   }
 }
 
@@ -594,7 +620,10 @@ class EnrichSecurityHandler implements JobHandler {
   async handle(job: ClaimedJob): Promise<unknown> {
     void job;
     const env = loadEnv(providerEnvSchema, this.deps.env);
+    const preferred = usesPaperCandidate(this.deps.env)
+      ? await selectActivePaperTokens(this.deps.db, systemClock.now()) : [];
     const result = await enrichSecurity({
+      preferredIds: preferred.map((t) => t.id),
       db: this.deps.db,
       logger: this.deps.logger,
       ...(env.RUGCHECK_BASE_URL !== undefined ? { baseUrl: env.RUGCHECK_BASE_URL } : {}),

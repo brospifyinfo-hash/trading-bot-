@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { eur } from "@sae/core";
-import { PaperPositionRepository, schema, loadPaperTrading } from "@sae/db";
+import { PaperPositionRepository, schema, loadPaperTrading, selectActivePaperTokens } from "@sae/db";
 import { createTestDatabase } from "@sae/db/testing";
 import { loadPaperAccount } from "../paper-account";
 
@@ -44,6 +44,10 @@ it("reconciles repository fills across versions while separating fixtures, manua
       proceeds: eur(50), costs: eur(.20), at, reason: "fixture", levelIndex: 1,
       maxAdverseExcursion: 0, maxFavorableExcursion: 0, valuation: { source: "TEST_FIXTURE" },
     });
+    // Open positions remain in the fast refresh cohort even with no usable market snapshot.
+    const monitored = await selectActivePaperTokens(db, at, 20, true);
+    expect(await selectActivePaperTokens(db, at)).toEqual([]);
+    expect(monitored.map((r) => r.id)).toEqual([token!.id]);
     const account = await loadPaperAccount({ db, strategyId: strategy!.id, initialCash: eur(3000), asOf: at });
     expect(account.kind).toBe("READY");
     if (account.kind !== "READY") return;

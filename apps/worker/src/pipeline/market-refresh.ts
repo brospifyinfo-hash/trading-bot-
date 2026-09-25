@@ -37,6 +37,7 @@ export interface MarketRefreshDeps {
   readonly statusOf: (id: KnownProviderId) => ProviderStatus;
   /** Obergrenze je Lauf. Schuetzt das Rate-Limit-Budget. */
   readonly maxUnitsPerRun: number;
+  readonly tokens?: readonly TokenUnit[];
   readonly maxTokens: number;  /** Optional: Ablage fuer die Ablehnungsgruende der Marktauswahl. */
   readonly rejections?: {
     drain(): {
@@ -109,7 +110,7 @@ export async function refreshMarketData(
   // Tokens, gegen die sich das System bereits entschieden hat. Die Auswahl
   // steht in `selectTrackedTokens` und damit dort, wo auch der Rest der
   // Drizzle-Abfragen liegt.
-  const rows = await selectTrackedTokens(deps.db, deps.maxTokens);
+  const rows = deps.tokens ?? await selectTrackedTokens(deps.db, deps.maxTokens);
 
   if (rows.length === 0) {
     // Kein Token bekannt. Das ist heute der Regelfall: die Discovery, die

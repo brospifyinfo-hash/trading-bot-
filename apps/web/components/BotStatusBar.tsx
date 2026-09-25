@@ -18,11 +18,11 @@ export function BotStatusBar({ paper, account }: { readonly paper: readonly Pape
   return (
     <header className="statusbar">
       <div>
-        <div className="label">Paper-Guthaben</div>
+        <div className="label">Standard · Paper-Guthaben</div>
         <div className="value">{account.kind === "READY" ? paperMoney(account.account.cash.minor) : "—"}</div>
       </div>
       <div>
-        <div className="label">PnL heute</div>
+        <div className="label">Standard · PnL heute</div>
         <div className="value">{account.kind === "READY" ? paperMoney(account.account.portfolio.realizedTodayPnl.minor) : "—"}</div>
       </div>
       <div>

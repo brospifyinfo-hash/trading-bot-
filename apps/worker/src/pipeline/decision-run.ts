@@ -7,7 +7,7 @@ import type { PaperValuation } from "./paper-valuation";
 import { bps, eur, systemClock, tokenId as asTokenId, strategyVersionId as asStrategyVersionId, money, type Currency, type Money } from "@sae/core";
 import {
   DEFAULT_STRATEGY_PARAMETERS,
-  MEMECOIN_PAPER_CANDIDATE,
+  strategyParametersSchema,
   DEFAULT_SYSTEM_STATE,
   type KnownProviderId,
 } from "@sae/config";
@@ -179,9 +179,9 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
   readonly missing: readonly string[];
 }> {
   const candidate = usesPaperCandidate(deps.env);
-  const parameters = candidate ? MEMECOIN_PAPER_CANDIDATE.parameters : DEFAULT_STRATEGY_PARAMETERS;
   const [version] = candidate ? await deps.db.select().from(schema.strategyVersions)
     .where(eq(schema.strategyVersions.id, deps.strategyVersionId)).limit(1) : [];
+  const parameters = candidate ? strategyParametersSchema.parse(version?.parameters) : DEFAULT_STRATEGY_PARAMETERS;
   const account = candidate && version !== undefined ? await loadPaperAccount({ db: deps.db,
     strategyId: version.strategyId, initialCash: PAPER_INITIAL_CASH, asOf: systemClock.now() }) : null;
   if (candidate && (account === null || account.kind !== "READY")) {

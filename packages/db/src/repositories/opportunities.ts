@@ -26,7 +26,7 @@ import {
  *    oder gar nicht. Getrennt geschrieben hinterlaesst ein Absturz zwischen
  *    beiden entweder einen Snapshot, auf den nichts zeigt, oder — schlimmer —
  *    eine Gelegenheit ohne die Daten, gegen die entschieden wurde.
- * 2. **Idempotenz aus der Datenbank.** `UNIQUE (token_id, stream, decided_at)`
+ * 2. **Idempotenz aus der Datenbank.** `UNIQUE (token_id, stream, decided_at, strategy_version_id)`
  *    entscheidet, nicht ein vorheriges `SELECT`. Zwei gleichzeitige Worker
  *    bekommen dasselbe Ergebnis.
  * 3. **Zustandswechsel mit Bedingung.** Jedes `UPDATE` traegt den erwarteten
@@ -155,7 +155,7 @@ export class OpportunityRepository {
           isTestFixture: isTestFixture(input.provenance.sourceType),
         })
         .onConflictDoNothing({
-          target: [opportunities.tokenId, opportunities.stream, opportunities.decidedAt],
+          target: [opportunities.tokenId, opportunities.stream, opportunities.decidedAt, opportunities.strategyVersionId],
         })
         .returning({ id: opportunities.id });
 
@@ -171,6 +171,7 @@ export class OpportunityRepository {
             eq(opportunities.tokenId, input.tokenId),
             eq(opportunities.stream, input.stream),
             eq(opportunities.decidedAt, input.decidedAt),
+            eq(opportunities.strategyVersionId, input.strategyVersionId),
           ),
         )
         .limit(1);

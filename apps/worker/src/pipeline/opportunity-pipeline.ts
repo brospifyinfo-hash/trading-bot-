@@ -223,7 +223,7 @@ export async function runOpportunityPipeline(
   const decisionAt = deps.clock.now();
   let decision = decide({
     ...deps.decisionContext,
-    decisionId: `dec-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
+    decisionId: `dec-${deps.strategyVersionId}-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
     strategyVersionId: deps.strategyVersionId,
     features,
     scoring,
@@ -290,7 +290,7 @@ export async function runOpportunityPipeline(
     const age = deps.clock.now().getTime() - features.asOf.getTime();
     if (!fixture && (age < 0 || age >= 120000)) return { kind: "BLOCKED", reason: "STALE_PREFLIGHT_FEATURES", detail: "Features expired during quote preparation" };
     decision = decide({ ...deps.decisionContext,
-      decisionId: `dec-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
+      decisionId: `dec-${deps.strategyVersionId}-${hashFeatures(features, scoring.scoreEngineVersion)}` as DecisionContext["decisionId"],
       strategyVersionId: deps.strategyVersionId, features, scoring, parameters: deps.parameters,
     });
   }
@@ -361,7 +361,7 @@ export async function runOpportunityPipeline(
   // Beobachtungen, und die Frage "haette der Mensch besser entschieden"
   // waere nicht mehr stellbar.
   const snapshotId = created.find((c) => c.snapshotId.length > 0)?.snapshotId ?? null;
-  const decisionKey = `dec-${hashFeatures(features, scoring.scoreEngineVersion)}`;
+  const decisionKey = `dec-${deps.strategyVersionId}-${hashFeatures(features, scoring.scoreEngineVersion)}`;
   const decisions = new DecisionRepository(deps.db);
   let persisted: DecisionRecord | null = null;
 

@@ -5468,3 +5468,74 @@ unvollstaendige Felder, Deduplizierung, unnoetige Zusatzaufrufe, unsichere Pools
 fehlerhafte Zusatzantwort und null-Felder in Nachbarpools.
 Gegenproben ohne Null-Unterstuetzung bzw. ohne zusaetzlichen Pool-Abruf scheiterten
 erwartungsgemaess; beide Mutationen entfernt, gezielte Tests erneut bestanden.
+
+## §137 — Aktive Paper-Auswahl statt zu langsamer Vollrotation (2026-09-20)
+
+Der Nutzer verlangt einen tatsaechlich laufenden Paper-Versuch und weniger
+strenge Einstiege. Die Live-Anzeige am 2026-09-20 meldet weiterhin null Trades,
+500 Tokens in der Rotation und fuenf Bearbeitungen pro Lauf. Marktdaten kommen
+alle 20 Sekunden, Bewertungen jede Minute: eine 500er-Runde benoetigt nominal
+33 bzw. 100 Minuten, waehrend das Momentum einen Vergleichspunkt vor fuenf
+Minuten mit nur 90 Sekunden Toleranz verlangt. Warten allein schliesst diese
+strukturelle Historienluecke nicht.
+
+Nur im explizit aktivierten Paper-Kandidaten:
+- Bis zu 20 aktive Tokens aus den bekannten, nicht gesperrten/verworfen Tokens.
+  Der neueste Snapshot aus Jupiter-Quote oder DexScreener muss innerhalb der
+  letzten sechs Stunden liegen; positive Preise/Volumen/Marktkapitalisierung,
+  mindestens 25000 USD Liquiditaet und maximal 20 Mio. USD Market Cap.
+  Ranking nach Liquiditaet, deterministische ID-Reihenfolge fuer die Rotation.
+  Spaetere Verschlechterung ersetzt fruehere gute Daten; Zukunftsdaten und
+  Fixture-Provider werden nicht ausgewaehlt. Diese Vorauswahl ist KEINE
+  Einstiegsfreigabe: frische Quotes und alle Handelspruefungen bleiben noetig.
+- Vier der fuenf Refresh-Plaetze sind fuer die aktive Liste reserviert,
+  mindestens einer fuer die Erkundung unter bis zu 10000 weiteren bekannten
+  Tokens. Ungenutzte aktive Plaetze gehen an die Erkundung. Fuenf nominale
+  20-Sekunden-Laeufe decken die 20 aktiven Tokens ab; Job-/API-Verzoegerungen
+  koennen diesen Abstand verlaengern.
+- Offene LIVE/AUTO/RISK_BASED-Paper-Positionen bleiben priorisiert in der
+  schnellen Liste, auch ohne brauchbaren Snapshot oder nach Verschlechterung.
+  Das erlaubt weitere Messungen fuer Ausstiege; ein neuer Einstieg muss weiterhin
+  die unveraenderten Konten- und Sicherheitspruefungen bestehen.
+- Entscheidungen rotieren ueber dieselbe aktive Liste; Sicherheitsabrufe
+  priorisieren deren fehlende/veraltete Befunde. Eigene Checkpoint-Schluessel
+  vermeiden Vermischung mit der alten 500er-Rotation.
+- Der bestehende Quote-Pfad bleibt auch bei verschlechterten Pooldaten
+  erreichbar, damit offene Positionen weiterhin Kursmessungen erhalten.
+
+Paper-Strategie 1.1.0 ist eine neue unveraenderliche Version in derselben Familie.
+Finalscore 65 statt 75, Momentum-Score 50 statt 60, Market-Cap-Deckel 20 statt
+5 Mio. USD. Dies ist ein ausdruecklich unvalidierter aktiverer Paper-Versuch,
+keine aus Renditen optimierte oder profitable Strategie. Kapital-/Tagesrisiko,
+Positionszahl, Kostenpruefung, Ausstiegskapazitaet und Sicherheitsgrenzen
+bleiben unveraendert. Alte Positionen behalten ihre gespeicherten Parameter;
+die Familien-Kontorechnung umfasst weiterhin alle Versionen. Die Diagnose
+zeigt die tatsaechliche Kandidatenschwelle.
+
+Die Discovery durchsucht weiterhin ihre angebundenen Quellen. Weder die
+bekannte Tokenmenge noch diese Erweiterung decken den kompletten Solana-Markt
+ab. Es gibt keine Tages-Tradequote und keine erzwungenen oder erfundenen Fills.
+
+Validierung: gesamte Suite 146 Dateien/1540 Tests bestanden; der zusaetzliche
+Handler-Budgettest ebenfalls bestanden (insgesamt 1541 Tests). Lint und
+Typpruefung aller 20 Projekte bestanden, Worker nochmals typgeprueft.
+DB-Regression prueft aktuelle versus veraltete/kuenftige/verschlechterte/
+Fixture-Daten und Sicherheitspriorisierung. Offene Positionen ohne brauchbaren
+Snapshot bleiben im aktiven Universum (Repository-Regression).
+Handler-Test deckt 20 aktive plus fuenf weitere Coins in fuenf Laeufen bei
+maximal fuenf Verarbeitungen je Lauf ab. Gegenprobe mit nur einem aktiven Platz
+scheitert; Mutation entfernt und Test erneut bestanden.
+Produktive Einstiege und Handelsfrequenz sind noch nicht nachgewiesen.
+
+## §138 — Zwei isolierte Paper-Konten statt Standard-Regeln zu ersetzen (2026-09-20)
+
+Nutzerentscheidung: bestehende Risikobereitschaft behalten und ein zweites,
+offensiveres Paper-Konto parallel betreiben. Die in §137 vorgeschlagene einzelne
+Version 1.1.0 wird vor Veröffentlichung durch zwei Profile ersetzt: Standard
+bleibt `memecoin-risk-managed@1.0.0`, Offensiv verwendet die eigene Familie
+`memecoin-active-paper@1.0.0`. Parameter, Grenzen, Migration und koordinierter
+Rollout stehen in `docs/PAPER_ACCOUNTS.md`. Buchungen und Verlustgrenzen bleiben
+familiengebunden; Opportunity-Unique-Index und Entscheidungsschlüssel werden
+strategieversionsgebunden. Dashboard und Worker-Diagnose unterscheiden beide
+Konten. Die aktive Marktauswahl aus §137 bleibt erhalten. Birdeye/Helius bleiben
+ohne implementierte Adapter nicht angebunden; die Anzeige erklärt dies.

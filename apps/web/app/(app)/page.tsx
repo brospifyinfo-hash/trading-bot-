@@ -1,4 +1,4 @@
-import { MEMECOIN_PAPER_CANDIDATE } from "@sae/config";
+import { PAPER_PROFILES } from "@sae/config";
 import { loadPaperTrading } from "@sae/db";
 import { PaperTrading } from "@/components/PaperTrading";
 import { loadDashboardState, isRecentObservation, type Panel } from "@sae/db";
@@ -154,12 +154,12 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
   const readiness = checkWebEnv();
   if (readiness.kind !== "READY") return <NotReady readiness={readiness} />;
 
-  let paper: Awaited<ReturnType<typeof loadPaperTrading>>;
+  let accounts: Awaited<ReturnType<typeof loadPaperTrading>>[];
   let state: Awaited<ReturnType<typeof loadDashboardState>>;
   try {
     // Modulebene statt Request-Handler: siehe lib/db.ts.
     state = await loadDashboardState({ db: db(), now: new Date() });
-    paper = await loadPaperTrading({ db: db(), strategyName: MEMECOIN_PAPER_CANDIDATE.strategyId, now: new Date() });
+    accounts = await Promise.all(PAPER_PROFILES.map(({ candidate }) => loadPaperTrading({ db: db(), strategyName: candidate.strategyId, now: new Date() })));
   } catch (error: unknown) {
     // Der Fehler wird nur klassifiziert, nie ausgegeben: eine
     // Postgres-Fehlermeldung enthaelt die Verbindungszeichenfolge samt Passwort.
@@ -169,7 +169,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
 
   return (
     <>
-      <BotStatusBar paper={state.paperCounts} account={paper} />
+      <BotStatusBar paper={state.paperCounts} account={accounts[0]!} />
 
       <section className="headline" data-connected={state.marketDataConnected}>
         <h1>{state.headline}</h1>
@@ -183,10 +183,15 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
       </section>
 
       <main className="workspace">
-        <PaperTrading data={paper} />
+        {PAPER_PROFILES.map((profile, index) => <PaperTrading key={profile.candidate.strategyId}
+          data={accounts[index]!} label={profile.label} refresh={index === 0}
+          description={`Einstieg ab Score ${profile.candidate.parameters.entryGates.minFinalScore}; Risiko pro Trade ${profile.candidate.parameters.risk.riskPerTradePct} %; maximal ${profile.candidate.parameters.risk.maxOpenPositions} offene Positionen. Experimentelle Paper-Strategie.`} />)}
         <OperatingStatus run={state.latestDecisionRun} now={state.generatedAt} />
         <section className="panel">
           <h2>Datenquellen</h2>
+          <p>Für Paper-Handel werden DexScreener-Marktdaten, Jupiter-Quotes und Sicherheitsdaten geprüft.
+            „jupiter-quote“ zeigt den Marktpreis-Abruf; „jupiter“ ist der getrennte Router-Eintrag.
+            Birdeye und Helius sind noch nicht als Datenadapter angebunden; Zugangsschlüssel allein aktivieren sie nicht.</p>
           {state.providers.length === 0 ? (
             <p className="placeholder">
               <strong>NOT CONFIGURED</strong>

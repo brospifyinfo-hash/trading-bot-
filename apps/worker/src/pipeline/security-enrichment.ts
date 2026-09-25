@@ -54,6 +54,7 @@ export interface SecurityEnrichmentDeps {
   readonly baseUrl?: string;
   readonly fetchImpl?: typeof fetch;
   readonly maxTokens?: number;
+  readonly preferredIds?: readonly string[];
 }
 
 export interface SecurityEnrichmentResult {
@@ -83,6 +84,7 @@ export async function enrichSecurity(
     deps.db,
     deps.maxTokens ?? MAX_TOKENS_PER_RUN,
     new Date(now.getTime() - STALE_AFTER_MS),
+    deps.preferredIds,
   );
   if (tokens.length === 0) return { status: "NO_TOKENS", ...leer };
 
