@@ -61,7 +61,10 @@ export class PostgresPitReader implements PitReader {
 
     const row = rows[0];
     if (!row) return null;
+    const findings = row.findings as { totalHolders?: unknown } | null;
+    const holders = findings?.totalHolders;
     return {
+      totalHolders: typeof holders === "number" && Number.isSafeInteger(holders) && holders >= 0 ? holders : null,
       tokenId: row.tokenId,
       observedAt: row.observedAt,
       mintAuthorityActive: row.mintAuthorityActive,

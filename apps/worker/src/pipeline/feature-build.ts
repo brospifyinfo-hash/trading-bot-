@@ -143,7 +143,11 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
       sells5m: of(latest, latest.sells5m),
     },
     holder: {
-      holders: of(latest, latest.holders),
+      holders: latest.holders !== null ? of(latest, latest.holders)
+        : security?.totalHolders != null && security.observedAt <= asOf &&
+          asOf.getTime() - security.observedAt.getTime() <= 6 * 60 * 60 * 1000
+          ? observed(security.totalHolders, providerId("token_security"), security.observedAt)
+          : of<number>(latest, null),
       holderGrowth: absoluteChange(latest, anHourAgo, (s) => s.holders, asOf),
       distinctActors: notCollected(),
       largestClusterSharePct: notCollected(),

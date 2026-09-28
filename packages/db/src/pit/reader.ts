@@ -40,6 +40,7 @@ export interface PitSnapshot {
 }
 
 export interface PitSecurity {
+  readonly totalHolders?: number | null;
   readonly tokenId: string;
   readonly observedAt: Date;
   readonly mintAuthorityActive: boolean | null;

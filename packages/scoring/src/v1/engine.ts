@@ -39,7 +39,8 @@ import {
  * jede spaetere Auswertung ueber den Umstellungszeitpunkt hinweg waere still
  * falsch.
  */
-export const SCORE_ENGINE_VERSION = "1.1.0";
+// 1.2.0: exclude unimplemented holder clustering from collectible completeness.
+export const SCORE_ENGINE_VERSION = "1.2.0";
 
 export const WEIGHTS = {
   security: 0.2,

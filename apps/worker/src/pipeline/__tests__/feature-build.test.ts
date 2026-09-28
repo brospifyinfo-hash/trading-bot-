@@ -388,3 +388,16 @@ describe("Feature-Vektor aus der Historie", () => {
     expect(mit).toBeGreaterThan(kleiner);
   });
 });
+
+it("uses stored RugCheck holder counts without borrowing future reports", async () => {
+  const [token] = await db.insert(schema.tokens).values({ mint: "holder-wiring-token", discoverySource: "test" }).returning();
+  const isolatedId = token!.id;
+  await db.insert(schema.tokenSnapshots).values({ tokenId: isolatedId, observedAt: T0, priceUsd: 1, dataCompleteness: 0.5 });
+  const observedAt = new Date(T0.getTime() - 60000);
+  await db.insert(schema.tokenSecurity).values({ tokenId: isolatedId, observedAt, checkVersion: "holder-wiring", findings: { totalHolders: 1234 } });
+  const vector = await buildFeatureVector({ pit: reader(), tokenId: asTokenId(isolatedId), asOf: T0, firstSeenAt: null });
+  expect(vector?.holder.holders).toMatchObject({ kind: "OBSERVED", value: 1234, observedAt });
+  await db.insert(schema.tokenSecurity).values({ tokenId: isolatedId, observedAt: new Date(T0.getTime() + 60000), checkVersion: "future-holders", findings: { totalHolders: 9999 } });
+  const unchanged = await buildFeatureVector({ pit: reader(), tokenId: asTokenId(isolatedId), asOf: T0, firstSeenAt: null });
+  expect(unchanged?.holder.holders).toMatchObject({ kind: "OBSERVED", value: 1234 });
+});

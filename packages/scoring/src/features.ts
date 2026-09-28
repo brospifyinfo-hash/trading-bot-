@@ -156,7 +156,10 @@ export function collectibleCompleteness(vector: FeatureVector): number {
   let fehlend = 0;
   for (const name of COLLECTIBLE_GROUPS) {
     const werte = gruppen[name] as unknown as Record<string, Maybe<unknown>>;
-    for (const value of Object.values(werte)) {
+    for (const [field, value] of Object.entries(werte)) {
+      // No collection path exists for wallet clustering yet. Missing fields
+      // remain in collectMissing; they must not penalize every token forever.
+      if (name === "holder" && (field === "distinctActors" || field === "largestClusterSharePct")) continue;
       gesamt += 1;
       if (value.kind === "MISSING") fehlend += 1;
     }

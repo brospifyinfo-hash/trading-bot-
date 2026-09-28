@@ -40,7 +40,7 @@ export function OperatingStatus({ run, now }: {
         run.coinDiagnostics.map((coin, index) => <details key={`${coin.mint}-${coin.account}-${index}`}>
           <summary>{coin.account} · {coin.mint} · Score {coin.diagnostics?.finalScore ?? "unbekannt"} · {coin.outcome}</summary>
           {coin.diagnostics ? <>
-            <p>Erhebbare Daten: {(coin.diagnostics.completeness * 100).toFixed(0)} % vorhanden; erforderlich: {(coin.diagnostics.requiredCompleteness * 100).toFixed(0)} %. Bewertungsabdeckung: {(coin.diagnostics.weightCoverage * 100).toFixed(0)} %; erforderlich: 60 %.</p>
+            <p>Erhebbare Daten: {(coin.diagnostics.completeness * 100).toFixed(1)} % vorhanden; erforderlich: {(coin.diagnostics.requiredCompleteness * 100).toFixed(1)} %. Bewertungsabdeckung: {(coin.diagnostics.weightCoverage * 100).toFixed(1)} %; erforderlich: 60 %.</p>
             <p>Nicht berechenbare Teilbewertungen: {coin.diagnostics.unavailableScores.join(", ") || "keine"}.</p>
             <ul>{coin.diagnostics.missing.map((m) => <li key={m.field}>{m.field}: {m.reason}{m.field.startsWith("pending.") ? " (Datenquelle noch nicht angebunden)" : ""}</li>)}</ul>
           </> : <p>Abbruch vor der vollständigen Bewertung. Der Grund steht oben.</p>}
