@@ -103,7 +103,16 @@ export interface PipelineDeps {
   >;
 }
 
-export type PipelineOutcome =
+export interface InputDiagnostics {
+  readonly finalScore: number | null;
+  readonly completeness: number;
+  readonly requiredCompleteness: number;
+  readonly weightCoverage: number;
+  readonly missing: readonly { field: string; reason: string }[];
+  readonly unavailableScores: readonly string[];
+}
+
+export type PipelineOutcome = (
   /** Keine Quelle hat geantwortet. Kein Signal, keine Gelegenheit, keine Position. */
   | { readonly kind: "NO_SOURCE"; readonly reason: string; readonly attempted: readonly string[] }
   /** Die Datenlage traegt keine Einstiegsentscheidung. */
@@ -127,7 +136,7 @@ export type PipelineOutcome =
       readonly created: readonly CreatedOpportunity[];
       readonly persisted: DecisionRecord;
       readonly autoPosition: AutoPaperResult;
-    };
+    }) & { readonly diagnostics?: InputDiagnostics };
 
 export interface CreatedOpportunity {
   readonly stream: TradingStream;
@@ -210,6 +219,10 @@ export async function runOpportunityPipeline(
 
   /* ---------------------------------------------- 3. Scoring */
   const scoring: ScoringResult = computeScores(features);
+  const diagnostics: InputDiagnostics = { finalScore: scoring.finalScore, completeness: scoring.dataCompleteness,
+    requiredCompleteness: deps.parameters.entryGates.minDataCompleteness,
+    weightCoverage: scoring.weightCoverage, missing: scoring.missingFields,
+    unavailableScores: scoring.notComputable };
 
   /* ---------------------------------------------- 4. Bereitschaft */
   const readiness: Readiness = evaluateReadiness({
@@ -277,6 +290,7 @@ export async function runOpportunityPipeline(
     const blocked = plan.branches.find((b) => !b.open);
     return {
       kind: "BLOCKED",
+      diagnostics,
       reason: blocked?.reason ?? "NO_STREAM",
       detail: blocked?.detail ?? "Kein Strom geoeffnet.",
       ...(blocked?.missing === undefined ? {} : { missing: blocked.missing }),
@@ -285,7 +299,7 @@ export async function runOpportunityPipeline(
 
   if (decision.kind === "ENTER" && deps.prepareEntry !== undefined) {
     const prepared = await deps.prepareEntry();
-    if (prepared.kind === "BLOCKED") return { kind: "BLOCKED", reason: prepared.reason, detail: "Paper order preflight blocked" };
+    if (prepared.kind === "BLOCKED") return { kind: "BLOCKED", diagnostics, reason: prepared.reason, detail: "Paper order preflight blocked" };
     deps = { ...deps, ...prepared.update };
     const age = deps.clock.now().getTime() - features.asOf.getTime();
     if (!fixture && (age < 0 || age >= 120000)) return { kind: "BLOCKED", reason: "STALE_PREFLIGHT_FEATURES", detail: "Features expired during quote preparation" };
@@ -406,12 +420,12 @@ export async function runOpportunityPipeline(
   // Kein ENTER heisst: die Gelegenheiten bleiben stehen (Forschungsmaterial),
   // aber es entsteht keine Position.
   if (decision.kind !== "ENTER") {
-    return { kind: "NO_ENTRY", decision, created, persisted };
+    return { kind: "NO_ENTRY", diagnostics, decision, created, persisted };
   }
 
   const auto = created.find((c) => c.stream === "AUTO_PAPER");
   if (auto === undefined || persisted === null) {
-    return { kind: "NO_ENTRY", decision, created, persisted };
+    return { kind: "NO_ENTRY", diagnostics, decision, created, persisted };
   }
 
   const openInput = {
@@ -432,7 +446,7 @@ export async function runOpportunityPipeline(
   // OFFERED und wartet. Der Uebergang nach USER_CONFIRMED kommt von einem
   // Menschen, der Uebergang nach EXPIRED von der Zeit.
 
-  return { kind: "ENTERED", decision, created, persisted, autoPosition };
+  return { kind: "ENTERED", diagnostics, decision, created, persisted, autoPosition };
 }
 
 /**

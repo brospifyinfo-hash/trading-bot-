@@ -35,7 +35,17 @@ export function OperatingStatus({ run, now }: {
       <h3>Warum zuletzt nicht gekauft?</h3>
       {run.accounts && run.accounts.length > 0 ? run.accounts.map((account) => <div key={account.label}>
         <h4>{account.label}</h4><Counts values={account.outcomes} /></div>) : <Counts values={run.outcomes} />}
-      <h3>Fehlende Pflichtfelder</h3>
+      <h3>Datenprüfung pro Coin</h3>
+      {!run.coinDiagnostics?.length ? <p>Details wurden in diesem Lauf noch nicht aufgezeichnet.</p> :
+        run.coinDiagnostics.map((coin, index) => <details key={`${coin.mint}-${coin.account}-${index}`}>
+          <summary>{coin.account} · {coin.mint} · Score {coin.diagnostics?.finalScore ?? "unbekannt"} · {coin.outcome}</summary>
+          {coin.diagnostics ? <>
+            <p>Erhebbare Daten: {(coin.diagnostics.completeness * 100).toFixed(0)} % vorhanden; erforderlich: {(coin.diagnostics.requiredCompleteness * 100).toFixed(0)} %. Bewertungsabdeckung: {(coin.diagnostics.weightCoverage * 100).toFixed(0)} %; erforderlich: 60 %.</p>
+            <p>Nicht berechenbare Teilbewertungen: {coin.diagnostics.unavailableScores.join(", ") || "keine"}.</p>
+            <ul>{coin.diagnostics.missing.map((m) => <li key={m.field}>{m.field}: {m.reason}{m.field.startsWith("pending.") ? " (Datenquelle noch nicht angebunden)" : ""}</li>)}</ul>
+          </> : <p>Abbruch vor der vollständigen Bewertung. Der Grund steht oben.</p>}
+        </details>)}
+      <h3>Fehlende erhobene Datenfelder</h3>
       <Counts values={run.missingFields} />
       <p>Ein Token kann mehrere fehlende Felder haben. Die Zahlen oben beschreiben diesen
         Lauf und werden nicht als zusaetzliche Trades oder Gelegenheiten gezaehlt.</p>

@@ -414,6 +414,7 @@ class EvaluateOpportunityHandler implements JobHandler {
     const outcomes: Record<string, number> = {};
     const scores: number[] = [];
     const fehlendeFelder: Record<string, number> = {};
+    const coinDiagnostics: { mint: string; account: string; outcome: string; diagnostics?: import("./pipeline/opportunity-pipeline").InputDiagnostics }[] = [];
 
     // Dieselbe Rotation wie beim Marktdaten-Lauf, mit eigenem Schluessel.
     // Ohne sie bewertet dieser Lauf jede Minute erneut dieselben fuenf Token.
@@ -449,6 +450,8 @@ class EvaluateOpportunityHandler implements JobHandler {
       // Gezaehlt wird das Etikett MIT Grund, nicht die blosse Ergebnisart.
       // `NO_ENTRY=5` sagte, dass nichts gekauft wurde, und verschwieg warum —
       // genau die Auskunft, die beim Pruefen gebraucht wird (§122).
+      coinDiagnostics.push({ mint: token.mint, account: strategy.label, outcome: result.label,
+        ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) });
       const account = accounts[index]!;
       const accountSeen = account.outcomes[result.label];
       account.outcomes[result.label] = accountSeen === undefined ? 1 : accountSeen + 1;
@@ -501,6 +504,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       processed: run.processed,
       outcomes,
       missingFields: fehlendeFelder,
+      coinDiagnostics,
       tracked: tokens.length,
       skipped: run.skipped,
       roundComplete: run.completed,

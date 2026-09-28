@@ -46,6 +46,7 @@ export async function preparePaperEntry(input: {
     return isPresent(q) && q.value.outAmount > 0n && Number.isFinite(q.value.priceImpactBps) &&
       q.value.priceImpactBps >= 0 && q.value.priceImpactBps <= parameters.risk.maxPriceImpactBps && age >= 0 && age < 120000;
   };
+  if (!isPresent(quote)) return block(`BUY_QUOTE_${quote.reason}`);
   if (!valid(quote)) return block("NO_EXECUTABLE_BUY_QUOTE");
   const cost = (notional: typeof purchase.notional, q: PresentQuote) => estimateExecutionCosts({
     notional, priceImpactBps: q.value.priceImpactBps, solPrice: valuation.solPrice,

@@ -11,7 +11,14 @@ export interface SizingReport {
   readonly tradeable: boolean;
 }
 
+export interface CoinDiagnostic {
+  readonly mint: string; readonly account: string; readonly outcome: string;
+  readonly diagnostics?: { finalScore: number | null; completeness: number; requiredCompleteness: number; weightCoverage: number;
+    missing: readonly { field: string; reason: string }[]; unavailableScores: readonly string[] };
+}
+
 export interface DecisionRunReport {
+  readonly coinDiagnostics?: readonly CoinDiagnostic[];
   readonly finishedAt: Date;
   readonly processed: number | null;
   readonly outcomes: Readonly<Record<string, number>> | null;
@@ -61,6 +68,7 @@ export function parseDecisionRun(result: unknown, finishedAt: Date): DecisionRun
   const r = record(result);
   return {
     finishedAt,
+    coinDiagnostics: parseCoins(r?.coinDiagnostics),
     processed: count(r?.processed),
     outcomes: counts(r?.outcomes),
     missingFields: counts(r?.missingFields),
@@ -99,4 +107,27 @@ export function isRecentObservation(at: Date | null, now: Date, windowMs = 180_0
   if (at === null) return false;
   const age = now.getTime() - at.getTime();
   return age >= 0 && age < windowMs;
+}
+
+function parseCoins(value: unknown): CoinDiagnostic[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 20).flatMap((item: unknown) => {
+    const r = record(item);
+    if (!r || typeof r.mint !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(r.mint) ||
+      typeof r.account !== "string" || !["Standard", "Offensiv", "Legacy"].includes(r.account) ||
+      typeof r.outcome !== "string" || !/^[A-Z_]{1,100}$/.test(r.outcome)) return [];
+    const d = record(r.diagnostics);
+    const fraction = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+    const diagnostics = d && fraction(d.completeness) && fraction(d.requiredCompleteness) && fraction(d.weightCoverage) ? {
+      finalScore: typeof d.finalScore === "number" && Number.isFinite(d.finalScore) && d.finalScore >= 0 && d.finalScore <= 100 ? d.finalScore : null,
+      completeness: d.completeness, requiredCompleteness: d.requiredCompleteness, weightCoverage: d.weightCoverage,
+      missing: Array.isArray(d.missing) ? d.missing.slice(0, 50).flatMap((v: unknown) => {
+        const m = record(v);
+        return m && typeof m.field === "string" && /^[A-Za-z0-9.]{1,100}$/.test(m.field) &&
+          typeof m.reason === "string" && /^[A-Z_]{1,100}$/.test(m.reason) ? [{ field: m.field, reason: m.reason }] : [];
+      }) : [],
+      unavailableScores: Array.isArray(d.unavailableScores) ? d.unavailableScores.filter((v): v is string => typeof v === "string" && /^[A-Za-z]{1,40}$/.test(v)) : [],
+    } : undefined;
+    return [{ mint: r.mint, account: r.account, outcome: r.outcome, ...(diagnostics ? { diagnostics } : {}) }];
+  });
 }

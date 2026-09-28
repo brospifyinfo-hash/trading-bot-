@@ -177,6 +177,7 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
   readonly finalScore: number | null;
   /** Namen fehlender Pflichtfelder aus geschlossener Aufzaehlung. Sonst leer. */
   readonly missing: readonly string[];
+  readonly diagnostics?: import("./opportunity-pipeline").InputDiagnostics;
 }> {
   const candidate = usesPaperCandidate(deps.env);
   const [version] = candidate ? await deps.db.select().from(schema.strategyVersions)
@@ -275,7 +276,9 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     // Welche Pflichtfelder gefehlt haben. `BLOCKED_DATA_QUALITY_TOO_LOW=3`
     // sagt, DASS die Datenlage nicht reichte, und verschweigt das Einzige,
     // was man dagegen tun kann: WELCHES Feld fehlte (§126).
-    missing: result.kind === "BLOCKED" ? (result.missing ?? []) : [],
+    missing: [...new Set([...(result.kind === "BLOCKED" ? (result.missing ?? []) : []),
+      ...(result.diagnostics?.missing.filter((m) => !m.field.startsWith("pending.")).map((m) => m.field.replaceAll(".", "_")) ?? [])])],
+    ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
   };
 }
 

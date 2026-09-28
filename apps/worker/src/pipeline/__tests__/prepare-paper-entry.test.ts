@@ -78,3 +78,9 @@ describe("quote-sized paper preflight", () => {
     expect(requests).toHaveLength(0);
   });
 });
+
+it("preserves rate-limit cause before any exit requests", async () => {
+  const { input } = setup();
+  input.quotes.quote = async () => missing("PROVIDER_RATE_LIMITED", at, null);
+  expect(await preparePaperEntry(input)).toEqual({ kind: "BLOCKED", reason: "BUY_QUOTE_PROVIDER_RATE_LIMITED" });
+});

@@ -57,3 +57,12 @@ describe("Betriebsdiagnose ohne erfundene Messwerte", () => {
     expect((await loadQueueSummary(db)).retryingJobs).toBe(1);
   });
 });
+
+it("preserves per-coin causes and ignores invalid diagnostic payloads", () => {
+  const mint = "1".repeat(32);
+  const coin = { mint, account: "Offensiv", outcome: "REJECT_DATA_INCOMPLETE", diagnostics: {
+    finalScore: 62, completeness: 0.65, requiredCompleteness: 0.7, weightCoverage: 0.6,
+    missing: [{ field: "momentum.priceChange5mPct", reason: "NOT_YET_COLLECTED" }], unavailableScores: ["momentum"] } };
+  expect(parseDecisionRun({ coinDiagnostics: [coin, { ...coin, mint: "bad" }] }, NOW).coinDiagnostics).toEqual([coin]);
+  expect(parseDecisionRun({ coinDiagnostics: [{ ...coin, diagnostics: { ...coin.diagnostics, completeness: -1 } }] }, NOW).coinDiagnostics?.[0]?.diagnostics).toBeUndefined();
+});
