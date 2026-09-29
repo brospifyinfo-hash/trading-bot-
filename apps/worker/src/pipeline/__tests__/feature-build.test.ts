@@ -137,6 +137,34 @@ describe("Feature-Vektor aus der Historie", () => {
     expect(stunde.value).toBeCloseTo(1.1, 9);
   });
 
+  it("anchors momentum to the latest measurement even when the decision is delayed", async () => {
+    const vector = await buildFeatureVector({
+      pit: reader(), tokenId: asTokenId(tokenUuid),
+      asOf: new Date(T0.getTime() + 3 * 60_000), firstSeenAt: null,
+    });
+    expect(vector?.asOf).toEqual(T0);
+    const change = vector!.momentum.priceChange5m;
+    expect(isPresent(change)).toBe(true);
+    if (isPresent(change)) expect(change.value).toBeCloseTo(0.05, 9);
+    const hour = vector!.momentum.priceChange1h;
+    expect(isPresent(hour)).toBe(true);
+    if (isPresent(hour)) expect(hour.value).toBeCloseTo(1.1, 9);
+  });
+
+  it("does not compare prices across providers", async () => {
+    const base = reader();
+    const pit = {
+      snapshotAt: base.snapshotAt.bind(base),
+      securityAt: base.securityAt.bind(base),
+      snapshotsBetween: async (...args: Parameters<typeof base.snapshotsBetween>) =>
+        (await base.snapshotsBetween(...args)).map((s) => ({
+          ...s, sourceProviderId: s.observedAt < T0 ? "dexscreener" : s.sourceProviderId,
+        })),
+    } as unknown as LivePitReader;
+    const vector = await buildFeatureVector({ pit, tokenId: asTokenId(tokenUuid), asOf: T0, firstSeenAt: null });
+    expect(isMissing(vector!.momentum.priceChange5m)).toBe(true);
+  });
+
   it("erfindet nichts, wo die Reihe ein Loch hat", async () => {
     // Ein zweiter Token, der nur EINEN Snapshot hat: ohne Vergleichspunkt gibt
     // es keine Aenderung, und der naechstbeste Punkt waere eine

@@ -92,8 +92,8 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
   const [history, security] = await Promise.all([
     input.pit.snapshotsBetween(
       input.tokenId,
-      new Date(input.asOf.getTime() - HISTORY_SPAN_MS),
-      input.asOf,
+      new Date(latest.observedAt.getTime() - HISTORY_SPAN_MS),
+      latest.observedAt,
     ),
     input.pit.securityAt(input.tokenId, input.asOf),
   ]);
@@ -111,8 +111,15 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
   /** Etwas, das dieses System heute nirgends erhebt. */
   const notCollected = <T>(): Maybe<T> => missing("NOT_YET_COLLECTED", asOf, null);
 
-  const fiveMinutesAgo = at(history, input.asOf.getTime() - WINDOW_5M_MS);
-  const anHourAgo = at(history, input.asOf.getTime() - WINDOW_1H_MS);
+  // Anchor windows to the actual measurement, not the later decision clock.
+  // Compare only usable prices from the same provider; a sparse discovery
+  // snapshot must not hide a nearby executable price or create fake momentum.
+  const priceHistory = history.filter((s) =>
+    s.sourceProviderId === latest.sourceProviderId && s.priceUsd !== null);
+  const fiveMinutesAgo = at(priceHistory, asOf.getTime() - WINDOW_5M_MS);
+  const anHourAgo = at(priceHistory, asOf.getTime() - WINDOW_1H_MS);
+  const holdersAnHourAgo = at(history.filter((s) => s.holders !== null &&
+    s.sourceProviderId === latest.sourceProviderId), asOf.getTime() - WINDOW_1H_MS);
 
   return {
     tokenId: input.tokenId,
@@ -148,7 +155,7 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
           asOf.getTime() - security.observedAt.getTime() <= 6 * 60 * 60 * 1000
           ? observed(security.totalHolders, providerId("token_security"), security.observedAt)
           : of<number>(latest, null),
-      holderGrowth: absoluteChange(latest, anHourAgo, (s) => s.holders, asOf),
+      holderGrowth: absoluteChange(latest, holdersAnHourAgo, (s) => s.holders, asOf),
       distinctActors: notCollected(),
       largestClusterSharePct: notCollected(),
     },
