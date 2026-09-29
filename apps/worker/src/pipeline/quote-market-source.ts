@@ -1,3 +1,4 @@
+import { jupiterRequestGate } from "./jupiter-request-gate";
 import type { Clock } from "@sae/core";
 import type { ProviderEnv } from "@sae/config";
 import type { MarketFields } from "@sae/pipeline";
@@ -225,7 +226,8 @@ export function buildQuoteMarketDeps(input: QuoteSourceInput): QuoteMarketDeps |
   if (baseUrl === undefined || rpcUrl === undefined) return null;
 
   const seam = input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl };
-  const quotes = new JupiterQuoteAdapter({ clock: input.clock, baseUrl, ...seam });
+  const quotes = new JupiterQuoteAdapter({ clock: input.clock, baseUrl, ...seam,
+    ...(input.fetchImpl === undefined ? { requestGate: jupiterRequestGate(baseUrl) } : {}) });
   const blockTime = new SolanaBlockTimeAdapter({ clock: input.clock, rpcUrl, ...seam });
 
   const decimalsOf = buildDecimalsReader(input);

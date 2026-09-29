@@ -97,6 +97,7 @@ export interface QuoteFetchDeps {
   readonly contract?: ResponseContract<JupiterQuoteResponse>;
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
+  readonly requestGate?: { acquire(): Promise<void>; rateLimited(): void };
 }
 
 export interface QuoteRequestInput {
@@ -146,6 +147,7 @@ export class JupiterQuoteAdapter {
       };
     }
 
+    await this.#deps.requestGate?.acquire();
     const startedAt = this.#deps.clock.now().getTime();
     const elapsed = (): number => Math.max(0, this.#deps.clock.now().getTime() - startedAt);
 
@@ -170,6 +172,7 @@ export class JupiterQuoteAdapter {
       };
     }
 
+    if (response.status === 429) this.#deps.requestGate?.rateLimited();
     if (!response.ok) {
       return {
         kind: "FAILED",

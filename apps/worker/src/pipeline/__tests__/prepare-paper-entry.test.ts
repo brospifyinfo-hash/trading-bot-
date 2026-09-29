@@ -84,3 +84,11 @@ it("preserves rate-limit cause before any exit requests", async () => {
   input.quotes.quote = async () => missing("PROVIDER_RATE_LIMITED", at, null);
   expect(await preparePaperEntry(input)).toEqual({ kind: "BLOCKED", reason: "BUY_QUOTE_PROVIDER_RATE_LIMITED" });
 });
+
+it("preserves a sell rate-limit cause so the sniper can retry", async () => {
+  const { input } = setup();
+  const original = input.quotes.quote;
+  input.quotes.quote = async (plan) => plan.side === "sell"
+    ? missing("PROVIDER_RATE_LIMITED", at, null) : original(plan);
+  expect(await preparePaperEntry(input)).toEqual({ kind: "BLOCKED", reason: "NO_EXECUTABLE_EXIT_LADDER_QUOTE_PROVIDER_RATE_LIMITED" });
+});

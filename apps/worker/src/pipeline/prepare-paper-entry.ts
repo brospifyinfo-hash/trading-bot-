@@ -61,29 +61,33 @@ export async function preparePaperEntry(input: {
     assigned += raw; return raw;
   });
   portions.push(quote.value.outAmount - assigned);
+  let sellFailure = "UNKNOWN";
   const sell = async (amount: bigint) => {
     const reference = money(mulDiv(purchase.notional.minor, amount, quote.value.outAmount, "ceil"), purchase.notional.currency);
     const q = await input.quotes.quote({ ...plan, side: "sell", inputMint: plan.outputMint, outputMint: plan.inputMint,
       inAmount: amount, notional: reference, plannedAt: clock.now() });
-    if (!valid(q)) return null;
+    if (!valid(q)) {
+      sellFailure = !isPresent(q) ? `QUOTE_${q.reason}` : "QUOTE_IMPACT_OR_AGE";
+      return null;
+    }
     oldest = Math.min(oldest, q.observedAt.getTime());
     const valued = await valuation.valueFill({ amountRaw: q.value.outAmount, mint: input.inputMint,
       currency: reference.currency, at: clock.now() });
-    if (valued === null) return null;
+    if (valued === null) { sellFailure = "NO_EXIT_VALUATION"; return null; }
     // Higher current proceeds increase proportional fees; never assume future target prices.
     return { fee: cost(valued.proceeds.minor > reference.minor ? valued.proceeds : reference, q), proceeds: valued.proceeds.minor };
   };
   for (const amount of portions) {
     if (amount === 0n) continue;
     const fee = await sell(amount);
-    if (fee === null) return block("NO_EXECUTABLE_EXIT_LADDER");
+    if (fee === null) return block(`NO_EXECUTABLE_EXIT_LADDER_${sellFailure}`);
     ladderCosts += fee.fee;
     ladderProceeds += fee.proceeds;
   }
   const fullExit = await sell(quote.value.outAmount);
-  if (fullExit === null) return block("NO_EXECUTABLE_FULL_EXIT");
+  if (fullExit === null) return block(`NO_EXECUTABLE_FULL_EXIT_${sellFailure}`);
   const capacityRaw = mulDiv(quote.value.outAmount, BigInt(Math.ceil(parameters.risk.minExitCapacityRatio * 10000)), 10000n, "ceil");
-  if (await sell(capacityRaw) === null) return block("INSUFFICIENT_EXIT_CAPACITY");
+  if (await sell(capacityRaw) === null) return block(`INSUFFICIENT_EXIT_CAPACITY_${sellFailure}`);
   const shortfall = (proceeds: bigint) => purchase.notional.minor > proceeds ? purchase.notional.minor - proceeds : 0n;
   const ladderScenario = ladderCosts + shortfall(ladderProceeds);
   const fullScenario = fullExit.fee + shortfall(fullExit.proceeds);

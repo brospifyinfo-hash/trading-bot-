@@ -38,3 +38,5 @@ PAPER_SNIPER job results supply per-token outcomes, score and receive-to-result 
 No database migration is required. PAPER_STRATEGY=memecoin-risk-managed-v1 enables
 this with the existing deployment. PAPER_SNIPER_ENABLED=false stops the feed and
 sniper consumer (Standard continues). The dashboard reports stale heartbeat explicitly.
+
+Both accounts also evaluate the ordinary discovered-market rotation. Launch events provide an additional offensive fast path. Market probes and paper execution share a per-origin request gate in the worker (2 seconds between starts, 8-second cooldown after HTTP 429). Provider-health in another process is outside this local budget. Sell failures retain their quote/valuation cause so transient quote failures can be retried.

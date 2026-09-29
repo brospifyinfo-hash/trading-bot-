@@ -82,7 +82,7 @@ it("persists distinct strategy decisions for an identical feature observation", 
 }, 30_000);
 
 
-it("keeps Standard in rotation and routes Offensiv through launch events", async () => {
+it("evaluates both accounts in rotation in addition to the offensive launch feed", async () => {
   const { buildHandlers } = await import("../../handlers");
   const { createLogger } = await import("@sae/observability");
   const { db, close } = await createTestDatabase();
@@ -97,7 +97,7 @@ it("keeps Standard in rotation and routes Offensiv through launch events", async
     const result = await handler.handle({} as never) as { processed: number; accounts: { label: string; entryThreshold: number; outcomes: Record<string, number> }[] };
     expect(result.processed).toBe(1);
     expect(result.accounts.map((a) => [a.label, a.entryThreshold])).toEqual([["Standard", 75], ["Offensiv", 50]]);
-    expect(result.accounts.map((a) => Object.values(a.outcomes).reduce((sum, n) => sum + n, 0))).toEqual([1, 0]);
+    expect(result.accounts.map((a) => Object.values(a.outcomes).reduce((sum, n) => sum + n, 0))).toEqual([1, 1]);
     expect(await db.select().from(schema.paperPositions)).toHaveLength(0); // Missing live data never becomes a forced trade.
   } finally { await close(); }
 }, 30_000);

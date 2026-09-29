@@ -1,3 +1,4 @@
+import { jupiterRequestGate } from "./jupiter-request-gate";
 import {
   missing,
   observed,
@@ -67,7 +68,7 @@ export class JupiterQuoteSource implements QuoteSource {
   }
 
   async quote(plan: ExecutionPlan): Promise<Maybe<{ outAmount: bigint; priceImpactBps: Bps }>> {
-    const now = this.#clock.now();
+
 
     const outcome = await this.#adapter.fetchQuote({
       inputMint: plan.inputMint,
@@ -78,6 +79,7 @@ export class JupiterQuoteSource implements QuoteSource {
       slippageBps: plan.maxSlippageBps,
     });
 
+    const now = this.#clock.now();
     if (outcome.kind === "FAILED") {
       return missing(reasonOf(outcome.failure), now, ROUTER_PROVIDER);
     }
@@ -136,7 +138,7 @@ function reasonOf(failure: FailureClass): MissingReason {
 export function buildQuoteSource(env: ProviderEnv, clock: Clock = systemClock): QuoteSource {
   const baseUrl = env.JUPITER_BASE_URL;
   if (baseUrl === undefined) return new UnavailableQuoteSource();
-  return new JupiterQuoteSource({ adapter: new JupiterQuoteAdapter({ clock, baseUrl }), clock });
+  return new JupiterQuoteSource({ adapter: new JupiterQuoteAdapter({ clock, baseUrl, requestGate: jupiterRequestGate(baseUrl) }), clock });
 }
 
 /** `null` statt einer Ausnahme oder einer stillen 0. */

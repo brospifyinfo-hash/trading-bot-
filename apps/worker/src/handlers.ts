@@ -428,8 +428,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       process: async (token) => {
       for (const [index, strategy] of strategies.entries()) {
-      // The launch account is driven only by fresh feed events, not the mature-token rotation.
-      if (candidate && strategy.label === "Offensiv") continue;
+      // Offensiv also evaluates discovered markets; launch events are an additional fast path.
       const result = await runDecision({
         db: this.deps.db,
         logger: this.deps.logger,
