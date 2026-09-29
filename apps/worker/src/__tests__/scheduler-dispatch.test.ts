@@ -167,7 +167,8 @@ describe("Was die Auftragsarten tatsaechlich tun", () => {
    */
   it("laesst keinen verdrahteten Handler ohne Takt, der ihn ruft", () => {
     const wiring = describeWiring(registry);
-    const getaktet = new Set<string>(Object.values(CADENCE_JOB));
+    // PAPER_SNIPER is produced by the persistent WebSocket feed (covered by feed tests).
+    const getaktet = new Set<string>([...Object.values(CADENCE_JOB), "PAPER_SNIPER"]);
 
     const verwaist = Object.entries(wiring)
       .filter(([kind, w]) => w === "DEDICATED" && !getaktet.has(kind))

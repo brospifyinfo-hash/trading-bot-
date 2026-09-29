@@ -14,6 +14,7 @@ export const takeProfitLevelSchema = z.object({
 });
 
 export const entryGatesSchema = z.object({
+  paperLaunchMode: z.boolean().optional(),
   minFinalScore: scoreSchema,
   minSecurityScore: scoreSchema,
   minLiquidityUsd: z.number().positive(),

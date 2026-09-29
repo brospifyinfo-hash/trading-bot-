@@ -38,11 +38,14 @@ export const MEMECOIN_PAPER_CANDIDATE = {
 export const MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE = {
   ...MEMECOIN_PAPER_CANDIDATE,
   strategyId: "memecoin-active-paper",
-  version: "1.1.0",
+  version: "1.2.0",
   parameters: parseStrategyParameters({
     ...MEMECOIN_PAPER_CANDIDATE.parameters,
     entryGates: {
       ...MEMECOIN_PAPER_CANDIDATE.parameters.entryGates,
+      paperLaunchMode: true,
+      minTokenAgeSeconds: 0,
+      minDataCompleteness: 1,
       minFinalScore: 50,
       minMomentumScore: 50,
       maxMarketCapUsd: 20_000_000,

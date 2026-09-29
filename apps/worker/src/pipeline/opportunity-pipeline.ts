@@ -31,7 +31,7 @@ import {
   type DataQualityCheck,
   type Readiness,
 } from "@sae/pipeline";
-import { collectMissing, computeScores, type FeatureVector, type ScoringResult } from "@sae/scoring";
+import { collectMissing, computeScores, computePaperLaunchScores, type FeatureVector, type ScoringResult } from "@sae/scoring";
 import type { Executor, ExecutionOutcome, ExecutionPlan } from "@sae/trading";
 import type { ProviderFleetStatus } from "@sae/providers";
 
@@ -218,7 +218,21 @@ export async function runOpportunityPipeline(
   }
 
   /* ---------------------------------------------- 3. Scoring */
-  const scoring: ScoringResult = computeScores(features);
+  const launch = deps.parameters.entryGates.paperLaunchMode === true;
+  if (launch && deps.decisionContext.executionMode !== "paper") {
+    return { kind: "BLOCKED", reason: "PAPER_ONLY_MODEL", detail: "Launch model is paper-only" };
+  }
+  if (launch) {
+    const buys = features.momentum.buys5m, sells = features.momentum.sells5m;
+    if (buys.kind !== "OBSERVED" || sells.kind !== "OBSERVED" || buys.value < 3 || buys.value <= sells.value) {
+      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: "Needs at least 3 buy transactions and more buys than sells" };
+    }
+  }
+  const scoring: ScoringResult = launch ? computePaperLaunchScores(features) : computeScores(features);
+  if (launch) {
+    const age = deps.clock.now().getTime() - features.asOf.getTime();
+    if (age < 0 || age > 60_000) return { kind: "BLOCKED", reason: "STALE_LAUNCH_DATA", detail: "Launch market observation older than 60s" };
+  }
   const diagnostics: InputDiagnostics = { finalScore: scoring.finalScore, completeness: scoring.dataCompleteness,
     requiredCompleteness: deps.parameters.entryGates.minDataCompleteness,
     weightCoverage: scoring.weightCoverage, missing: scoring.missingFields,

@@ -145,7 +145,7 @@ export async function enrichSecurity(
  * und wer es als Wahrheitswert liest, haelt ausgerechnet den unbedenklichsten
  * Token fuer gefaehrlich — oder umgekehrt (DECISIONS §113).
  */
-function toFinding(
+export function toFinding(
   tokenId: string,
   outcome: Extract<RugcheckOutcome, { kind: "OK" }>,
   checkVersion: string,

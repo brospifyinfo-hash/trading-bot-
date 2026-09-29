@@ -5,3 +5,5 @@ export * from "./features";
 export * from "./sub-score";
 export * from "./v1/sub-scores";
 export * from "./v1/engine";
+
+export * from "./paper-launch";

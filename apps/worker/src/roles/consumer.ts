@@ -1,3 +1,5 @@
+import { startLaunchFeed } from "../sniper/feed";
+import { usesPaperCandidate } from "../pipeline/paper-candidate-version";
 import { hostname } from "node:os";
 import { systemClock } from "@sae/core";
 import { createDatabase, JobQueueRepository, ProviderHealthStore } from "@sae/db";
@@ -46,6 +48,8 @@ const LEASE_MS = 60_000;
 const STATUS_REFRESH_MS = 60_000;
 
 let consumer: JobConsumer | null = null;
+let sniperConsumer: JobConsumer | null = null;
+let stopLaunchFeed: (() => Promise<void>) | null = null;
 let statusTimer: NodeJS.Timeout | null = null;
 let closeDb: (() => Promise<void>) | null = null;
 
@@ -104,6 +108,7 @@ export const consumerRole: RoleHandler = {
     });
 
     const loop = new JobConsumer({
+      kinds: Object.keys(handlers).filter((kind) => kind !== "PAPER_SNIPER"),
       workerId: `${hostname()}:${String(process.pid)}`,
       queue,
       handlers,
@@ -157,6 +162,13 @@ export const consumerRole: RoleHandler = {
     }, STATUS_REFRESH_MS);
     statusTimer.unref();
 
+    if (usesPaperCandidate(process.env) && process.env.PAPER_SNIPER_ENABLED !== "false") {
+      sniperConsumer = new JobConsumer({ workerId: `${hostname()}:${process.pid}:sniper`,
+        queue, handlers, logger: ctx.logger, now: () => systemClock.now(),
+        leaseMs: 180_000, batchSize: 1, kinds: ["PAPER_SNIPER"] });
+      sniperConsumer.start(5000);
+      stopLaunchFeed = startLaunchFeed(db, ctx.logger);
+    }
     loop.start(POLL_MS);
     consumer = loop;
     closeDb = null;
@@ -164,6 +176,8 @@ export const consumerRole: RoleHandler = {
   async stop(): Promise<void> {
     if (statusTimer !== null) clearInterval(statusTimer);
     statusTimer = null;
+    await stopLaunchFeed?.(); stopLaunchFeed = null;
+    await sniperConsumer?.stop(); sniperConsumer = null;
     await consumer?.stop();
     consumer = null;
     await closeDb?.();

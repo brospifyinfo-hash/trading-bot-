@@ -1,3 +1,4 @@
+import { buildSniperHandler } from "./sniper/handler";
 import { ensurePaperCandidateVersion, usesPaperCandidate, PAPER_CANDIDATE_SELECTOR } from "./pipeline/paper-candidate-version";
 import { systemClock, tokenId as asTokenId } from "@sae/core";
 import {
@@ -427,6 +428,8 @@ class EvaluateOpportunityHandler implements JobHandler {
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       process: async (token) => {
       for (const [index, strategy] of strategies.entries()) {
+      // The launch account is driven only by fresh feed events, not the mature-token rotation.
+      if (candidate && strategy.label === "Offensiv") continue;
       const result = await runDecision({
         db: this.deps.db,
         logger: this.deps.logger,
@@ -682,6 +685,7 @@ export function buildHandlers(deps: HandlerDeps): HandlerRegistry {
     STRATEGY_HEALTH: market("Strategie-Gesundheit"),
     RESEARCH_BATCH: market("Forschungslauf"),
     ENRICH_SECURITY: new EnrichSecurityHandler(deps),
+    PAPER_SNIPER: buildSniperHandler(deps),
   };
 }
 
