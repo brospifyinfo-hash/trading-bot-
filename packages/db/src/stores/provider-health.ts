@@ -64,22 +64,14 @@ export class ProviderHealthStore {
    * Zeitstempeln nicht eindeutig.
    */
   async latest(): Promise<readonly (typeof providerStatusSamples.$inferSelect)[]> {
-    const rows = await this.db
-      .select()
+    return this.db
+      .selectDistinctOn([providerStatusSamples.providerId])
       .from(providerStatusSamples)
       .orderBy(
         providerStatusSamples.providerId,
         desc(providerStatusSamples.observedAt),
+        desc(providerStatusSamples.id),
       );
-
-    const seen = new Set<string>();
-    const out: (typeof providerStatusSamples.$inferSelect)[] = [];
-    for (const row of rows) {
-      if (seen.has(row.providerId)) continue;
-      seen.add(row.providerId);
-      out.push(row);
-    }
-    return out;
   }
 
   /**
