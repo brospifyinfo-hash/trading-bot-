@@ -206,7 +206,7 @@ export function buildMarketAdapters(
  * und die Zahlen im Log wuerden lautlos doppelt zaehlen.
  */
 function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
-  const begleiter = dexScreenerChainAdapter({ env: deps.env, clock: deps.clock });
+  const begleiter = dexScreenerChainAdapter({ env: deps.env, clock: deps.clock }, true);
 
   const quoteDeps = buildQuoteMarketDeps({
     env: deps.env,
@@ -235,7 +235,7 @@ function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
   return quoteDeps === null ? null : quoteMarketAdapter(quoteDeps);
 }
 
-function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
+export function dexScreenerChainAdapter(deps: MarketAdapterDeps, collectYoungPools = false): MarketDataAdapter {
   const inner = new DexScreenerMarketAdapter({
     clock: deps.clock,
     ...(deps.env.DEXSCREENER_BASE_URL !== undefined
@@ -288,6 +288,8 @@ function dexScreenerChainAdapter(deps: MarketAdapterDeps): MarketDataAdapter {
         now: deps.clock.now(),
         settings: {
           ...DEFAULT_MARKET_SELECTION,
+          // Collection must not discard launch data before the strategy can evaluate it.
+          ...(collectYoungPools ? { minPoolAgeSeconds: 0 } : {}),
           allowedQuoteMints: USD_ANCHOR_QUOTE_MINTS as readonly Mint[],
           // Historienpfad: DexScreener liefert keinen Beobachtungszeitpunkt.
           // Der Snapshot traegt trotzdem unseren eigenen PIT-Stempel, und

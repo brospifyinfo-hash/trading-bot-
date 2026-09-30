@@ -2,7 +2,7 @@
 
 The existing Standard account stays on the historical momentum strategy (score 75).
 The Offensiv account keeps its strategy ID and ledger, now using version 1.2.0 and
-paper-launch-1.0.0 scoring (entry score 50). It is driven only by fresh launch events.
+paper-launch-1.0.0 scoring (entry score 50). It evaluates both fresh launch events and the discovered-market rotation.
 
 The consumer opens one WebSocket to `wss://pumpportal.fun/api/data`, subscribing
 only to `subscribeNewToken` and `subscribeMigration`. These feeds are documented
@@ -40,3 +40,5 @@ this with the existing deployment. PAPER_SNIPER_ENABLED=false stops the feed and
 sniper consumer (Standard continues). The dashboard reports stale heartbeat explicitly.
 
 Both accounts also evaluate the ordinary discovered-market rotation. Launch events provide an additional offensive fast path. Market probes and paper execution share a per-origin request gate in the worker (2 seconds between starts, 8-second cooldown after HTTP 429). Provider-health in another process is outside this local budget. Sell failures retain their quote/valuation cause so transient quote failures can be retried.
+
+The Jupiter companion collector accepts known nonnegative pool ages, including pools younger than 15 minutes. Entry age/risk gates still belong to each strategy; the standalone DexScreener fallback retains its default selection rules. Previously the companion discarded launch data until 15 minutes, beyond the 10-minute event expiry.

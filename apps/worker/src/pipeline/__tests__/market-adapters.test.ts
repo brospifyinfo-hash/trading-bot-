@@ -3,6 +3,7 @@ import type { Clock } from "@sae/core";
 
 import {
   buildMarketAdapters,
+  dexScreenerChainAdapter,
   createRejectionTally,
   USD_ANCHOR_QUOTE_MINTS,
 } from "../market-adapters";
@@ -389,4 +390,22 @@ describe("Additional token-pool market data", () => {
       expect(urls).toHaveLength(1);
     });
   });
+});
+
+
+it("collects young pool activity for Jupiter without weakening the standalone selector", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify([pair({
+    pairCreatedAt: T0.getTime() - 30000, marketCap: 500000,
+    txns: { m5: { buys: 20, sells: 5 }, h24: { buys: 20, sells: 5 } },
+    volume: { h24: 1000, m5: 1000 },
+  })]))) as typeof fetch;
+  try {
+    const deps = { env: { DEXSCREENER_BASE_URL: "https://example.invalid" }, clock: fixedClock };
+    expect(await dexScreenerChainAdapter(deps).fetchMarket(MEME)).toBeNull();
+    const collected = await dexScreenerChainAdapter(deps, true).fetchMarket(MEME);
+    expect(collected?.value.buys5m).toBe(20);
+    expect(collected?.value.sells5m).toBe(5);
+    expect(collected?.observedAt).toBeNull(); // Do not invent a provider timestamp.
+  } finally { globalThis.fetch = original; }
 });
