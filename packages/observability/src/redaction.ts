@@ -76,6 +76,18 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // Router, Liquiditaet/Marktkapitalisierung/Volumen vom Begleitabruf, und
   // dessen Ausgang stand nirgends.
   "begleitdaten",
+  // WELCHES Datentor zu war. `BLOCKED_DATA_QUALITY_TOO_LOW=9` deckt sieben
+  // Urteile ab; ohne diese Auszaehlung ist die Zahl nicht handlungsfaehig.
+  "datenTor",
+  // Die Fehlerklasse eines gescheiterten Auftrags — eine GESCHLOSSENE
+  // Aufzaehlung (`FailureClass`: BLOCKED, UNAVAILABLE, RATE_LIMITED,
+  // BAD_REQUEST, UNKNOWN), kein Freitext. Sie stand nur nicht auf der Liste,
+  // und im Betrieb hiess es deshalb `failure: [redacted]` an genau der
+  // Zeile, die sagt, dass ein Auftrag gescheitert ist. Die Fehler-MELDUNG
+  // (`message`) bleibt weiterhin draussen: sie traegt bei Datenbankfehlern
+  // die Verbindungszeichenfolge. Wer sie braucht, liest sie im Dashboard,
+  // wo sie aus der Queue kommt und nicht durch die Logs reist.
+  "failure",
 ]);
 
 /**

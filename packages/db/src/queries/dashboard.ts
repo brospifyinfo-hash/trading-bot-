@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 
 import { asDate } from "../coerce";
 import type { Database } from "../client";
@@ -528,6 +528,28 @@ export async function loadErrors(db: Database, limit = 20): Promise<readonly Err
     .orderBy(desc(jobQueue.finishedAt))
     .limit(limit);
 
+  // Auftraege, die SCHEITERN, aber noch nicht aufgegeben haben.
+  //
+  // Die Luecke, die genau den laufenden Ausfall unsichtbar gemacht hat: hier
+  // und im Dead-Letter-Feld stand nur `state = "DEAD"`. Ein Auftrag, der jede
+  // Minute scheitert und wiederholt wird, ist aber kein Dead Letter — er ist
+  // das AKUTE Problem, und sein Fehler stand nirgends: im Log ist
+  // `message` bewusst geschwaerzt, und das Dashboard sah nur die Toten.
+  // Folge: die Entscheidungen blieben stehen, und beide Anzeigen schwiegen.
+  const failing = await db
+    .select({
+      kind: jobQueue.kind,
+      at: jobQueue.finishedAt,
+      enqueuedAt: jobQueue.enqueuedAt,
+      attempts: jobQueue.attempts,
+      detail: jobQueue.lastError,
+      failureClass: jobQueue.lastFailureClass,
+    })
+    .from(jobQueue)
+    .where(and(isNotNull(jobQueue.lastError), ne(jobQueue.state, "DEAD"), ne(jobQueue.state, "DONE")))
+    .orderBy(desc(jobQueue.enqueuedAt))
+    .limit(limit);
+
   const events = await db
     .select({
       kind: systemEvents.kind,
@@ -547,6 +569,14 @@ export async function loadErrors(db: Database, limit = 20): Promise<readonly Err
         at: d.at!,
         detail: `${d.failureClass ?? "UNKNOWN"}: ${d.detail ?? "ohne Begruendung"}`,
       })),
+    ...failing.map((f) => ({
+      kind: `JOB:${f.kind}`,
+      // Nicht `critical`: der Auftrag versucht es noch. Aber auch nicht
+      // `info` — er kommt gerade nicht durch.
+      severity: "warning",
+      at: f.at ?? f.enqueuedAt,
+      detail: `wird wiederholt (Versuch ${String(f.attempts)}) — ${f.failureClass ?? "UNKNOWN"}: ${f.detail ?? "ohne Begruendung"}`,
+    })),
     ...events.map((e) => ({
       kind: e.kind,
       // system_events fuehrt keine Schwere; sie hier zu erfinden waere eine

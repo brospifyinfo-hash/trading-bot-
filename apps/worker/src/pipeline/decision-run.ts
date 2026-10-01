@@ -177,6 +177,12 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
   readonly finalScore: number | null;
   /** Namen fehlender Pflichtfelder aus geschlossener Aufzaehlung. Sonst leer. */
   readonly missing: readonly string[];
+  /**
+   * Bei `BLOCKED_DATA_QUALITY_TOO_LOW`: welches Datentor zu war.
+   *
+   * Aus `EntryBlockCode`, also aus eigenem Code und nicht aus Anbietertext.
+   */
+  readonly code?: string;
   readonly diagnostics?: import("./opportunity-pipeline").InputDiagnostics;
 }> {
   const candidate = usesPaperCandidate(deps.env);
@@ -278,6 +284,10 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     // was man dagegen tun kann: WELCHES Feld fehlte (§126).
     missing: [...new Set([...(result.kind === "BLOCKED" ? (result.missing ?? []) : []),
       ...(result.diagnostics?.missing.filter((m) => !m.field.startsWith("pending.")).map((m) => m.field.replaceAll(".", "_")) ?? [])])],
+    // Welches Datentor zu war. `BLOCKED_DATA_QUALITY_TOO_LOW` deckt sieben
+    // Urteile ab; welches davon zutraf, ist die einzige Angabe, aus der sich
+    // eine Gegenmassnahme ableiten laesst.
+    ...(result.kind === "BLOCKED" && result.code !== undefined ? { code: result.code } : {}),
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
   };
 }

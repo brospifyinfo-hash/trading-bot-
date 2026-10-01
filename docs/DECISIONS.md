@@ -5630,3 +5630,84 @@ vorhanden (per `git stash` verifiziert). Behoben:
 Validierung: 157 Dateien / 1574 Tests bestanden, Lint und Typpruefung aller
 Projekte sauber. Keine Aenderung an der Handelslogik, keine Schwelle gesenkt,
 keine Live-Freigabe. Produktive Einstiege sind weiterhin nicht nachgewiesen.
+
+## §140 — Drei Anzeigen, die ueber denselben Ausfall schwiegen (2026-10-01)
+
+Erste Messung mit dem Diagnosekanal aus §139. Sie hat die Lage umgedreht.
+
+**Die Begleitdaten sind nicht mehr das Problem.** `begleitdaten: OK=6` und in
+`fehlendeFelder` steht kein `liquidityUsd`, `marketCapUsd` oder `volume24hUsd`
+mehr. Der Verdacht aus §139 war der richtige Ort, aber die falsche Ursache —
+und das war ohne den Kanal nicht unterscheidbar.
+
+Stattdessen stand da:
+
+```
+reasons: BLOCKED_DATA_QUALITY_TOO_LOW=9 BLOCKED_LAUNCH_BUY_PRESSURE=3 NO_SOURCE=3
+fehlendeFelder: execution_exitCapacityRatio=9 execution_expectedCostBps=9
+                execution_priceImpactBps=9 …
+```
+
+Alle drei Ausfuehrungsfelder fehlen, alle Marktfelder sind da. Diese Kombination
+kann nur von DexScreener stammen: eine Marktdatenquelle rechnet keine Route und
+kann ueber Preiseinfluss und Ausstiegsfaehigkeit per Bauart nichts sagen. Die
+Kette ist also beim Entscheiden auf DexScreener zurueckgefallen, waehrend der
+Marktdatenlauf mit `jupiter-quote` arbeitet (`exitProbe: OK=5`).
+
+### Warum das im Log eine Wand war
+
+Hinter `DATA_QUALITY_TOO_LOW` stehen **sieben** verschiedene Urteile. Vier davon
+treten regelmaessig auf und verlangen jeweils etwas anderes:
+
+| Urteil | Bedeutung | Gegenmassnahme |
+|---|---|---|
+| `FALLBACK_TIER` | Quelle, die per Bauart keinen Einstieg traegt | Prioritaet/Verfuegbarkeit der Primaerquelle |
+| `AGE_UNKNOWN` | Quelle nennt keinen Zeitstempel | andere Quelle |
+| `TOO_OLD` | Daten zu alt | Takt |
+| `BELOW_THRESHOLD` | gemessene Marktaussage, **kein** Datenproblem | nichts |
+
+§126 hatte die FELDNAMEN durchgereicht, aber nur fuer `INCOMPLETE` — also fuer
+den einen Fall, der hier gerade nicht zutrifft. Das Urteil selbst wurde
+weggeworfen, obwohl `snapshotSupportsEntry` es als geschlossene Aufzaehlung
+(`EntryGateCode`) bereits zurueckgab; es war nur nicht Teil des Rueckgabetyps.
+Jetzt traegt `EntryDataVerdict` einen `code` (`EntryBlockCode`), er wandert bis
+in die Auszaehlung, und im Log steht `datenTor: FALLBACK_TIER=9`.
+
+### Die zweite Anzeige: `failure: [redacted]`
+
+Gleichzeitig scheiterte `EVALUATE_OPPORTUNITY` wiederholt und `PAPER_SNIPER`
+ging ins Dead Letter — seit 10:50:27 kam keine Entscheidungszeile mehr. Der
+Grund stand im Log als `failure: [redacted]`.
+
+`FailureClass` ist eine geschlossene Aufzaehlung (`BLOCKED`, `UNAVAILABLE`,
+`RATE_LIMITED`, `BAD_REQUEST`, `UNKNOWN`) ohne jeden Geheimnisgehalt. Sie stand
+nur nicht auf der Allowlist, und die schweigt im Zweifel — richtig als Regel,
+hier mit der Folge, dass die Zeile „ein Auftrag ist gescheitert" nicht sagen
+durfte, womit. Jetzt erlaubt. Die Fehler-MELDUNG bleibt draussen: sie traegt bei
+Datenbankfehlern die Verbindungszeichenfolge.
+
+### Die dritte Anzeige: das Dashboard sah nur die Toten
+
+`loadErrors` und `loadDeadLetters` lasen beide `state = "DEAD"`. Ein Auftrag, der
+jede Minute scheitert und wiederholt wird, ist aber kein Dead Letter — er ist das
+akute Problem, und seine Meldung steht in `job_queue.last_error`. Sie war damit
+nirgends lesbar: im Log geschwaerzt, im Dashboard nicht abgefragt. Die
+Fehlerliste fuehrt jetzt auch scheiternde Auftraege, als `warning` und mit
+Versuchszaehler.
+
+Drei Anzeigen, ein Ausfall, und jede einzelne hatte einen eigenen, fuer sich
+genommen vernuenftigen Grund zu schweigen. Das ist das Muster, nicht der
+Einzelfall.
+
+Ausdruecklich **keine** Reparatur der Ursache: warum die Kette beim Entscheiden
+auf DexScreener zurueckfaellt, ist damit messbar, aber noch nicht gemessen. Die
+naheliegende Vermutung — das Jupiter-Anfragebudget ist erschoepft, weil drei
+Profile je Token entscheiden und jede Entscheidung zwei Router-Anfragen kostet —
+bleibt eine Vermutung, bis `datenTor` und die Fehlerliste sie belegen oder
+widerlegen.
+
+Validierung: 157 Dateien / 1583 Tests bestanden, Lint und Typpruefung sauber.
+Sechs neue Faelle fuer die Tor-Kennung, einer fuer die Abgrenzung gegen fehlende
+Bereitschaft, einer fuer den scheiternden Auftrag in der Fehlerliste, einer fuer
+die Fehlerklasse im Log. Keine Schwelle geaendert, keine Handelslogik
+angefasst, keine Live-Freigabe.

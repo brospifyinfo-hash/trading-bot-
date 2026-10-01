@@ -417,7 +417,13 @@ class EvaluateOpportunityHandler implements JobHandler {
     const outcomes: Record<string, number> = {};
     const scores: number[] = [];
     const fehlendeFelder: Record<string, number> = {};
-    const coinDiagnostics: { mint: string; account: string; outcome: string; detail: string; diagnostics?: import("./pipeline/opportunity-pipeline").InputDiagnostics }[] = [];
+    // WELCHES Datentor zu war. `BLOCKED_DATA_QUALITY_TOO_LOW=9` deckt sieben
+    // verschiedene Urteile ab — Fallback-Quelle, unbekanntes Datenalter, zu
+    // alt, Pflichtfeld fehlt, unter der Schwelle, unplausibel, kein Snapshot.
+    // Vier davon treten im Betrieb regelmaessig auf, und jedes verlangt etwas
+    // anderes. Ohne diese Auszaehlung war die Zahl im Log eine Wand.
+    const datenTore: Record<string, number> = {};
+    const coinDiagnostics: { mint: string; account: string; outcome: string; detail: string; code?: string; diagnostics?: import("./pipeline/opportunity-pipeline").InputDiagnostics }[] = [];
 
     // Dieselbe Rotation wie beim Marktdaten-Lauf, mit eigenem Schluessel.
     // Ohne sie bewertet dieser Lauf jede Minute erneut dieselben fuenf Token.
@@ -456,6 +462,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       // `NO_ENTRY=5` sagte, dass nichts gekauft wurde, und verschwieg warum —
       // genau die Auskunft, die beim Pruefen gebraucht wird (§122).
       coinDiagnostics.push({ mint: token.mint, account: strategy.label, outcome: result.label, detail: result.detail,
+        ...(result.code === undefined ? {} : { code: result.code }),
         ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) });
       const account = accounts[index]!;
       const accountSeen = account.outcomes[result.label];
@@ -466,6 +473,10 @@ class EvaluateOpportunityHandler implements JobHandler {
       for (const feld of result.missing) {
         const bisher = fehlendeFelder[feld];
         fehlendeFelder[feld] = bisher === undefined ? 1 : bisher + 1;
+      }
+      if (result.code !== undefined) {
+        const bisher = datenTore[result.code];
+        datenTore[result.code] = bisher === undefined ? 1 : bisher + 1;
       }
       }
       },
@@ -493,6 +504,12 @@ class EvaluateOpportunityHandler implements JobHandler {
         ...(Object.keys(fehlendeFelder).length > 0
           ? { fehlendeFelder: tally(fehlendeFelder) }
           : {}),
+        // Welches Datentor. `FALLBACK_TIER` heisst „wir sind auf eine Quelle
+        // zurueckgefallen, die per Bauart keinen Einstieg tragen kann",
+        // `AGE_UNKNOWN` heisst „die Quelle nennt kein Datenalter",
+        // `BELOW_THRESHOLD` ist eine gemessene Marktaussage und gar kein
+        // Datenproblem. Drei Lagen, drei Gegenmassnahmen.
+        ...(Object.keys(datenTore).length > 0 ? { datenTor: tally(datenTore) } : {}),
         ...(bester === null
           ? {}
           : {
@@ -509,6 +526,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       processed: run.processed,
       outcomes,
       missingFields: fehlendeFelder,
+      dataGates: datenTore,
       coinDiagnostics,
       tracked: tokens.length,
       skipped: run.skipped,

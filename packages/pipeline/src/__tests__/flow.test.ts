@@ -238,6 +238,72 @@ describe("Verzweigung in die Stroeme", () => {
     expect(auto.detail).toContain("pipeline-nachweis");
   });
 
+  /**
+   * Die Luecke, die `BLOCKED_DATA_QUALITY_TOO_LOW=9` zur Wand gemacht hat.
+   *
+   * Hinter diesem einen Etikett stehen sieben verschiedene Urteile. Vier
+   * davon treten im Betrieb regelmaessig auf, und jedes verlangt etwas
+   * anderes: eine Fallback-Quelle heisst „wir sind auf eine Quelle
+   * zurueckgefallen, die per Bauart keinen Einstieg tragen kann", ein
+   * unbekanntes Datenalter heisst „die Quelle nennt keinen Zeitstempel",
+   * eine unterschrittene Schwelle ist eine gemessene MARKTAUSSAGE und gar
+   * kein Datenproblem.
+   *
+   * `missing` wurde fuer `INCOMPLETE` bereits durchgereicht (§126) — fuer die
+   * uebrigen sechs Urteile stand nichts da, und das sind die haeufigen.
+   */
+  it.each([
+    ["Fallback-Quelle", fallback, geprueft, "FALLBACK_TIER"],
+    ["kein Datenalter", { ...primary, freshnessSeconds: null }, geprueft, "AGE_UNKNOWN"],
+    ["zu alt", stale, geprueft, "TOO_OLD"],
+    ["keine Marktfelder", primary, { kind: "CHECK", market: null } as const, "NO_MARKET_FIELDS"],
+    [
+      "Pflichtfeld fehlt",
+      primary,
+      { kind: "CHECK", market: marketDataFieldsFrom({ priceUsd: 0.00042 }) } as const,
+      "INCOMPLETE",
+    ],
+    [
+      "unter der Schwelle",
+      primary,
+      {
+        kind: "CHECK",
+        market: marketDataFieldsFrom({
+          priceUsd: 0.00042,
+          liquidityUsd: 100,
+          marketCapUsd: 2_400_000,
+          volume24hUsd: 95_000,
+        }),
+      } as const,
+      "BELOW_THRESHOLD",
+    ],
+  ])("nennt bei %s das Tor, nicht nur den Sammelbegriff", (_name, provenance, dataQuality, code) => {
+    const plan = planBranches({
+      readiness: readiness(),
+      systemState: DEFAULT_SYSTEM_STATE,
+      provenance,
+      dataQuality,
+    });
+    const auto = plan.branches.find((b) => b.stream === "AUTO_PAPER")!;
+    expect(auto.open).toBe(false);
+    expect(auto.reason).toBe("DATA_QUALITY_TOO_LOW");
+    expect(auto.code).toBe(code);
+  });
+
+  it("nennt kein Datentor, wenn gar nicht die Daten der Grund waren", () => {
+    // Fehlende Bereitschaft ist kein Datenurteil. Ein `code` daneben waere
+    // eine Angabe zu einer Pruefung, die nicht entschieden hat.
+    const plan = planBranches({
+      readiness: readiness({ snapshotCount: 0 }),
+      systemState: DEFAULT_SYSTEM_STATE,
+      provenance: primary,
+      dataQuality: geprueft,
+    });
+    const auto = plan.branches.find((b) => b.stream === "AUTO_PAPER")!;
+    expect(auto.reason).toBe("INSUFFICIENT_HISTORY");
+    expect(auto.code).toBeUndefined();
+  });
+
   it("erzeugt ohne Marktdaten gar nichts", () => {
     const plan = planBranches({
       readiness: readiness({ fleet: blockedFleet }),

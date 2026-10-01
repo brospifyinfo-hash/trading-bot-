@@ -39,6 +39,28 @@ describe("redact", () => {
     expect(JSON.stringify(redact(sneaky))).not.toContain("119");
   });
 
+  /**
+   * Die Zeile, die sagt, dass ein Auftrag gescheitert ist, muss sagen, WOMIT.
+   *
+   * Im Betrieb stand dort `failure: [redacted]` — die Fehlerklasse ist eine
+   * geschlossene Aufzaehlung ohne jeden Geheimnisgehalt und stand nur nicht
+   * auf der Liste. Die Allowlist schweigt im Zweifel, und das ist richtig;
+   * hier war die Folge, dass ein laufender Ausfall unerklaert blieb.
+   */
+  it("laesst die Fehlerklasse durch und die Fehlermeldung nicht", () => {
+    const out = redact({
+      kind: "EVALUATE_OPPORTUNITY",
+      failure: "RATE_LIMITED",
+      // Eine Fehlermeldung kann bei Datenbankfehlern die Verbindungs-
+      // zeichenfolge tragen. Sie bleibt draussen, und das ist Absicht.
+      message: "connect ECONNREFUSED postgres://nutzer:geheim@host/db",
+    }) as Record<string, unknown>;
+    expect(out["failure"]).toBe("RATE_LIMITED");
+    expect(out["kind"]).toBe("EVALUATE_OPPORTUNITY");
+    expect(out["message"]).toBe(REDACTED);
+    expect(JSON.stringify(out)).not.toContain("geheim");
+  });
+
   it("greift auch in verschachtelten Objekten", () => {
     const nested = { err: { detail: { secretKey: FAKE_BASE58_SECRET } } };
     expect(JSON.stringify(redact(nested))).not.toContain(FAKE_BASE58_SECRET);

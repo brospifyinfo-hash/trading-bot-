@@ -122,6 +122,15 @@ export type PipelineOutcome = (
       readonly detail: string;
       /** Bei `DATA_QUALITY_TOO_LOW`: welche Pflichtfelder fehlten (§126). */
       readonly missing?: readonly string[];
+      /**
+       * Bei `DATA_QUALITY_TOO_LOW`: welches Tor zu war (`EntryBlockCode`).
+       *
+       * `reason` ist hier `DATA_QUALITY_TOO_LOW` fuer sieben verschiedene
+       * Urteile. Ohne dieses Feld bleibt die Auszaehlung im Log bei dem
+       * Sammelbegriff stehen, und `FALLBACK_TIER` sieht aus wie
+       * `BELOW_THRESHOLD`.
+       */
+      readonly code?: string;
     }
   /** Bewertet, aber kein Einstieg. Die Gelegenheit wird trotzdem festgehalten. */
   | {
@@ -332,6 +341,7 @@ export async function runOpportunityPipeline(
       reason: blocked?.reason ?? "NO_STREAM",
       detail: blocked?.detail ?? "Kein Strom geoeffnet.",
       ...(blocked?.missing === undefined ? {} : { missing: blocked.missing }),
+      ...(blocked?.code === undefined ? {} : { code: blocked.code }),
     };
   }
 

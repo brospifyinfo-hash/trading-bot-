@@ -162,6 +162,41 @@ describe("Queue mit Auftraegen", () => {
     expect(errors[0]?.detail).toContain("kaputt");
   });
 
+  /**
+   * Der Ausfall, den beide Anzeigen verschwiegen haben.
+   *
+   * Im Betrieb scheiterte `EVALUATE_OPPORTUNITY` jede Minute und wurde
+   * wiederholt — die Entscheidungen standen still. Im Log war die
+   * Fehlermeldung bewusst geschwaerzt (sie kann bei Datenbankfehlern die
+   * Verbindungszeichenfolge tragen), und das Dashboard las nur
+   * `state = "DEAD"`. Ein Auftrag in Wiederholung ist aber kein Dead Letter,
+   * sondern das AKUTE Problem.
+   *
+   * Beide Anzeigen schwiegen also ueber genau den Auftrag, der nicht lief.
+   */
+  it("zeigt einen Auftrag, der gerade scheitert — nicht erst wenn er tot ist", async () => {
+    await queue.enqueue({ kind: "EVALUATE_OPPORTUNITY", dedupeKey: "akut", at: T0, maxAttempts: 5 });
+    const [job] = await queue.claim({ workerId: "w1", limit: 1, now: at(1_000), leaseMs: 60_000 });
+    await queue.fail({
+      jobId: job!.id,
+      error: "Cannot read properties of undefined",
+      failureClass: "UNKNOWN",
+      // Wiederholbar: der Auftrag lebt noch, und genau darum ging es.
+      retryable: true,
+      retryAfterMs: 1_000,
+      at: at(2_000),
+    });
+
+    const errors = await loadErrors(db);
+    const akut = errors.find((e) => e.kind === "JOB:EVALUATE_OPPORTUNITY");
+    expect(akut).toBeDefined();
+    expect(akut?.detail).toContain("Cannot read properties of undefined");
+    expect(akut?.detail).toContain("wird wiederholt");
+    // Nicht als „kritisch" gefuehrt: der Auftrag versucht es noch. Aber eben
+    // auch nicht verschwiegen.
+    expect(akut?.severity).toBe("warning");
+  });
+
   it("zeigt die Queue auch im Dashboard-Gesamtbild", async () => {
     await queue.enqueue({ kind: "SAMPLE_PROVIDER_HEALTH", dedupeKey: "dash", at: T0 });
     const state = await loadDashboardState({ db, now: at(1_000) });

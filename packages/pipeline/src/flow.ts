@@ -1,9 +1,9 @@
 import type { SystemState, TradingStream } from "@sae/core";
 import type { ProviderFleetStatus } from "@sae/providers";
 
-import type { SnapshotProvenance } from "./ingestion";
+import type { EntryGateCode, SnapshotProvenance } from "./ingestion";
 import { snapshotSupportsEntry } from "./ingestion";
-import type { MarketDataField, MarketDataFields } from "./market-data-quality";
+import type { MarketDataField, MarketDataFields, QualityVerdict } from "./market-data-quality";
 import { assessMarketData, explainVerdict } from "./market-data-quality";
 
 /**
@@ -112,6 +112,8 @@ export interface StreamBranch {
   readonly detail: string;
   /** Bei `DATA_QUALITY_TOO_LOW`: welche Pflichtfelder fehlten. */
   readonly missing?: readonly MarketDataField[];
+  /** Bei `DATA_QUALITY_TOO_LOW`: welches Tor zu war. */
+  readonly code?: EntryBlockCode;
 }
 
 export interface BranchPlan {
@@ -136,9 +138,34 @@ export type DataQualityCheck =
   /** Nur fuer ausdruecklich gekennzeichnete Fixtures. Nie fuer Live-Daten. */
   | { readonly kind: "WAIVED_TEST_FIXTURE"; readonly label: string };
 
+/**
+ * WELCHES Tor zu war — als geschlossene Aufzaehlung, nicht als Satz.
+ *
+ * Dieselbe Lehre wie bei `missing` (§126), nur eine Ebene hoeher und erst
+ * halb gezogen: die FELDNAMEN wurden durchgereicht, das URTEIL nicht. Im
+ * Betrieb stand deshalb `BLOCKED_DATA_QUALITY_TOO_LOW=9` ohne jede weitere
+ * Angabe, sobald der Grund nicht `INCOMPLETE` war — und das sind die
+ * haeufigsten Faelle: `FALLBACK_TIER` (wir sind auf eine Quelle
+ * zurueckgefallen, die per Bauart keinen Einstieg tragen kann),
+ * `AGE_UNKNOWN` (DexScreener liefert keinen Zeitstempel), `TOO_OLD`,
+ * `BELOW_THRESHOLD`.
+ *
+ * Vier verschiedene Lagen mit vier verschiedenen Gegenmassnahmen, und im Log
+ * sahen alle vier identisch aus. `reason` sagt es als Fliesstext und landet im
+ * Dashboard; fuer eine Auszaehlung im Log braucht es ein Etikett aus
+ * eigenem Code.
+ */
+export type EntryBlockCode =
+  | Exclude<EntryGateCode, "OK">
+  | Exclude<QualityVerdict["kind"], "PASS">
+  | "NO_SNAPSHOT"
+  | "NO_MARKET_FIELDS";
+
 export interface EntryDataVerdict {
   readonly allowed: boolean;
   readonly reason: string;
+  /** Bei `allowed: false`: welches Tor. Siehe `EntryBlockCode`. */
+  readonly code?: EntryBlockCode;
   /**
    * Welche Pflichtfelder gefehlt haben — als Namen, nicht als Fliesstext.
    *
@@ -183,16 +210,23 @@ export function entryDataVerdict(
   }
 
   if (provenance === null) {
-    return { allowed: false, reason: "Kein Snapshot vorhanden." };
+    return { allowed: false, reason: "Kein Snapshot vorhanden.", code: "NO_SNAPSHOT" };
   }
 
   const origin = snapshotSupportsEntry(provenance);
-  if (!origin.allowed) return origin;
+  // `origin.code` traegt den Grund bereits — er war nur nie Teil des
+  // Rueckgabetyps und ging deshalb hier verloren.
+  if (!origin.allowed) {
+    return origin.code === "OK"
+      ? { allowed: false, reason: origin.reason }
+      : { allowed: false, reason: origin.reason, code: origin.code };
+  }
 
   if (check.market === null) {
     return {
       allowed: false,
       reason: "Keine Marktdaten zu diesem Snapshot. Fehlend ist nicht null.",
+      code: "NO_MARKET_FIELDS",
     };
   }
 
@@ -206,6 +240,7 @@ export function entryDataVerdict(
     : {
         allowed: false,
         reason: explainVerdict(verdict),
+        code: verdict.kind,
         ...(verdict.kind === "INCOMPLETE" ? { missing: verdict.missing } : {}),
       };
 }
@@ -276,6 +311,13 @@ export function planBranches(input: {
       // Nur wenn es etwas zu nennen gibt — ein leeres Feld in jedem
       // Zweig waere Rauschen.
       ...(dataVerdict.missing === undefined ? {} : { missing: dataVerdict.missing }),
+      // Welches Tor zu war. Nur wenn die Datenlage der Grund ist: bei
+      // fehlender Bereitschaft sagt `reason` es schon vollstaendig, und ein
+      // Datenurteil daneben waere eine Angabe zu einer Pruefung, die gar
+      // nicht entschieden hat.
+      ...(paperReason === "DATA_QUALITY_TOO_LOW" && dataVerdict.code !== undefined
+        ? { code: dataVerdict.code }
+        : {}),
     });
   }
 
