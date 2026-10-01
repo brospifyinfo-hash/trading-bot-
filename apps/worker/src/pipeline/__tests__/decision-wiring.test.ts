@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_STRATEGY_PARAMETERS } from "@sae/config";
-import { ensureActiveStrategyVersion, schema, loadLatestDecisionRun, type Database } from "@sae/db";
+import {
+  ensureActiveStrategyVersion,
+  schema,
+  loadLatestDecisionRun,
+  ProviderHealthStore,
+  type Database,
+} from "@sae/db";
 import { createTestDatabase } from "@sae/db/testing";
 import { createLogger } from "@sae/observability";
 import { providerId } from "@sae/core";
@@ -171,6 +177,38 @@ describe("Gelegenheitspruefung", () => {
    * verlangt, dass sie am Marktdaten-Tor vorbeikommt.
    */
   it("kommt mit erreichbarem Anbieter am Marktdaten-Tor vorbei", async () => {
+    // Der Adapter allein reicht dafuer NICHT, und das war der Punkt, den
+    // dieser Test verschwiegen hat: das Marktdaten-Tor fragt nicht den
+    // Adapter, sondern die PERSISTIERTE Anbietermessung
+    // (`ProviderHealthStore.latest()` -> `summarizeFleet`). Ohne Messzeile
+    // gibt es keinen Anbieter mit `TOKEN_MARKET`, und die Lage ist
+    // `anyMarketDataUsable: false`.
+    //
+    // Solange die Kette schon vorher am fehlenden Feature-Vektor hielt, fiel
+    // das nicht auf — der Test kam nie bis zum Tor, dessen Namen er traegt.
+    // Seit der Vektor aus der aktuellen Beobachtung entsteht, kommt er bis
+    // dorthin, und ohne Messung ist `NO_MARKET_DATA` die richtige Antwort.
+    // Ein „erreichbarer Anbieter" muss also dort stehen, wo das Tor liest.
+    await new ProviderHealthStore(db).record(
+      [
+        {
+          providerId: providerId("dexscreener"),
+          kind: "market",
+          status: "CONNECTED",
+          capabilities: ["TOKEN_MARKET"],
+          lastSuccessAt: T0,
+          lastFailureAt: null,
+          lastFailureReason: null,
+          latencyMsP50: null,
+          latencyMsP95: null,
+          rateLimit: null,
+          dataFreshnessSeconds: null,
+          detail: null,
+        },
+      ],
+      T0,
+    );
+
     const registry = buildHandlers({
       db,
       logger,
@@ -189,13 +227,23 @@ describe("Gelegenheitspruefung", () => {
 
     // NICHT mehr NO_SOURCE: die Kette hat Marktdaten bekommen.
     expect(result.outcomes["NO_SOURCE"]).toBeUndefined();
-    // Sie kommt bis zum naechsten ehrlichen Halt: der Feature-Vektor braucht
-    // Historie, und die gibt es in dieser leeren Testdatenbank nicht.
+    // Und NICHT mehr NO_MARKET_DATA: das Tor, dessen Namen dieser Test
+    // traegt, ist passiert. Das ist die eigentliche Zusicherung hier, und sie
+    // haengt an der Messzeile oben — nicht am Adapter.
+    expect(result.outcomes["BLOCKED_NO_MARKET_DATA"]).toBeUndefined();
+    // Sie kommt bis zum naechsten ehrlichen Halt: die Bereitschaftspruefung
+    // verlangt Historie, und die gibt es in dieser leeren Testdatenbank nicht
+    // (0 von 100 Snapshots).
+    //
+    // Hier stand `BLOCKED_NO_FEATURE_VECTOR`, und die Erwartung ist mit dem
+    // Feature-Vektor aus der aktuellen Beobachtung ueberholt: der Vektor
+    // entsteht jetzt, er ist nur duenn (Vollstaendigkeit 0.38). Der Halt ist
+    // damit einen Schritt weiter gewandert — nicht verschwunden.
     //
     // Und dieser Halt steht MIT Grund in der Auszaehlung. Vorher hiess das
     // Etikett nur `BLOCKED` — eine Zahl, die sagt, dass es nicht weiterging,
     // und verschweigt, woran (§122).
-    expect(result.outcomes["BLOCKED_NO_FEATURE_VECTOR"]).toBe(1);
+    expect(result.outcomes["BLOCKED_INSUFFICIENT_HISTORY"]).toBe(1);
     expect(result.outcomes["BLOCKED"]).toBeUndefined();
   });
 

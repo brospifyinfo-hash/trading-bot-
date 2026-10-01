@@ -44,6 +44,7 @@ export interface MarketRefreshDeps {
       reasons: Readonly<Record<string, number>>;
       quotes: Readonly<Record<string, number>>;
       exitProbes: Readonly<Record<string, number>>;
+      companion: Readonly<Record<string, number>>;
       tokens: number;
     };
   };
@@ -263,6 +264,14 @@ export async function refreshMarketData(
       // Token ablehnt (§119).
       ...(why !== undefined && Object.keys(why.exitProbes).length > 0
         ? { exitProbe: tally(why.exitProbes) }
+        : {}),
+      // Was der Begleitabruf eingebracht hat. `OK=n` heisst: fuer n Token
+      // sind Liquiditaet, Marktkapitalisierung und 24h-Volumen da — die drei
+      // Pflichtfelder, ohne die das Einstiegstor mit DATA_QUALITY_TOO_LOW
+      // schliesst. Steht hier stattdessen `liquidityUsd=n`, ist die Ursache
+      // benannt, statt am Ende der Kette als Qualitaetsproblem zu erscheinen.
+      ...(why !== undefined && Object.keys(why.companion).length > 0
+        ? { begleitdaten: tally(why.companion) }
         : {}),
     },
     "Marktdaten aufgefrischt",

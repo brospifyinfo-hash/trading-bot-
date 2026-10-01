@@ -71,6 +71,11 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // Der Ausgang der Verkaufssonde, ohne die die Ausstiegsfaehigkeit fehlt
   // (§119).
   "exitProbe",
+  // Was der Begleitabruf eingebracht hat. Ohne dieses Feld war „alle drei
+  // Pflichtfelder fehlen" eine Beobachtung ohne Ursache: der Kurs kommt vom
+  // Router, Liquiditaet/Marktkapitalisierung/Volumen vom Begleitabruf, und
+  // dessen Ausgang stand nirgends.
+  "begleitdaten",
 ]);
 
 /**

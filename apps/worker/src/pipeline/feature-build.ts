@@ -155,7 +155,7 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
     },
     holder: {
       holders: latest.holders !== null ? of(latest, latest.holders)
-        : security?.totalHolders != null && security.observedAt <= asOf &&
+        : security !== null && typeof security.totalHolders === "number" && security.observedAt <= asOf &&
           asOf.getTime() - security.observedAt.getTime() <= 6 * 60 * 60 * 1000
           ? observed(security.totalHolders, providerId("token_security"), security.observedAt)
           : of<number>(latest, null),

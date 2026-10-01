@@ -84,6 +84,22 @@ export interface RejectionTally {
    * hat — eine Zahl, die still etwas anderes bedeutet als ihr Name sagt.
    */
   recordExitProbe(outcome: string): void;
+  /**
+   * Was der Begleitabruf bei DexScreener eingebracht hat.
+   *
+   * Der blinde Fleck, der genau die Frage offenliess, um die es gerade geht.
+   * Der Kurs kommt vom Router, Liquiditaet, Marktkapitalisierung und Volumen
+   * kommen vom Begleitabruf — und drei davon sind Pflichtfelder am
+   * Einstiegstor (`REQUIRED_FOR_ENTRY`). Fehlte eines, stand im Log
+   * `BLOCKED_DATA_QUALITY_TOO_LOW` und sonst nichts: dass der Begleitabruf
+   * leer zurueckkam, war nirgends zu sehen, und sein Ablehnungsgrund wurde
+   * bewusst nicht mitgezaehlt, um `tokens` nicht zu verdoppeln.
+   *
+   * Deshalb ein EIGENER Kanal: er erhoeht `tokens` nicht und faelscht damit
+   * keine Quellenstatistik, sagt aber, ob der Begleitabruf geliefert hat —
+   * und wenn nicht, warum nicht.
+   */
+  recordCompanion(outcome: string): void;
 }
 
 export interface RejectionCounts {
@@ -93,6 +109,8 @@ export interface RejectionCounts {
   readonly quotes: Readonly<Record<string, number>>;
   /** Ausgang der Verkaufssonde -> wie oft. `OK` heisst: Ausstieg gemessen. */
   readonly exitProbes: Readonly<Record<string, number>>;
+  /** Ausgang des Begleitabrufs -> wie oft. `OK` heisst: alle Pflichtfelder da. */
+  readonly companion: Readonly<Record<string, number>>;
   /**
    * Wie viele ABRUFE ohne Markt endeten.
    *
@@ -123,12 +141,18 @@ export function createRejectionTally(): RejectionTally & { drain(): RejectionCou
   let reasons: Record<string, number> = {};
   let quotes: Record<string, number> = {};
   let exitProbes: Record<string, number> = {};
+  let companion: Record<string, number> = {};
   let tokens = 0;
   return {
     recordExitProbe(outcome: string): void {
       const key = safeLabel(outcome);
       const bisher = exitProbes[key];
       exitProbes[key] = bisher === undefined ? 1 : bisher + 1;
+    },
+    recordCompanion(outcome: string): void {
+      const key = safeLabel(outcome);
+      const bisher = companion[key];
+      companion[key] = bisher === undefined ? 1 : bisher + 1;
     },
     recordQuote(label: string): void {
       const key = safeLabel(label);
@@ -148,10 +172,11 @@ export function createRejectionTally(): RejectionTally & { drain(): RejectionCou
       }
     },
     drain(): RejectionCounts {
-      const out = { reasons, quotes, exitProbes, tokens };
+      const out = { reasons, quotes, exitProbes, companion, tokens };
       reasons = {};
       quotes = {};
       exitProbes = {};
+      companion = {};
       tokens = 0;
       return out;
     },
@@ -206,7 +231,26 @@ export function buildMarketAdapters(
  * und die Zahlen im Log wuerden lautlos doppelt zaehlen.
  */
 function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
-  const begleiter = dexScreenerChainAdapter({ env: deps.env, clock: deps.clock }, true);
+  // Die Ablehnungsgruende des Begleitabrufs — in den EIGENEN Kanal, nicht in
+  // `record`. `record` erhoeht `tokens`, und ein Token, dessen Kurs steht und
+  // dem nur die Begleitfelder fehlen, ist nicht quellenlos. Vorher wurde der
+  // Grund hier ganz verworfen; genau deshalb war „alle drei Pflichtfelder
+  // fehlen" eine Beobachtung ohne Ursache.
+  const begleitGruende: RejectionTally | undefined =
+    deps.rejections === undefined
+      ? undefined
+      : {
+          record: (_mint: string, reasons: readonly string[]): void => {
+            for (const r of reasons) deps.rejections?.recordCompanion(r);
+          },
+          recordQuote: (label: string): void => deps.rejections?.recordQuote(label),
+          recordExitProbe: (): void => {},
+          recordCompanion: (): void => {},
+        };
+  const begleiter = dexScreenerChainAdapter(
+    { env: deps.env, clock: deps.clock, ...(begleitGruende === undefined ? {} : { rejections: begleitGruende }) },
+    true,
+  );
 
   const quoteDeps = buildQuoteMarketDeps({
     env: deps.env,
@@ -224,8 +268,24 @@ function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
     companion: async (mint: string): Promise<Partial<MarketFields>> => {
       const result = await begleiter.fetchMarket(mint);
       // Kein Begleitdatensatz ist kein Fehler: der Preis steht auch ohne ihn,
-      // und die fehlenden Felder bleiben fehlend.
-      return result === null ? {} : result.value;
+      // und die fehlenden Felder bleiben fehlend. Aufgeschrieben wird es
+      // trotzdem — sonst ist am Log nicht zu unterscheiden, ob der
+      // Begleitabruf nichts fand oder ob er gar nicht lief.
+      if (result === null) {
+        deps.rejections?.recordCompanion("KEIN_MARKT");
+        return {};
+      }
+      // Gezaehlt werden die PFLICHTFELDER des Einstiegstors einzeln. Als ein
+      // zusammengesetztes Etikett waere die Zahl kuerzer und unbrauchbar: die
+      // Gegenmassnahme ist je Feld eine andere.
+      const fehlend = [
+        result.value.liquidityUsd === null ? "liquidityUsd" : null,
+        result.value.marketCapUsd === null ? "marketCapUsd" : null,
+        result.value.volume24hUsd === null ? "volume24hUsd" : null,
+      ].filter((f): f is string => f !== null);
+      if (fehlend.length === 0) deps.rejections?.recordCompanion("OK");
+      else for (const f of fehlend) deps.rejections?.recordCompanion(f);
+      return result.value;
     },
     ...(deps.rejections === undefined
       ? {}
@@ -265,10 +325,22 @@ export function dexScreenerChainAdapter(deps: MarketAdapterDeps, collectYoungPoo
         poolsFetched = true;
       }
       // NO_DATA, FAILED und SCHEMA_REJECTED fuehren alle zu `null`: kein
-      // Marktwert. Die Unterscheidung dazwischen gehoert in die
-      // Provider-Health und ist dort bereits festgehalten — hier wuerde sie zu
-      // einem Ersatzwert verleiten.
-      if (outcome.kind !== "OK") return null;
+      // Marktwert, und ausdruecklich kein Ersatzwert.
+      //
+      // Der GRUND wird aber aufgeschrieben. Vorher stand hier, die
+      // Unterscheidung gehoere in die Provider-Health — das stimmt fuer die
+      // Anbieterlage und half an der entscheidenden Stelle nicht: fuer den
+      // Begleitabruf ist „DexScreener drosselt uns" (`DS_RATE_LIMITED`) etwas
+      // voellig anderes als „dieser Token hat keinen Pool" (`DS_NO_DATA`),
+      // und beides sah im Log gleich aus. Die Gegenmassnahme ist je Fall eine
+      // andere: Takt senken gegen Drosselung, Token abschreiben bei NO_DATA.
+      if (outcome.kind !== "OK") {
+        deps.rejections?.record(
+          wanted,
+          [outcome.kind === "FAILED" ? `DS_${outcome.failure}` : `DS_${outcome.kind}`],
+        );
+        return null;
+      }
 
       // Die Zuordnung Pool-Adresse -> Rohdatensatz, damit nach der Auswahl
       // Felder verfuegbar bleiben, die fuer die Auswahl selbst keine Rolle

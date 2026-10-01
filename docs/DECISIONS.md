@@ -5539,3 +5539,94 @@ familiengebunden; Opportunity-Unique-Index und Entscheidungsschlüssel werden
 strategieversionsgebunden. Dashboard und Worker-Diagnose unterscheiden beide
 Konten. Die aktive Marktauswahl aus §137 bleibt erhalten. Birdeye/Helius bleiben
 ohne implementierte Adapter nicht angebunden; die Anzeige erklärt dies.
+
+## §139 — Warum nicht gekauft wird: gemessen statt vermutet (2026-10-01)
+
+Ausgangsfrage: der Bot kauft weiterhin nicht selbstaendig. Die naheliegende
+Vermutung war, die Einstiegsschwellen seien zu streng — insbesondere
+`minDataCompleteness: 1` der Launch-Profile.
+
+**Die Vermutung ist falsch, und zwar nachweislich.** Die Launch-Profile werden
+nicht mit `computeScores`, sondern mit `computePaperLaunchScores` bewertet, und
+dieser Bewerter ueberschreibt `dataCompleteness` mit einer eigenen Pflichtliste
+aus 13 Feldern — ohne die vier Felder, die dieses System nirgends erhebt.
+Gemessen am vollstaendigen Datensatz:
+
+| Datenlage (Launch-Bewerter) | dataCompleteness | finalScore |
+|---|---|---|
+| vollstaendig | 1.0 | 78 (Schwelle 50: Einstieg) |
+| ohne DexScreener-Felder | 0.615 | nicht rechenbar |
+| ohne Sicherheitsbefund | 0.692 | nicht rechenbar |
+
+Die Schwelle ist erreichbar. Der Engpass sind die **Eingangsdaten**, nicht die
+Bewertung. Eine Senkung der Schwellen waere eine Aenderung an der falschen
+Stelle gewesen und haette die eigentliche Ursache verdeckt. Ein zuvor
+geschriebener Waechtertest, der auf der falschen Annahme beruhte, wurde vor dem
+Commit wieder entfernt.
+
+### Der blinde Fleck, der die Ursache verdeckt hat
+
+Im Betrieb stand `BLOCKED_DATA_QUALITY_TOO_LOW=5` mit
+`fehlendeFelder: liquidityUsd=5 marketCapUsd=5 volume24hUsd=5`. Genau diese drei
+sind Pflichtfelder am Einstiegstor (`REQUIRED_FOR_ENTRY`), und genau diese drei
+kommen seit der Umstellung auf `jupiter-quote` NICHT vom Kursanbieter, sondern
+aus einem **Begleitabruf** bei DexScreener.
+
+Dessen Ausgang stand nirgends. Die Ablehnungsgruende des Begleitabrufs wurden
+bewusst verworfen, damit der Zaehler `tokens` nicht doppelt zaehlt — richtig
+gedacht, aber die Folge war, dass „alle drei Pflichtfelder fehlen" eine
+Beobachtung ohne Ursache blieb. Drosselung, kein Pool, Pool zu duenn und
+Schema-Ablehnung sahen im Log identisch aus, obwohl die Gegenmassnahme in jedem
+Fall eine andere ist.
+
+Deshalb ein eigener Kanal `recordCompanion` neben `record`: er erhoeht `tokens`
+nicht und faelscht damit keine Quellenstatistik, sagt aber je Lauf, ob der
+Begleitabruf geliefert hat (`begleitdaten: OK=5`) und wenn nicht, warum nicht
+(`KEIN_MARKT`, `LIQUIDITY_TOO_LO`, `DS_RATE_LIMITED`, `DS_NO_DATA`, …). Zudem
+wird der DexScreener-Abruf-Fehlschlag jetzt mit seiner Fehlerklasse
+aufgeschrieben statt still zu `null` zu werden.
+
+Das ist ausdruecklich **Diagnose, keine Reparatur**: welcher der Faelle im
+Betrieb zutrifft, sagt erst der naechste Lauf. Eine Ursache zu raten und zu
+„beheben" waere hier das teuerste, was man tun kann.
+
+### Die versteckte zweite Konfiguration
+
+`paperLaunchMinBuys` und `paperLaunchMaxAgeSeconds` standen als `?? 3` und
+`?? 60` an der Benutzungsstelle in der Pipeline. „Offensiv" schaltet den
+Launch-Modus ein, ohne beide zu setzen — und lief damit auf einem
+60-Sekunden-Frischefenster, das in seinem Profil nirgends zu lesen war. Es war
+damit beim Datenalter **strenger** als „Sehr offensiv" mit seinen
+ausdruecklichen 120 Sekunden, also genau umgekehrt zu dem, was die Namen
+versprechen.
+
+Ein Ersatzwert an der Benutzungsstelle ist keine Voreinstellung, sondern eine
+zweite, unsichtbare Konfiguration. Beide Werte stehen jetzt ausdruecklich im
+Profil (unveraendert 3 und 60 — das Verhalten bleibt gleich, es ist nur erstmals
+lesbar), die `??`-Ersatzwerte sind entfallen, und ein Launch-Profil ohne diese
+Werte fuehrt zu `BLOCKED` mit `LAUNCH_CONFIG_INCOMPLETE` statt zu einem still
+erfundenen Grenzwert. Ein Wachtest in `packages/config` haelt das fest.
+
+### Das Haus war rot
+
+Unabhaengig davon war der Stand vor dieser Arbeit nicht pruefbar: drei
+Lint-Fehler, drei Typfehler und ein fehlschlagender Test, alle bereits vorher
+vorhanden (per `git stash` verifiziert). Behoben:
+
+- `feature-build.ts`: `security?.totalHolders != null` erfuellte weder `eqeqeq`
+  noch die Typpruefung (`totalHolders` ist optional, also auch `undefined`).
+  Jetzt `typeof security.totalHolders === "number"`.
+- `engine.test.ts`: fehlende Typargumente an `gone<number>()` / `gone<boolean>()`.
+- `decision-wiring.test.ts`: der Test „kommt mit erreichbarem Anbieter am
+  Marktdaten-Tor vorbei" erwartete `BLOCKED_NO_FEATURE_VECTOR` und bekam
+  `BLOCKED_NO_MARKET_DATA`. Die Ursache war lehrreich: der Test stellte einen
+  arbeitenden **Adapter**, aber das Marktdaten-Tor fragt nicht den Adapter,
+  sondern die persistierte Anbietermessung. Solange die Kette schon vorher am
+  fehlenden Feature-Vektor hielt, kam der Test nie bis zu dem Tor, dessen Namen
+  er traegt. Jetzt schreibt er eine Messzeile, kommt am Tor vorbei und haelt am
+  naechsten ehrlichen Halt (`BLOCKED_INSUFFICIENT_HISTORY`, 0 von 100
+  Snapshots). Die Zusicherung ist damit staerker als vorher, nicht schwaecher.
+
+Validierung: 157 Dateien / 1574 Tests bestanden, Lint und Typpruefung aller
+Projekte sauber. Keine Aenderung an der Handelslogik, keine Schwelle gesenkt,
+keine Live-Freigabe. Produktive Einstiege sind weiterhin nicht nachgewiesen.

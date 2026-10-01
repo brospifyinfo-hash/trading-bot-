@@ -44,6 +44,13 @@ export const MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE = {
     entryGates: {
       ...MEMECOIN_PAPER_CANDIDATE.parameters.entryGates,
       paperLaunchMode: true,
+      // Beide Schwellen stehen hier ausdruecklich. Sie entsprechen genau dem,
+      // was vorher als `??`-Ersatzwert in der Pipeline stand — das Verhalten
+      // aendert sich nicht, es ist nur erstmals lesbar. Besonders die 60
+      // Sekunden: dieses Profil ist damit beim Datenalter STRENGER als „Sehr
+      // offensiv" (120 s), und das war nirgends zu sehen.
+      paperLaunchMinBuys: 3,
+      paperLaunchMaxAgeSeconds: 60,
       minTokenAgeSeconds: 0,
       minDataCompleteness: 1,
       minFinalScore: 50,

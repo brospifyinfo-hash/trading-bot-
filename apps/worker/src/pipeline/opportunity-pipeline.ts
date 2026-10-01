@@ -222,9 +222,30 @@ export async function runOpportunityPipeline(
   if (launch && deps.decisionContext.executionMode !== "paper") {
     return { kind: "BLOCKED", reason: "PAPER_ONLY_MODEL", detail: "Launch model is paper-only" };
   }
+  // Die Launch-Schwellen stehen im Profil. Vorher standen sie als `?? 3` und
+  // `?? 60` an der Benutzungsstelle — ein numerischer Ersatz fuer eine
+  // fehlende Einstellung, und mit einer stillen Folge: „Offensiv" setzte
+  // beide nicht und lief damit auf einem 60-Sekunden-Frischefenster, das in
+  // seinem Profil nirgends stand — strenger als „Sehr offensiv" mit seinen
+  // 120 Sekunden, ohne dass das irgendwo lesbar war. Ein Launch-Profil ohne
+  // diese Werte ist ein Konfigurationsfehler und darf kein Signal erzeugen.
+  let maxLaunchAgeMs: number | null = null;
   if (launch) {
+    const minBuys = deps.parameters.entryGates.paperLaunchMinBuys;
+    const maxAgeSeconds = deps.parameters.entryGates.paperLaunchMaxAgeSeconds;
+    if (minBuys === undefined || maxAgeSeconds === undefined) {
+      const fehlt = [
+        minBuys === undefined ? "paperLaunchMinBuys" : null,
+        maxAgeSeconds === undefined ? "paperLaunchMaxAgeSeconds" : null,
+      ].filter((f): f is string => f !== null);
+      return {
+        kind: "BLOCKED",
+        reason: "LAUNCH_CONFIG_INCOMPLETE",
+        detail: `Launch profile is missing required thresholds: ${fehlt.join(", ")}`,
+      };
+    }
+    maxLaunchAgeMs = maxAgeSeconds * 1_000;
     const buys = features.momentum.buys5m, sells = features.momentum.sells5m;
-    const minBuys = deps.parameters.entryGates.paperLaunchMinBuys ?? 3;
     const minShare = deps.parameters.entryGates.paperLaunchMinBuyShare;
     if (buys.kind !== "OBSERVED" || sells.kind !== "OBSERVED" || buys.value < minBuys ||
       (minShare === undefined ? buys.value <= sells.value : buys.value / (buys.value + sells.value) < minShare)) {
@@ -232,9 +253,9 @@ export async function runOpportunityPipeline(
     }
   }
   const scoring: ScoringResult = launch ? computePaperLaunchScores(features) : computeScores(features);
-  if (launch) {
+  if (maxLaunchAgeMs !== null) {
     const age = deps.clock.now().getTime() - features.asOf.getTime();
-    if (age < 0 || age > (deps.parameters.entryGates.paperLaunchMaxAgeSeconds ?? 60) * 1000) return { kind: "BLOCKED", reason: "STALE_LAUNCH_DATA", detail: "Launch market observation exceeds strategy freshness limit" };
+    if (age < 0 || age > maxLaunchAgeMs) return { kind: "BLOCKED", reason: "STALE_LAUNCH_DATA", detail: `Launch market observation is ${Math.round(age / 1_000)}s old, limit is ${maxLaunchAgeMs / 1_000}s` };
   }
   const diagnostics: InputDiagnostics = { finalScore: scoring.finalScore, completeness: scoring.dataCompleteness,
     requiredCompleteness: deps.parameters.entryGates.minDataCompleteness,

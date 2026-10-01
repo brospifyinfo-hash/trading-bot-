@@ -155,8 +155,15 @@ describe("Score-Engine v1", () => {
 
 it("does not count unimplemented clustering as missing collected data, but keeps security gaps", () => {
   const base = healthyToken();
-  const v = { ...base, holder: { ...base.holder, distinctActors: gone(), largestClusterSharePct: gone() } };
+  // Typargumente ausgeschrieben: `gone()` ist generisch und leitet sonst
+  // `unknown` ab, was die Zuweisung an `HolderFeatures` scheitern laesst.
+  const v = {
+    ...base,
+    holder: { ...base.holder, distinctActors: gone<number>(), largestClusterSharePct: gone<number>() },
+  };
   expect(computeScores(v).dataCompleteness).toBe(1);
   expect(computeScores(v).missingFields.map((m) => m.field)).toContain("holder.distinctActors");
-  expect(computeScores({ ...v, security: { ...v.security, lpBurnedOrLocked: gone() } }).dataCompleteness).toBeLessThan(1);
+  expect(
+    computeScores({ ...v, security: { ...v.security, lpBurnedOrLocked: gone<boolean>() } }).dataCompleteness,
+  ).toBeLessThan(1);
 });
