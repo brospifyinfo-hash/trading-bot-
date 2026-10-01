@@ -165,17 +165,18 @@ export async function resolveMarketInput(
     };
   }
 
-  // Aus der HISTORIE, nicht aus dem gerade abgerufenen Wert: eine Reihe muss
-  // aus einer Reihe kommen, sonst misst eine Preisaenderung auch den
-  // Unterschied zwischen zwei Anbietern. Siehe `feature-build.ts`.
-  //
-  // Hier stand `features: null` als Literal, mit einem Kommentar daneben, der
-  // beschrieb, wie der Vektor entsteht — nur tat es niemand (DECISIONS §110).
+  // Use this acquisition for both the feature vector and entry quality gate.
+  // Historical comparisons remain anchored to this provider and observation time.
   const features =
     request.pit === undefined
       ? null
       : await buildFeatureVector({
           pit: request.pit,
+          currentSnapshot: {
+            ...result.data.value, tokenId: request.tokenId, observedAt: result.data.observedAt,
+            sourceProviderId: String(result.data.providerId), sourceFreshnessSeconds: result.data.freshnessSeconds,
+            finalScore: null, dataCompleteness: 0, scoreEngineVersion: null,
+          },
           tokenId: request.tokenId,
           asOf: clock.now(),
           firstSeenAt: request.firstSeenAt ?? null,

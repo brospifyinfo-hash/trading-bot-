@@ -1,3 +1,4 @@
+import { sharedMarketAdapters } from "./pipeline/shared-market-adapters";
 import { buildSniperHandler } from "./sniper/handler";
 import { ensurePaperCandidateVersion, usesPaperCandidate, PAPER_CANDIDATE_SELECTOR } from "./pipeline/paper-candidate-version";
 import { systemClock, tokenId as asTokenId } from "@sae/core";
@@ -415,7 +416,7 @@ class EvaluateOpportunityHandler implements JobHandler {
     const outcomes: Record<string, number> = {};
     const scores: number[] = [];
     const fehlendeFelder: Record<string, number> = {};
-    const coinDiagnostics: { mint: string; account: string; outcome: string; diagnostics?: import("./pipeline/opportunity-pipeline").InputDiagnostics }[] = [];
+    const coinDiagnostics: { mint: string; account: string; outcome: string; detail: string; diagnostics?: import("./pipeline/opportunity-pipeline").InputDiagnostics }[] = [];
 
     // Dieselbe Rotation wie beim Marktdaten-Lauf, mit eigenem Schluessel.
     // Ohne sie bewertet dieser Lauf jede Minute erneut dieselben fuenf Token.
@@ -427,6 +428,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       clock: systemClock,
       maxUnitsPerRun: MAX_TOKENS_PER_RUN,
       process: async (token) => {
+      const adapters = sharedMarketAdapters(this.deps.adapters ?? new Map());
       for (const [index, strategy] of strategies.entries()) {
       // Offensiv also evaluates discovered markets; launch events are an additional fast path.
       const result = await runDecision({
@@ -442,7 +444,7 @@ class EvaluateOpportunityHandler implements JobHandler {
         loadValuation,
         // Dieselbe Kette wie beim Auffrischen der Marktdaten. Hier stand
         // vorher eine leere Map — siehe die Begruendung an `DecisionRunDeps`.
-        adapters: this.deps.adapters ?? new Map(),
+        adapters,
         statusOf: this.deps.statusOf ?? ((): ProviderStatus => "UNAVAILABLE"),
         firstSeenAt: token.firstSeenAt,
         liquidityUsd: null,
@@ -452,7 +454,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       // Gezaehlt wird das Etikett MIT Grund, nicht die blosse Ergebnisart.
       // `NO_ENTRY=5` sagte, dass nichts gekauft wurde, und verschwieg warum —
       // genau die Auskunft, die beim Pruefen gebraucht wird (§122).
-      coinDiagnostics.push({ mint: token.mint, account: strategy.label, outcome: result.label,
+      coinDiagnostics.push({ mint: token.mint, account: strategy.label, outcome: result.label, detail: result.detail,
         ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) });
       const account = accounts[index]!;
       const accountSeen = account.outcomes[result.label];

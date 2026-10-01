@@ -404,7 +404,7 @@ export async function selectActivePaperTokens(db: Database, now: Date, limit = 2
     select t.id, t.mint, t.first_seen_at
     from tokens t
     left join lateral (
-      select s.liquidity_usd, s.market_cap_usd, s.volume_24h_usd, s.price_usd, s.observed_at
+      select s.liquidity_usd, s.market_cap_usd, s.volume_24h_usd, s.price_usd, s.observed_at, s.buys_5m
       from token_snapshots s
       where s.token_id = t.id and s.source_provider_id in ('jupiter-quote', 'dexscreener')
         and s.observed_at <= ${now.toISOString()}::timestamptz
@@ -416,14 +416,14 @@ export async function selectActivePaperTokens(db: Database, now: Date, limit = 2
       and p.source_type = 'LIVE' and p.is_test_fixture = false
     )) or (t.blacklisted_at is null and t.state <> 'REJECTED'
       and latest.observed_at >= ${new Date(now.getTime() - 6 * 3600000).toISOString()}::timestamptz
-      and latest.price_usd > 0 and latest.liquidity_usd >= 25000
-      and latest.market_cap_usd > 0 and latest.market_cap_usd <= 20000000
+      and latest.price_usd > 0 and latest.liquidity_usd >= 5000
+      and latest.market_cap_usd > 0 and latest.market_cap_usd <= 50000000
       and latest.volume_24h_usd > 0)
     order by case when ${includeOpen} and exists (
       select 1 from paper_positions p where p.token_id = t.id and p.closed_at is null
       and p.stream = 'AUTO_PAPER' and p.sizing_mode = 'RISK_BASED'
       and p.source_type = 'LIVE' and p.is_test_fixture = false
-    ) then 0 else 1 end, latest.liquidity_usd desc nulls last, t.id
+    ) then 0 else 1 end, case when latest.buys_5m > 0 then 0 else 1 end, latest.observed_at desc, latest.liquidity_usd desc nulls last, t.id
     limit ${limit}
   `);
   const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] }).rows ?? []);

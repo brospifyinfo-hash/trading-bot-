@@ -39,6 +39,7 @@ export function OperatingStatus({ run, now }: {
       {!run.coinDiagnostics?.length ? <p>Details wurden in diesem Lauf noch nicht aufgezeichnet.</p> :
         run.coinDiagnostics.map((coin, index) => <details key={`${coin.mint}-${coin.account}-${index}`}>
           <summary>{coin.account} · {coin.mint} · Score {coin.diagnostics?.finalScore ?? "unbekannt"} · {coin.outcome}</summary>
+          {coin.detail && <p>{coin.detail}</p>}
           {coin.diagnostics ? <>
             <p>Erhebbare Daten: {(coin.diagnostics.completeness * 100).toFixed(1)} % vorhanden; erforderlich: {(coin.diagnostics.requiredCompleteness * 100).toFixed(1)} %. Bewertungsabdeckung: {(coin.diagnostics.weightCoverage * 100).toFixed(1)} %; erforderlich: 60 %.</p>
             <p>Nicht berechenbare Teilbewertungen: {coin.diagnostics.unavailableScores.join(", ") || "keine"}.</p>

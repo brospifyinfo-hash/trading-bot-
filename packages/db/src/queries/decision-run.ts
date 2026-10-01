@@ -12,7 +12,7 @@ export interface SizingReport {
 }
 
 export interface CoinDiagnostic {
-  readonly mint: string; readonly account: string; readonly outcome: string;
+  readonly mint: string; readonly account: string; readonly outcome: string; readonly detail?: string;
   readonly diagnostics?: { finalScore: number | null; completeness: number; requiredCompleteness: number; weightCoverage: number;
     missing: readonly { field: string; reason: string }[]; unavailableScores: readonly string[] };
 }
@@ -82,7 +82,7 @@ export function parseDecisionRun(result: unknown, finishedAt: Date): DecisionRun
       const a = record(value);
       const threshold = count(a?.entryThreshold);
       const outcomes = counts(a?.outcomes);
-      return a !== null && (a.label === "Standard" || a.label === "Offensiv" || a.label === "Legacy")
+      return a !== null && (a.label === "Standard" || a.label === "Offensiv" || a.label === "Sehr offensiv" || a.label === "Legacy")
         && threshold !== null && outcomes !== null
         ? [{ label: a.label, entryThreshold: threshold, outcomes }] : [];
     }) } : {}),
@@ -114,7 +114,7 @@ function parseCoins(value: unknown): CoinDiagnostic[] {
   return value.slice(0, 20).flatMap((item: unknown) => {
     const r = record(item);
     if (!r || typeof r.mint !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(r.mint) ||
-      typeof r.account !== "string" || !["Standard", "Offensiv", "Legacy"].includes(r.account) ||
+      typeof r.account !== "string" || !["Standard", "Offensiv", "Sehr offensiv", "Legacy"].includes(r.account) ||
       typeof r.outcome !== "string" || !/^[A-Z_]{1,100}$/.test(r.outcome)) return [];
     const d = record(r.diagnostics);
     const fraction = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
@@ -128,6 +128,6 @@ function parseCoins(value: unknown): CoinDiagnostic[] {
       }) : [],
       unavailableScores: Array.isArray(d.unavailableScores) ? d.unavailableScores.filter((v): v is string => typeof v === "string" && /^[A-Za-z]{1,40}$/.test(v)) : [],
     } : undefined;
-    return [{ mint: r.mint, account: r.account, outcome: r.outcome, ...(diagnostics ? { diagnostics } : {}) }];
+    return [{ mint: r.mint, account: r.account, outcome: r.outcome, ...(typeof r.detail === "string" ? { detail: r.detail.slice(0, 500) } : {}), ...(diagnostics ? { diagnostics } : {}) }];
   });
 }

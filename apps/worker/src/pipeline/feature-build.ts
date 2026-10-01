@@ -71,6 +71,8 @@ const HISTORY_SPAN_MS = WINDOW_1H_MS + 2 * WINDOW_TOLERANCE_MS;
 
 export interface FeatureBuildInput {
   readonly pit: PitReader;
+  /** Current observed market point, from the same acquisition used by the entry gate. */
+  readonly currentSnapshot?: PitSnapshot;
   readonly tokenId: TokenId;
   /** Zeitpunkt, fuer den die Features gelten. Alle Eingaben sind `<= asOf`. */
   readonly asOf: Date;
@@ -86,7 +88,9 @@ export interface FeatureBuildInput {
  * Datenqualitaetsproblem erscheinen statt als fehlende Historie.
  */
 export async function buildFeatureVector(input: FeatureBuildInput): Promise<FeatureVector | null> {
-  const latest = await input.pit.snapshotAt(input.tokenId, input.asOf);
+  const current = input.currentSnapshot;
+  if (current && (current.tokenId !== input.tokenId || current.observedAt > input.asOf)) return null;
+  const latest = current ?? await input.pit.snapshotAt(input.tokenId, input.asOf);
   if (latest === null) return null;
 
   const [history, security] = await Promise.all([

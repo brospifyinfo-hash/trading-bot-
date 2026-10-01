@@ -20,7 +20,7 @@ export async function loadPaperSniper(db: Database) {
       const p = j.payload as Record<string, unknown> | null, r = j.result as Record<string, unknown> | null;
       const accounts = Array.isArray(r?.accounts) ? r.accounts.filter((a): a is Record<string, unknown> => a !== null && typeof a === "object") : [r];
       return accounts.map((a) => ({ at: j.at, mint: text(p?.mint), event: text(p?.kind),
-        account: text(a?.account) ?? "Offensiv", outcome: text(a?.status) ?? j.state,
+        detail: text(a?.detail), account: text(a?.account) ?? "Offensiv", outcome: text(a?.status) ?? j.state,
         score: typeof a?.score === "number" && Number.isFinite(a.score) ? a.score : null,
         latencyMs: typeof r?.latencyMs === "number" ? r.latencyMs : null }));
     }) };

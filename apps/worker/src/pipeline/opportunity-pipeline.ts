@@ -228,7 +228,7 @@ export async function runOpportunityPipeline(
     const minShare = deps.parameters.entryGates.paperLaunchMinBuyShare;
     if (buys.kind !== "OBSERVED" || sells.kind !== "OBSERVED" || buys.value < minBuys ||
       (minShare === undefined ? buys.value <= sells.value : buys.value / (buys.value + sells.value) < minShare)) {
-      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: `Needs ${minBuys} buys and ${minShare === undefined ? "more buys than sells" : `buy share >= ${minShare}`}` };
+      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: `Observed buys=${buys.kind === "OBSERVED" ? buys.value : "missing"}, sells=${sells.kind === "OBSERVED" ? sells.value : "missing"}; needs ${minBuys} buys and ${minShare === undefined ? "more buys than sells" : `buy share >= ${minShare}`}` };
     }
   }
   const scoring: ScoringResult = launch ? computePaperLaunchScores(features) : computeScores(features);

@@ -1,0 +1,20 @@
+import { expect, it, vi } from "vitest";
+import { providerId } from "@sae/core";
+import type { MarketFields } from "@sae/pipeline";
+import { sharedMarketAdapters } from "../shared-market-adapters";
+it("shares observations briefly without changing provider time or hiding failures", async () => {
+  let time = 1000;
+  const observation = { value: { priceUsd: 1 } as MarketFields, observedAt: new Date(0) };
+  const fetchMarket = vi.fn(async () => observation as typeof observation | null);
+  const adapter = sharedMarketAdapters(new Map([["jupiter-quote", { providerId: providerId("jupiter-quote"), capabilities: ["TOKEN_MARKET"], fetchMarket }]]), () => time).get("jupiter-quote")!;
+  expect(await adapter.fetchMarket("one")).toBe(observation);
+  expect(await adapter.fetchMarket("one")).toBe(observation);
+  expect(fetchMarket).toHaveBeenCalledTimes(1);
+  time += 30000;
+  await adapter.fetchMarket("one");
+  expect(fetchMarket).toHaveBeenCalledTimes(2);
+  fetchMarket.mockResolvedValue(null);
+  await adapter.fetchMarket("two");
+  await adapter.fetchMarket("two");
+  expect(fetchMarket).toHaveBeenCalledTimes(4);
+});

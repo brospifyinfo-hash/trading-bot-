@@ -1,3 +1,4 @@
+import { sharedMarketAdapters } from "../pipeline/shared-market-adapters";
 import { and, eq } from "drizzle-orm";
 import { systemClock } from "@sae/core";
 import { PAPER_PROFILES, loadEnv, providerEnvSchema } from "@sae/config";
@@ -47,12 +48,13 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
     if (finding.kind !== "OK") return report(`SECURITY_${finding.kind}`, {}, true);
     if (finding.report.rugged) return report("SECURITY_RUGGED");
     await recordSecurityFinding(deps.db, toFinding(token.id, finding, security.schemaVersion), new Date());
+    const adapters = sharedMarketAdapters(deps.adapters ?? new Map());
     const market = await refreshMarketData(`sniper-market:${job.id}`, { db: deps.db, logger: deps.logger,
-      env: deps.env, clock: systemClock, adapters: deps.adapters ?? new Map(),
+      env: deps.env, clock: systemClock, adapters,
       statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
       tokens: [{ id: token.id, mint: token.mint }], maxUnitsPerRun: 1, maxTokens: 1 });
     if (!market.ingested) return report("WAITING_EXECUTABLE_MARKET", {}, true);
-    const accounts: { account: string; status: string; score: number | null }[] = [];
+    const accounts: { account: string; status: string; score: number | null; detail?: string }[] = [];
     let retry = false;
     // Highest-entry-frequency profile first; security and market acquisition are shared.
     for (const profile of [...PAPER_PROFILES].reverse().filter((p) => p.candidate.parameters.entryGates.paperLaunchMode)) {
@@ -65,11 +67,11 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
       const result = await runDecision({ db: deps.db, logger: deps.logger, env: deps.env,
       tokenId: token.id, mint: token.mint, firstSeenAt: token.firstSeenAt, strategyVersionId: strategy.id,
       snapshotCount, providerReports: toStatusReports(health),
-      adapters: deps.adapters ?? new Map(), statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
+      adapters, statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
       quotes: buildQuoteSource(env), loadValuation: buildPaperValuation(env),
       quoteMint: QUOTE_ANCHOR_MINT, entryAmountRaw: null, liquidityUsd: null,
     });
-      accounts.push({ account: profile.label, status: result.label, score: result.finalScore });
+      accounts.push({ account: profile.label, status: result.label, score: result.finalScore, detail: result.detail });
       retry ||= result.outcome !== "ENTERED" && /INCOMPLETE|NO_SOURCE|LAUNCH_BUY_PRESSURE|QUOTE|NO_FEATURE|STALE/.test(result.label);
     }
     return report(accounts.some((a) => a.status === "ENTERED") ? "ENTERED" : "EVALUATED", { accounts }, retry);
