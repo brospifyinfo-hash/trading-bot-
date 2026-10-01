@@ -63,59 +63,15 @@ export const MEMECOIN_PAPER_CANDIDATE = {
  */
 export const PAPER_STRATEGY_ID = "memecoin-active-paper";
 
-/** Untergrenze. Darunter waere die Schwelle keine Auswahl mehr. */
-export const PAPER_ENTRY_SCORE_MIN = 10;
-/** Obergrenze. Darueber hat in der Messung noch nie ein Coin gelegen. */
-export const PAPER_ENTRY_SCORE_MAX = 95;
-/** Voreinstellung, wenn nichts gesetzt ist. Ausdruecklich als solche gefuehrt. */
-export const PAPER_ENTRY_SCORE_DEFAULT = 50;
-
-/**
- * Welche Einstiegsschwelle gilt — und woher sie kommt.
+/*
+ * Die GRENZEN der Schwelle stehen bewusst nicht hier, sondern in
+ * `@sae/db` neben der Tabelle `paper_settings` — dort steht auch der
+ * CHECK-Constraint, der sie durchsetzt. Zwei Listen derselben Grenzen waeren
+ * eine Einladung, sie auseinanderlaufen zu lassen, und die Datenbank haette
+ * dann recht und der Code unrecht.
  *
- * Bewusst eine unterschiedene Vereinigung statt einer Zahl mit `??`. Drei
- * Faelle, die im Betrieb etwas voellig Verschiedenes bedeuten:
- *
- * - `DEFAULT` — nichts gesetzt, es gilt die ausgelieferte Voreinstellung.
- *   Das ist in Ordnung und muss trotzdem sichtbar sein, sonst haelt man sie
- *   fuer eine getroffene Entscheidung.
- * - `SET` — der Betreiber hat gewaehlt.
- * - `INVALID` — da steht etwas, das keine Schwelle ist. Hier still auf die
- *   Voreinstellung zu fallen waere der teuerste Fehler: der Betreiber glaubt,
- *   bei 20 zu handeln, und das System handelt bei 50. Also wird NICHT
- *   gehandelt, und der Grund steht im Log und im Dashboard.
+ * Diese Datei weiss nur, wie aus einer gueltigen Schwelle ein Kandidat wird.
  */
-export type PaperEntryScore =
-  | { readonly kind: "DEFAULT"; readonly score: number }
-  | { readonly kind: "SET"; readonly score: number }
-  | { readonly kind: "INVALID"; readonly problem: string };
-
-/** Der Name der Variablen — an einer Stelle, damit Doku und Code nicht auseinanderlaufen. */
-export const PAPER_ENTRY_SCORE_VAR = "PAPER_ENTRY_SCORE";
-
-export function readPaperEntryScore(
-  env: Readonly<Record<string, string | undefined>>,
-): PaperEntryScore {
-  const raw = env[PAPER_ENTRY_SCORE_VAR];
-  if (raw === undefined || raw.trim() === "") {
-    return { kind: "DEFAULT", score: PAPER_ENTRY_SCORE_DEFAULT };
-  }
-
-  const wert = Number(raw.trim());
-  if (!Number.isInteger(wert)) {
-    return {
-      kind: "INVALID",
-      problem: `${PAPER_ENTRY_SCORE_VAR} muss eine ganze Zahl sein (${PAPER_ENTRY_SCORE_MIN} bis ${PAPER_ENTRY_SCORE_MAX}).`,
-    };
-  }
-  if (wert < PAPER_ENTRY_SCORE_MIN || wert > PAPER_ENTRY_SCORE_MAX) {
-    return {
-      kind: "INVALID",
-      problem: `${PAPER_ENTRY_SCORE_VAR} liegt ausserhalb von ${PAPER_ENTRY_SCORE_MIN} bis ${PAPER_ENTRY_SCORE_MAX}.`,
-    };
-  }
-  return { kind: "SET", score: wert };
-}
 
 /**
  * Das Kandidatenprofil zu einer Schwelle.

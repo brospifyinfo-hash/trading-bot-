@@ -1,94 +1,98 @@
-import type { DecisionRunReport } from "@sae/db";
+import type { EntryScoreSetting } from "@sae/db";
+
+import { EntryScoreForm } from "./EntryScoreForm";
 
 /**
  * Die eine Zahl, die der Betreiber frei waehlt.
  *
- * Zwei Entscheidungen stecken in dieser Datei, und beide sind der Grund, warum
- * sie so aussieht, wie sie aussieht.
+ * Zwei Dinge, die diese Anzeige auseinanderhaelt und die vorher vermengt waren:
  *
- * **Sie zeigt an und nimmt nicht entgegen.** Diese Oberflaeche hat keine
- * Anmeldung. Ein Eingabefeld, das die Handelsschwelle schreibt, waere ein
- * Schreibzugriff fuer jeden, der die Adresse kennt. Solange die Anmeldung nicht
- * steht, wird die Schwelle dort gesetzt, wo ohnehin nur der Betreiber
- * hinkommt — in der Umgebung des Workers.
+ * **Was EINGESTELLT ist** steht in der Datenbank. Sie ist die einzige Stelle,
+ * die Dashboard und Worker gemeinsam haben — die beiden laufen auf
+ * verschiedenen Maschinen.
  *
- * **Sie zeigt, was der WORKER benutzt hat, nicht was hier in der Umgebung
- * steht.** Das Dashboard laeuft bei Vercel, der Worker bei Railway; zwei
- * getrennte Umgebungen. Laese diese Anzeige `process.env`, stuende hier eine
- * Zahl, mit der nie jemand entschieden hat — die gefaehrlichste Sorte Anzeige,
- * weil sie plausibel aussieht. Also kommt die Zahl aus dem letzten
- * Entscheidungslauf.
+ * **Was der Worker ZULETZT BENUTZT hat** steht im Entscheidungslauf. Zwischen
+ * beiden liegt ein Takt. Weichen sie voneinander ab, ist die Aenderung
+ * gespeichert, aber noch nicht wirksam — und genau das gehoert dann dort zu
+ * lesen, statt dass jemand vor einer Zahl sitzt und sich fragt, ob sie schon
+ * zaehlt.
  */
 export function EntryScore({
-  run,
-  variable,
+  setting,
+  benutzt,
+  angemeldet,
+  anmeldungEingerichtet,
   min,
   max,
 }: {
-  readonly run: DecisionRunReport | null;
-  readonly variable: string;
+  readonly setting: EntryScoreSetting;
+  readonly benutzt: number | null;
+  readonly angemeldet: boolean;
+  readonly anmeldungEingerichtet: boolean;
   readonly min: number;
   readonly max: number;
 }) {
-  const beispiele = [10, 35, 50, 70].filter((n) => n >= min && n <= max);
-  const schwelle = run?.entryThreshold ?? null;
-  const herkunft = run?.entryThresholdSource ?? null;
+  const wirksam = benutzt === null || benutzt === setting.score;
 
   return (
     <section className="panel">
       <h2>Einstiegsschwelle</h2>
 
-      {schwelle === null ? (
-        <p className="placeholder">
-          <strong>NOCH NICHT GEMELDET</strong>
+      <p className="bigNumber">
+        <span className="bigNumber__value">{setting.score}</span>
+        <span className="bigNumber__unit">von 100 Punkten</span>
+      </p>
+
+      <p>
+        {setting.source === "SAVED"
+          ? "Von Ihnen gespeichert."
+          : "Ausgelieferte Voreinstellung — noch nichts gespeichert."}{" "}
+        Ein Coin wird gekauft, sobald seine Gesamtbewertung diesen Wert erreicht und alle
+        uebrigen Tore offen sind. Niedriger heisst mehr Einstiege und schlechtere
+        Durchschnittsqualitaet, hoeher heisst seltener und waehlerischer.
+      </p>
+
+      {!wirksam && (
+        <p className="placeholder" role="status">
+          <strong>NOCH NICHT WIRKSAM</strong>
           <br />
-          Der Worker hat noch keinen Bewertungslauf abgeschlossen. Bis dahin ist nicht
-          belegt, mit welcher Schwelle er rechnet — und eine Zahl zu zeigen, die nur
-          hier in der Oberflaeche steht, waere geraten.
+          Der letzte Bewertungslauf rechnete noch mit {benutzt}. Der Worker uebernimmt die
+          neue Zahl beim naechsten Lauf, ueblicherweise innerhalb einer Minute.
         </p>
+      )}
+
+      {angemeldet ? (
+        <EntryScoreForm aktuell={setting.score} min={min} max={max} />
       ) : (
         <>
-          <p className="bigNumber">
-            <span className="bigNumber__value">{schwelle}</span>
-            <span className="bigNumber__unit">von 100 Punkten</span>
-          </p>
-          <p>
-            {herkunft === "SET"
-              ? "Von Ihnen gesetzt."
-              : herkunft === "DEFAULT"
-                ? "Ausgelieferte Voreinstellung — nicht gesetzt."
-                : "Herkunft in diesem Lauf nicht aufgezeichnet."}{" "}
-            Gemeldet vom letzten abgeschlossenen Bewertungslauf des Workers, nicht aus
-            der Umgebung dieser Oberflaeche.
-          </p>
-          <p>
-            Ein Coin wird gekauft, sobald seine Gesamtbewertung diesen Wert erreicht
-            und alle uebrigen Tore offen sind. Niedriger heisst mehr Einstiege und
-            schlechtere Durchschnittsqualitaet, hoeher heisst seltener und waehlerischer.
-          </p>
+          <h3>Aendern</h3>
+          {anmeldungEingerichtet ? (
+            <p>
+              <a href="/login">Anmelden</a>, dann laesst sich die Zahl hier direkt setzen.
+              Die Anzeige ist offen, das Setzen nicht — sonst koennte jeder, der die
+              Adresse kennt, Ihre Handelsschwelle verstellen.
+            </p>
+          ) : (
+            <p>
+              Es ist kein Passwort hinterlegt. Ohne <code>DASHBOARD_PASSWORD</code> in der
+              Umgebung dieser Oberflaeche gibt es keine Anmeldung und damit keine
+              Aenderung. <a href="/login">Was zu tun ist</a>.
+            </p>
+          )}
         </>
       )}
 
-      <h3>Aendern</h3>
-      <p>
-        Railway, Projekt <code>honest-adaptation</code>, Umgebung <code>production</code>,
-        Dienst <code>consumer</code> → <em>Variables</em>. Variable <code>{variable}</code>{" "}
-        auf eine ganze Zahl zwischen {min} und {max} setzen. Der Dienst startet daraufhin
-        neu und rechnet ab dem naechsten Lauf mit dem neuen Wert; diese Anzeige folgt,
-        sobald der Lauf durch ist.
-      </p>
-      <p className="hint">Gaengige Werte: {beispiele.join(" · ")}. Jede Zahl dazwischen geht genauso.</p>
-      <p className="hint">
-        Steht dort etwas, das keine Zahl zwischen {min} und {max} ist, entscheidet der Bot
-        gar nicht und nennt den Grund. Das ist Absicht: bei einer stillen Ruecknahme auf
-        die Voreinstellung wuerde bei einer anderen Zahl gehandelt als der gesetzten.
-      </p>
       <p className="hint">
         Die Buchfuehrung bleibt dieselbe: Barbestand, offene Positionen und Verlustgrenzen
-        laufen ueber die Schwellenaenderung hinweg weiter. Nur die Regel, nach der neu
+        laufen ueber eine Schwellenaenderung hinweg weiter. Nur die Regel, nach der neu
         entschieden wird, aendert sich — und jede Entscheidung bleibt der Schwelle
         zugeordnet, unter der sie gefallen ist.
       </p>
+      {setting.updatedAt !== null && (
+        <p className="hint">
+          Zuletzt geaendert: {setting.updatedAt.toISOString()} durch {setting.updatedBy}.
+        </p>
+      )}
     </section>
   );
 }

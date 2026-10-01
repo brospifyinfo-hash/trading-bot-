@@ -84,6 +84,22 @@ export const webEnvSchema = baseEnvSchema.extend({
   SESSION_SECRET: nonEmpty.min(32, "SESSION_SECRET muss mindestens 32 Zeichen haben"),
   APP_BASE_URL: nonEmpty.url(),
   RESEND_API_KEY: nonEmpty.optional(),
+  /**
+   * Das Passwort fuer die Einstellungen im Dashboard.
+   *
+   * OPTIONAL, und das ist eine Abwaegung: waere es Pflicht, wuerde eine
+   * bestehende Instanz beim naechsten Deployment mit „NICHT KONFIGURIERT"
+   * stehenbleiben, obwohl die Anzeige weiterlaufen koennte. Ohne gesetztes
+   * Passwort gibt es stattdessen keine Anmeldung und damit keine Aenderung —
+   * die Anzeige bleibt, das Formular nicht.
+   *
+   * Mindestens 16 Zeichen: zurueckgezogen wird eine Anmeldung nur ueber einen
+   * Wechsel von `SESSION_SECRET`, und ein Sperren nach Fehlversuchen gibt es
+   * nicht. Was dieses Passwort traegt, ist seine Laenge.
+   */
+  DASHBOARD_PASSWORD: nonEmpty
+    .min(16, "DASHBOARD_PASSWORD muss mindestens 16 Zeichen haben")
+    .optional(),
 });
 
 export const signerEnvSchema = z.object({

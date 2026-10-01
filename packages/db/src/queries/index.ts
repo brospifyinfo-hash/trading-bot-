@@ -5,3 +5,4 @@ export * from "./paper-account";
 export * from "./paper-trading";
 
 export * from "./sniper";
+export * from "./paper-settings";

@@ -5814,3 +5814,91 @@ Zahl und keine Aussage wurde entfernt.
 Validierung: 157 Dateien / 1601 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich. Keine Live-Freigabe, keine Handelslogik ausserhalb der
 beschriebenen Schwelle angefasst.
+
+## §142 — Die Schwelle im Dashboard, und die Anmeldung davor (2026-10-01)
+
+Auf Ansage des Betreibers: die Einstiegsschwelle soll im Dashboard einstellbar
+sein, nicht in einer Umgebungsvariablen. Das zieht zwei Aenderungen nach sich,
+und die zweite ist die eigentliche.
+
+### Die Einstellung zieht in die Datenbank
+
+Eine Umgebungsvariable kann die Oberflaeche weder schreiben noch ehrlich
+anzeigen. Dashboard und Worker laufen auf verschiedenen Maschinen (Vercel und
+Railway); die Datenbank ist die einzige Stelle, die beide gemeinsam haben.
+
+Neue Tabelle `paper_settings`, einzeilig per Primaerschluessel mit
+`CHECK (id = 'singleton')`. Das ist strenger als ein `LIMIT 1` im Code: eine
+zweite Zeile waere sonst irgendwann da, und welche gilt, entschiede die
+Sortierung — also der Zufall. Die Grenzen 10 bis 95 stehen ebenfalls als CHECK
+in der Tabelle und nicht nur im Code.
+
+Jede Aenderung schreibt zusaetzlich eine Zeile in `system_events`. Eine
+Kennzahl, die sich stillschweigend aendern laesst, macht jede spaetere
+Auswertung unlesbar: „warum sind an diesem Tag zwanzig Positionen entstanden"
+ist ohne die Aenderungsspur nicht beantwortbar.
+
+`seedEntryScoreFromEnv` uebernimmt eine frueher gesetzte `PAPER_ENTRY_SCORE`
+EINMAL und laesst sie danach liegen. Wer sie auf 35 gesetzt hatte, soll nach
+dem Umzug nicht stillschweigend bei 50 landen — das ist genau die lautlose
+Ruecknahme, die dieses System sonst ueberall vermeidet. Danach ist die
+Datenbank die einzige Quelle; die Variable noch einmal zu beruecksichtigen
+hiesse, bei jedem Neustart die aeltere Wahl gewinnen zu lassen.
+
+Die Grenzen leben jetzt in `@sae/db` neben der Tabelle und nicht mehr in
+`@sae/config`. Zwei Listen derselben Grenzen waeren eine Einladung, sie
+auseinanderlaufen zu lassen — und die Datenbank haette dann recht.
+
+### Die Anmeldung
+
+`apps/web/app/(auth)/login/page.tsx` trug bis hierher einen Platzhalter mit dem
+Satz, eine halbfertige Authentifizierung sei schlimmer als gar keine. Das
+stimmte, solange es nichts zu schuetzen gab. Ein Schreibfeld auf einer
+oeffentlich erreichbaren Adresse ist etwas anderes.
+
+Gebaut ist der kleinstmoegliche Entwurf, der traegt, und er steht in
+`lib/session.ts` ausgeschrieben, damit ihn niemand spaeter fuer mehr haelt:
+
+- EIN Passwort aus `DASHBOARD_PASSWORD`, mindestens 16 Zeichen.
+- Vergleich in konstanter Zeit. `===` bricht beim ersten abweichenden Zeichen
+  ab; die Zeitdifferenz ist winzig und ueber viele Versuche messbar — damit
+  laesst sich ein Passwort Zeichen fuer Zeichen erraten statt als Ganzes.
+  Vorher gehasht, damit beide Seiten gleich lang sind: `timingSafeEqual` wirft
+  bei verschiedenen Laengen, und diese Ausnahme waere selbst ein Signal.
+- Zustandsloses Cookie: HMAC-SHA256 ueber den Ablaufzeitpunkt mit
+  `SESSION_SECRET`, HttpOnly, Secure, SameSite=strict, 12 Stunden. Keine
+  Sitzungstabelle, kein Datenbankzugriff je Aufruf.
+- Zurueckziehen nur ueber einen Wechsel von `SESSION_SECRET` — dann sind alle
+  ausgestellten Cookies auf einmal ungueltig. Fuer einen einzelnen Betreiber
+  ist das die passende Grobheit.
+
+Was ausdruecklich NICHT gebaut ist: Magic Link, TOTP, Step-up. Das ist der
+Endausbau fuer Live-Handel aus `lib/auth.ts`, und Live-Handel gibt es nicht.
+Eine halbfertige TOTP-Einfuehrung waere mehr Angriffsflaeche als Schutz.
+
+Drei Entscheidungen, die leicht anders haetten ausfallen koennen:
+
+1. **`DASHBOARD_PASSWORD` ist optional.** Als Pflichtfeld bliebe eine
+   bestehende Instanz beim naechsten Deployment mit „NICHT KONFIGURIERT"
+   stehen, obwohl die Anzeige weiterlaufen koennte. Ohne Passwort gibt es
+   stattdessen keine Anmeldung — und ausdruecklich keine, die immer gelingt.
+   Ein fehlendes Passwort als „offen" zu lesen waere die teuerste denkbare
+   Voreinstellung; ein Test haelt das fest.
+2. **Die Leseansicht bleibt offen.** Sie war es vorher, und sie zu schliessen
+   waere eine eigene Entscheidung, die niemand getroffen hat.
+3. **Geprueft wird serverseitig.** Ein Formular, das nur Angemeldeten
+   angezeigt wird, ist keine Pruefung, sondern eine Anzeigeentscheidung — wer
+   die Anfrage direkt stellt, umgeht sie. `schwelleSetzen` prueft die Sitzung
+   selbst, und `min`/`max` im Markup sind eine Bequemlichkeit fuer den
+   Browser, keine Validierung.
+
+### Gespeichert ist nicht wirksam
+
+Die Anzeige unterscheidet beides: was in der Datenbank steht (eingestellt) und
+was der letzte Entscheidungslauf benutzt hat. Zwischen beiden liegt ein Takt.
+Weichen sie ab, steht das dort — statt dass jemand vor einer Zahl sitzt und
+sich fragt, ob sie schon zaehlt.
+
+Validierung: 159 Dateien / 1614 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Neue Migration `0015_paper_settings.sql` — sie muss
+laufen, bevor das Deployment die Seite bedient.

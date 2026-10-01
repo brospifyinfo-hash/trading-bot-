@@ -12,3 +12,4 @@ export * from "./pipeline";
 export * from "./queue";
 export * from "./decisions";
 export * from "./provider-readiness";
+export * from "./settings";

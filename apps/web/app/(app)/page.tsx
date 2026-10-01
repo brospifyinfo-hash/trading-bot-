@@ -1,9 +1,10 @@
 import { loadPaperSniper } from "@sae/db";
 import { PaperSniper } from "@/components/PaperSniper";
-import { PAPER_STRATEGY_ID, PAPER_ENTRY_SCORE_VAR, PAPER_ENTRY_SCORE_MIN, PAPER_ENTRY_SCORE_MAX, paperCandidate, PAPER_ENTRY_SCORE_DEFAULT } from "@sae/config";
+import { PAPER_STRATEGY_ID, paperCandidate } from "@sae/config";
 import { loadPaperTrading } from "@sae/db";
 import { PaperTrading } from "@/components/PaperTrading";
-import { loadDashboardState, isRecentObservation, type Panel } from "@sae/db";
+import { loadDashboardState, isRecentObservation, loadEntryScore, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, type Panel } from "@sae/db";
+import { anmeldungMoeglich, sitzungAktiv } from "@/app/actions";
 
 import { db } from "@/lib/db";
 import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/readiness";
@@ -158,18 +159,24 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
   if (readiness.kind !== "READY") return <NotReady readiness={readiness} />;
 
   // Die festen Grenzen des Kontos — Risiko je Trade, maximale offene
-  // Positionen. Sie haengen NICHT an der Schwelle und sind deshalb hier
-  // ablesbar. Die Schwelle selbst kommt aus dem Worker-Lauf (siehe EntryScore).
-  const profil = paperCandidate(PAPER_ENTRY_SCORE_DEFAULT);
+  // Positionen. Sie haengen NICHT an der Schwelle und sind deshalb hier mit
+  // einem beliebigen gueltigen Wert ablesbar.
+  const profil = paperCandidate(ENTRY_SCORE_DEFAULT);
+  const [angemeldet, anmeldungEingerichtet] = await Promise.all([
+    sitzungAktiv(),
+    anmeldungMoeglich(),
+  ]);
 
   let sniper: Awaited<ReturnType<typeof loadPaperSniper>>;
   let account: Awaited<ReturnType<typeof loadPaperTrading>>;
   let state: Awaited<ReturnType<typeof loadDashboardState>>;
+  let schwelle: Awaited<ReturnType<typeof loadEntryScore>>;
   try {
     // Modulebene statt Request-Handler: siehe lib/db.ts.
     sniper = await loadPaperSniper(db());
     state = await loadDashboardState({ db: db(), now: new Date() });
     account = await loadPaperTrading({ db: db(), strategyName: PAPER_STRATEGY_ID, now: new Date() });
+    schwelle = await loadEntryScore(db());
   } catch (error: unknown) {
     // Der Fehler wird nur klassifiziert, nie ausgegeben: eine
     // Postgres-Fehlermeldung enthaelt die Verbindungszeichenfolge samt Passwort.
@@ -200,10 +207,12 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           description={`Risiko pro Trade ${profil.parameters.risk.riskPerTradePct} %; maximal ${profil.parameters.risk.maxOpenPositions} offene Positionen. Experimentelle Paper-Strategie, nicht validiert.`}
         />
         <EntryScore
-          run={state.latestDecisionRun}
-          variable={PAPER_ENTRY_SCORE_VAR}
-          min={PAPER_ENTRY_SCORE_MIN}
-          max={PAPER_ENTRY_SCORE_MAX}
+          setting={schwelle}
+          benutzt={state.latestDecisionRun?.entryThreshold ?? null}
+          angemeldet={angemeldet}
+          anmeldungEingerichtet={anmeldungEingerichtet}
+          min={ENTRY_SCORE_MIN}
+          max={ENTRY_SCORE_MAX}
         />
         <PaperSniper data={sniper} />
         <OperatingStatus run={state.latestDecisionRun} now={state.generatedAt} />

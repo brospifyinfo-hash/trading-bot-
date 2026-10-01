@@ -99,6 +99,13 @@
       "when": 1789891200000,
       "tag": "0014_paper_account_opportunities",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790900000000,
+      "tag": "0015_paper_settings",
+      "breakpoints": true
     }
   ]
 }

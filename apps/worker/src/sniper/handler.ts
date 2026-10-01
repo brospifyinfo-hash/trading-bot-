@@ -1,8 +1,8 @@
 import { sharedMarketAdapters } from "../pipeline/shared-market-adapters";
 import { and, eq } from "drizzle-orm";
 import { systemClock } from "@sae/core";
-import { loadEnv, paperCandidate, providerEnvSchema, readPaperEntryScore } from "@sae/config";
-import { countSnapshots, JobQueueRepository, ProviderHealthStore, recordSecurityFinding, schema } from "@sae/db";
+import { loadEnv, paperCandidate, providerEnvSchema } from "@sae/config";
+import { countSnapshots, JobQueueRepository, loadEntryScore, ProviderHealthStore, recordSecurityFinding, schema } from "@sae/db";
 import { RugcheckReportAdapter } from "@sae/providers";
 import { toStatusReports, type HandlerDeps } from "../handlers";
 import type { JobHandler } from "../consumer";
@@ -56,8 +56,10 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
     if (!market.ingested) return report("WAITING_EXECUTABLE_MARKET", {}, true);
     const accounts: { account: string; status: string; score: number | null; detail?: string }[] = [];
     let retry = false;
-    const schwelle = readPaperEntryScore(deps.env);
-    if (schwelle.kind === "INVALID") return report("ENTRY_SCORE_INVALID", { detail: schwelle.problem });
+    // Dieselbe Quelle wie der Bewertungslauf: die Datenbank. Haette der Sniper
+    // seine eigene, koennte er mit einer anderen Schwelle einsteigen als die,
+    // die im Dashboard steht.
+    const schwelle = await loadEntryScore(deps.db);
     // Ein Konto. Vorher liefen hier drei Profile je Launch-Ereignis — dreimal
     // dieselbe Entscheidung auf denselben Daten, mit dreifachem Anfragebudget.
     for (const profile of [{ label: "Paper", candidate: paperCandidate(schwelle.score) }]) {

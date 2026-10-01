@@ -12,13 +12,14 @@ import {
   PostgresCheckpointStore,
   selectTrackedTokens,
   selectActivePaperTokens,
+  seedEntryScoreFromEnv,
   type ClaimedJob,
   type Database,
 } from "@sae/db";
 import { tally, type Logger } from "@sae/observability";
 import type { ProviderStatus, ProviderStatusReport } from "@sae/providers";
 import { buildMarketDataChain, runResumable, type MarketDataAdapter } from "@sae/pipeline";
-import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, paperCandidate, providerEnvSchema, readPaperEntryScore, type KnownProviderId } from "@sae/config";
+import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, paperCandidate, providerEnvSchema, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
@@ -353,16 +354,20 @@ class EvaluateOpportunityHandler implements JobHandler {
       return waitingForData("Ungueltige PAPER_STRATEGY-Konfiguration");
     }
     const candidate = usesPaperCandidate(this.deps.env);
-    // Die gewaehlte Einstiegsschwelle. Bei einer unbrauchbaren Einstellung
-    // wird NICHT still auf die Voreinstellung zurueckgefallen: der Betreiber
-    // glaubte dann, bei seiner Zahl zu handeln, und das System handelte bei
-    // einer anderen. Lieber keine Entscheidung und ein benannter Grund.
-    const schwelle = readPaperEntryScore(this.deps.env);
-    if (candidate && schwelle.kind === "INVALID") {
-      return waitingForData(schwelle.problem);
-    }
-    const profil = schwelle.kind === "INVALID" ? null : paperCandidate(schwelle.score);
-    const strategies = candidate && profil !== null
+    // Die gewaehlte Einstiegsschwelle — aus der DATENBANK, nicht aus der
+    // Umgebung. Dashboard und Worker laufen auf verschiedenen Maschinen; die
+    // Datenbank ist die einzige Stelle, die beide gemeinsam haben, und damit
+    // die einzige, an der die Oberflaeche die Zahl setzen kann.
+    //
+    // `seedEntryScoreFromEnv` uebernimmt eine frueher gesetzte Variable EINMAL
+    // und laesst sie danach liegen. Wer `PAPER_ENTRY_SCORE=35` gesetzt hatte,
+    // soll nach dem Umzug nicht stillschweigend bei 50 landen.
+    const schwelle = await seedEntryScoreFromEnv(this.deps.db, {
+      raw: this.deps.env["PAPER_ENTRY_SCORE"],
+      at: systemClock.now(),
+    });
+    const profil = paperCandidate(schwelle.score);
+    const strategies = candidate
       ? [{
           ...await ensurePaperCandidateVersion(this.deps.db, systemClock.now(), profil),
           label: "Paper", threshold: profil.parameters.entryGates.minFinalScore,
@@ -597,7 +602,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       entryThreshold: entrySchwelle,
       // Woher die Schwelle stammt: gesetzt oder ausgeliefert. Eine Zahl ohne
       // diese Angabe sieht nach einer getroffenen Entscheidung aus.
-      entryThresholdSource: schwelle.kind,
+      entryThresholdSource: schwelle.source,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
       accounts,

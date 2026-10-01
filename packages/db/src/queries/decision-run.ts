@@ -36,7 +36,7 @@ export interface DecisionRunReport {
    * die Oberflaeche ihre eigene Umgebung, zeigt sie eine Zahl an, mit der nie
    * jemand entschieden hat. Also wird gemeldet, was der Worker benutzt hat.
    */
-  readonly entryThresholdSource: "SET" | "DEFAULT" | null;
+  readonly entryThresholdSource: "SAVED" | "DEFAULT" | "SET" | null;
   readonly sizing: SizingReport | null;
   readonly accounts?: readonly { label: string; entryThreshold: number; outcomes: Readonly<Record<string, number>> }[];
 }
@@ -87,7 +87,11 @@ export function parseDecisionRun(result: unknown, finishedAt: Date): DecisionRun
     bestScore: count(r?.bestScore),
     entryThreshold: count(r?.entryThreshold),
     entryThresholdSource:
-      r?.entryThresholdSource === "SET" || r?.entryThresholdSource === "DEFAULT"
+      r?.entryThresholdSource === "SAVED" ||
+      r?.entryThresholdSource === "DEFAULT" ||
+      // `SET` stammt aus Laeufen, die die Schwelle noch aus der Umgebung
+      // lasen. Alte Ergebnisse bleiben lesbar.
+      r?.entryThresholdSource === "SET"
         ? r.entryThresholdSource
         : null,
     sizing: sizingReport(r?.sizing),
