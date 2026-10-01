@@ -4,7 +4,7 @@ import { PAPER_STRATEGY_ID, paperCandidate } from "@sae/config";
 import { loadPaperTrading } from "@sae/db";
 import { PaperTrading } from "@/components/PaperTrading";
 import { loadDashboardState, isRecentObservation, loadEntryScore, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, type Panel } from "@sae/db";
-import { anmeldungMoeglich, sitzungAktiv } from "@/app/actions";
+import { darfAendern, schutzAktiv } from "@/app/actions";
 
 import { db } from "@/lib/db";
 import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/readiness";
@@ -162,10 +162,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
   // Positionen. Sie haengen NICHT an der Schwelle und sind deshalb hier mit
   // einem beliebigen gueltigen Wert ablesbar.
   const profil = paperCandidate(ENTRY_SCORE_DEFAULT);
-  const [angemeldet, anmeldungEingerichtet] = await Promise.all([
-    sitzungAktiv(),
-    anmeldungMoeglich(),
-  ]);
+  const [aenderbar, geschuetzt] = await Promise.all([darfAendern(), schutzAktiv()]);
 
   let sniper: Awaited<ReturnType<typeof loadPaperSniper>>;
   let account: Awaited<ReturnType<typeof loadPaperTrading>>;
@@ -209,8 +206,8 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
         <EntryScore
           setting={schwelle}
           benutzt={state.latestDecisionRun?.entryThreshold ?? null}
-          angemeldet={angemeldet}
-          anmeldungEingerichtet={anmeldungEingerichtet}
+          aenderbar={aenderbar}
+          geschuetzt={geschuetzt}
           min={ENTRY_SCORE_MIN}
           max={ENTRY_SCORE_MAX}
         />

@@ -1,4 +1,4 @@
-import { anmelden, anmeldungMoeglich, sitzungAktiv } from "@/app/actions";
+import { anmelden, schutzAktiv, sitzungAktiv } from "@/app/actions";
 import { LoginForm } from "@/components/LoginForm";
 
 /**
@@ -27,24 +27,23 @@ export default async function LoginPage() {
     );
   }
 
-  if (!(await anmeldungMoeglich())) {
+  if (!(await schutzAktiv())) {
     return (
       <main className="workspace">
-        <section className="panel" data-tone="alarm">
-          <h2>Anmeldung nicht eingerichtet</h2>
-          <p className="placeholder">
-            <strong>KEIN PASSWORT HINTERLEGT</strong>
-            <br />
-            Ohne <code>DASHBOARD_PASSWORD</code> gibt es keine Anmeldung — und ausdruecklich
-            keine, die immer gelingt.
+        <section className="panel">
+          <h2>Keine Anmeldung noetig</h2>
+          <p>
+            Es ist kein Passwort hinterlegt. Die Einstellungen stehen offen —{" "}
+            <a href="/">zurueck zum Dashboard</a>, dort laesst sich die Schwelle direkt
+            setzen.
           </p>
+          <h3>Falls Sie das aendern wollen</h3>
           <p>
             Vercel, Projekt <code>trading-bot-web</code> → <em>Settings</em> →{" "}
             <em>Environment Variables</em>. Variable <code>DASHBOARD_PASSWORD</code> anlegen,
-            mindestens 16 Zeichen, danach neu bereitstellen.
-          </p>
-          <p>
-            Die Anzeige laeuft auch ohne weiter. Nur aendern laesst sich dann nichts.
+            mindestens 16 Zeichen, danach neu bereitstellen. Ab dann verlangt diese Seite
+            das Passwort, bevor sich etwas aendern laesst. Es braucht dafuer keine
+            Codeaenderung.
           </p>
         </section>
       </main>

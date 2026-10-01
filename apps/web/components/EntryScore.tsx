@@ -20,15 +20,17 @@ import { EntryScoreForm } from "./EntryScoreForm";
 export function EntryScore({
   setting,
   benutzt,
-  angemeldet,
-  anmeldungEingerichtet,
+  aenderbar,
+  geschuetzt,
   min,
   max,
 }: {
   readonly setting: EntryScoreSetting;
   readonly benutzt: number | null;
-  readonly angemeldet: boolean;
-  readonly anmeldungEingerichtet: boolean;
+  /** Darf hier gerade geaendert werden — offen oder angemeldet. */
+  readonly aenderbar: boolean;
+  /** Ist ein Passwort hinterlegt? Entscheidet nur, WAS hier zu lesen ist. */
+  readonly geschuetzt: boolean;
   readonly min: number;
   readonly max: number;
 }) {
@@ -61,25 +63,27 @@ export function EntryScore({
         </p>
       )}
 
-      {angemeldet ? (
+      {aenderbar ? (
         <EntryScoreForm aktuell={setting.score} min={min} max={max} />
       ) : (
         <>
           <h3>Aendern</h3>
-          {anmeldungEingerichtet ? (
-            <p>
-              <a href="/login">Anmelden</a>, dann laesst sich die Zahl hier direkt setzen.
-              Die Anzeige ist offen, das Setzen nicht — sonst koennte jeder, der die
-              Adresse kennt, Ihre Handelsschwelle verstellen.
-            </p>
-          ) : (
-            <p>
-              Es ist kein Passwort hinterlegt. Ohne <code>DASHBOARD_PASSWORD</code> in der
-              Umgebung dieser Oberflaeche gibt es keine Anmeldung und damit keine
-              Aenderung. <a href="/login">Was zu tun ist</a>.
-            </p>
-          )}
+          <p>
+            <a href="/login">Anmelden</a>, dann laesst sich die Zahl hier direkt setzen.
+          </p>
         </>
+      )}
+
+      {!geschuetzt && (
+        <p className="hint">
+          Diese Seite verlangt kein Passwort: wer die Adresse kennt, kann die Schwelle
+          aendern. Das ist so eingerichtet und bei Papierhandel vertretbar — es gibt kein
+          Kapital, keine Wallet und keine Live-Freigabe, aenderbar ist genau diese eine
+          Zahl zwischen {min} und {max}, und jede Aenderung steht in der
+          Aenderungsspur. Soll es ein Passwort verlangen, genuegt{" "}
+          <code>DASHBOARD_PASSWORD</code> in der Umgebung dieser Oberflaeche —{" "}
+          <a href="/login">Anleitung</a>. Eine Codeaenderung braucht es dafuer nicht.
+        </p>
       )}
 
       <p className="hint">

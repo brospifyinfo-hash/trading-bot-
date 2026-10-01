@@ -6,6 +6,7 @@ import { systemEvents } from "../../schema/ops";
 import { paperSettings } from "../../schema/settings";
 import {
   ENTRY_SCORE_DEFAULT,
+  ENTRY_SCORE_MAX_CHANGES_PER_MINUTE,
   ENTRY_SCORE_MAX,
   ENTRY_SCORE_MIN,
   isValidEntryScore,
@@ -83,6 +84,41 @@ describe("Einstiegsschwelle in der Datenbank", () => {
     expect(isValidEntryScore(ENTRY_SCORE_MAX + 1)).toBe(false);
     expect(isValidEntryScore("50")).toBe(false);
   });
+});
+
+/**
+ * Die Obergrenze, die ein offener Schreibweg braucht.
+ *
+ * Die Einstellung laesst sich ohne Anmeldung setzen — eine Entscheidung des
+ * Betreibers, und bei Papierhandel vertretbar. Offen heisst aber nicht
+ * schutzlos: ohne Obergrenze waere dieser Weg eine Moeglichkeit, die Datenbank
+ * mit Aenderungseintraegen vollzuschreiben.
+ *
+ * Geprueft wird in `saveEntryScore` und nicht in der Oberflaeche. Eine
+ * Pruefung im Formular ist keine Pruefung — wer die Anfrage direkt stellt,
+ * umgeht sie.
+ */
+describe("Obergrenze fuer Aenderungen", () => {
+  it("nimmt nach zu vielen Aenderungen je Minute nichts mehr an", async () => {
+    const { db: eigen, close: schliessen } = await createTestDatabase();
+    try {
+      const at = new Date("2026-10-01T15:00:00Z");
+      for (let i = 0; i < ENTRY_SCORE_MAX_CHANGES_PER_MINUTE; i += 1) {
+        await saveEntryScore(eigen, { score: 20 + i, actor: "test", at });
+      }
+      await expect(saveEntryScore(eigen, { score: 60, actor: "test", at }))
+        .rejects.toThrow(/zu viele/i);
+
+      // Der abgewiesene Versuch hat nichts veraendert.
+      expect((await loadEntryScore(eigen)).score).toBe(20 + ENTRY_SCORE_MAX_CHANGES_PER_MINUTE - 1);
+
+      // Eine Minute spaeter geht es weiter. Die Grenze ist ein Takt, keine Sperre.
+      const spaeter = new Date(at.getTime() + 61_000);
+      expect((await saveEntryScore(eigen, { score: 60, actor: "test", at: spaeter })).score).toBe(60);
+    } finally {
+      await schliessen();
+    }
+  }, 60_000);
 });
 
 describe("Umzug aus der Umgebungsvariablen", () => {

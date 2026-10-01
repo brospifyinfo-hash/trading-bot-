@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 
 import type { Database } from "../client";
 import { paperSettings } from "../schema/settings";
@@ -12,6 +12,17 @@ import { systemEvents } from "../schema/ops";
  * gemeinsam haben. Vorher stand sie in einer Umgebungsvariablen des Workers —
  * die Oberflaeche konnte sie weder schreiben noch ehrlich anzeigen.
  */
+
+/**
+ * Wie viele Aenderungen je Minute hoechstens angenommen werden.
+ *
+ * Die Einstellung laesst sich ohne Anmeldung setzen — das ist eine bewusste
+ * Entscheidung des Betreibers. Offen heisst aber nicht schutzlos: ohne eine
+ * Obergrenze waere dieser Weg eine Moeglichkeit, die Datenbank mit
+ * Aenderungseintraegen vollzuschreiben. Zehn je Minute ist weit mehr, als ein
+ * Mensch am Regler dreht, und weit weniger, als ein Skript schafft.
+ */
+export const ENTRY_SCORE_MAX_CHANGES_PER_MINUTE = 10;
 
 /** Untergrenze. Darunter waere die Schwelle keine Auswahl mehr. */
 export const ENTRY_SCORE_MIN = 10;
@@ -95,6 +106,21 @@ export async function saveEntryScore(
   }
 
   return db.transaction(async (tx) => {
+    // Die Obergrenze steht HIER und nicht in der Oberflaeche. Eine Pruefung im
+    // Formular ist keine Pruefung — wer die Anfrage direkt stellt, umgeht sie.
+    const [letzte] = await tx
+      .select({ anzahl: sql<number>`count(*)::int` })
+      .from(systemEvents)
+      .where(
+        and(
+          eq(systemEvents.kind, "ENTRY_SCORE_CHANGED"),
+          gte(systemEvents.at, new Date(input.at.getTime() - 60_000)),
+        ),
+      );
+    if ((letzte?.anzahl ?? 0) >= ENTRY_SCORE_MAX_CHANGES_PER_MINUTE) {
+      throw new Error("Zu viele Aenderungen in kurzer Zeit. Bitte kurz warten.");
+    }
+
     const vorher = await tx
       .select({ score: paperSettings.entryScore })
       .from(paperSettings)

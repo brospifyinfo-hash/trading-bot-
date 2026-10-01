@@ -33,9 +33,32 @@ export async function sitzungAktiv(): Promise<boolean> {
   return sessionIsValid(laden.get(SESSION_COOKIE)?.value, secret, new Date());
 }
 
-/** Ist ueberhaupt ein Passwort hinterlegt? Fuer die Auskunft in der Anzeige. */
-export async function anmeldungMoeglich(): Promise<boolean> {
+/**
+ * Ist ein Passwort hinterlegt — und damit die Anmeldung verlangt?
+ *
+ * Das ist der SCHALTER zwischen den beiden Betriebsarten, und er ist bewusst
+ * genau eine Variable:
+ *
+ * - **Nicht gesetzt** — die Einstellung steht offen. Jeder, der die Adresse
+ *   kennt, kann die Schwelle aendern. Das ist eine Entscheidung des
+ *   Betreibers, und sie steht in der Anzeige ausgeschrieben, damit sie
+ *   niemanden spaeter ueberrascht.
+ * - **Gesetzt** — ohne Anmeldung geht nichts. Umschalten verlangt keine
+ *   Codeaenderung und kein Deployment von jemand anderem: Variable setzen,
+ *   fertig.
+ *
+ * Tragbar ist das offene Verhalten, weil es Papierhandel ist: kein Kapital,
+ * keine Wallet-Operation, keine Live-Freigabe. Aenderbar ist genau eine Zahl
+ * mit festen Grenzen, und jede Aenderung steht in `system_events`.
+ */
+export async function schutzAktiv(): Promise<boolean> {
   return process.env["DASHBOARD_PASSWORD"] !== undefined;
+}
+
+/** Darf hier gerade geaendert werden? Offen, oder angemeldet. */
+export async function darfAendern(): Promise<boolean> {
+  if (!(await schutzAktiv())) return true;
+  return sitzungAktiv();
 }
 
 export async function anmelden(_zustand: string | null, formData: FormData): Promise<string> {
@@ -78,8 +101,10 @@ export async function schwelleSetzen(
   _zustand: string | null,
   formData: FormData,
 ): Promise<string> {
-  // Serverseitig, nicht „das Formular war ja nicht sichtbar".
-  if (!(await sitzungAktiv())) return "Nicht angemeldet.";
+  // Serverseitig, nicht „das Formular war ja nicht sichtbar". Ohne gesetztes
+  // Passwort ist das offen — mit gesetztem ist es die einzige Pruefung, die
+  // zaehlt.
+  if (!(await darfAendern())) return "Nicht angemeldet.";
 
   const roh = formData.get("schwelle");
   const wert = typeof roh === "string" ? Number(roh.trim()) : Number.NaN;
@@ -87,7 +112,19 @@ export async function schwelleSetzen(
     return `Bitte eine ganze Zahl zwischen ${String(ENTRY_SCORE_MIN)} und ${String(ENTRY_SCORE_MAX)} angeben.`;
   }
 
-  await saveEntryScore(db(), { score: wert, actor: "dashboard", at: new Date() });
+  // Wer es war, so genau wie es ehrlich geht. Ohne Anmeldung ist „jemand ueber
+  // das Dashboard" die ganze Wahrheit, und sie gehoert so in die
+  // Aenderungsspur — ein schlichtes „dashboard" liesse spaeter glauben, es sei
+  // belegt, wer gedreht hat.
+  const actor = (await schutzAktiv()) ? "dashboard (angemeldet)" : "dashboard (offen)";
+  try {
+    await saveEntryScore(db(), { score: wert, actor, at: new Date() });
+  } catch (error: unknown) {
+    // Die Obergrenze je Minute meldet sich hier. Sie als technischen Fehler
+    // durchzureichen hiesse, dem Betreiber eine Sammelmeldung zu zeigen, wo
+    // eine Erklaerung gehoert.
+    return error instanceof Error ? error.message : "Speichern fehlgeschlagen.";
+  }
   // Die Seite liest die Datenbank bei jedem Aufruf; ohne diese Zeile zeigte
   // der naechste Aufruf trotzdem die zwischengespeicherte alte Zahl.
   revalidatePath("/");

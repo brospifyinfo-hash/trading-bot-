@@ -5902,3 +5902,57 @@ sich fragt, ob sie schon zaehlt.
 Validierung: 159 Dateien / 1614 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich. Neue Migration `0015_paper_settings.sql` — sie muss
 laufen, bevor das Deployment die Seite bedient.
+
+## §143 — Einstellung ohne Anmeldung, als Schalter statt als Entweder-oder (2026-10-01)
+
+Entscheidung des Betreibers nach ausgesprochenem Einwand: die Einstiegsschwelle
+soll sich ohne Passwort setzen lassen. Das ist seine Entscheidung, und sie wird
+umgesetzt — aber nicht als Abriss der Anmeldung aus §142.
+
+### Was sich aendert
+
+`DASHBOARD_PASSWORD` ist jetzt der SCHALTER zwischen zwei Betriebsarten:
+
+- **nicht gesetzt** — die Einstellung steht offen,
+- **gesetzt** — ohne Anmeldung geht nichts.
+
+Umschalten verlangt weder Codeaenderung noch fremde Hilfe: Variable setzen,
+fertig. Vorher hiess „kein Passwort" schlicht „nichts aenderbar"; jetzt heisst
+es „offen". Die Anmeldung selbst, der zeitkonstante Vergleich und das signierte
+Cookie bleiben unveraendert bestehen.
+
+Dass die Pruefung serverseitig passiert, bleibt ebenfalls: `schwelleSetzen`
+fragt `darfAendern()` selbst. Ein Formular, das nur manchmal angezeigt wird,
+ist keine Pruefung.
+
+### Warum das vertretbar ist — und wo die Grenze liegt
+
+Tragbar ist es, weil es Papierhandel ist: kein Kapital, keine Wallet-Operation,
+keine Live-Freigabe. Aenderbar ist genau eine Zahl mit festen Grenzen (10 bis
+95, als CHECK in der Tabelle), und jede Aenderung steht in `system_events`.
+
+Nicht tragbar waere dasselbe fuer irgendetwas Kapitalwirksames. Wenn diese
+Oberflaeche je mehr als diese eine Zahl schreiben soll, ist der Schalter
+umzulegen, bevor der naechste Schreibweg dazukommt — und das steht hier, damit
+es nicht erst beim Nachdenken auffaellt.
+
+### Offen heisst nicht schutzlos
+
+Ein Schreibweg ohne Anmeldung schreibt bei jedem Aufruf eine Zeile nach
+`system_events`. Ohne Obergrenze waere das eine Moeglichkeit, die Datenbank
+vollzuschreiben. `saveEntryScore` nimmt deshalb hoechstens zehn Aenderungen je
+Minute an — weit mehr, als ein Mensch am Regler dreht, und weit weniger, als
+ein Skript schafft. Geprueft in der Speicherfunktion und nicht in der
+Oberflaeche: wer die Anfrage direkt stellt, sieht kein Formular.
+
+Die Aenderungsspur fuehrt ausserdem mit, unter welcher Betriebsart gedreht
+wurde (`dashboard (offen)` gegen `dashboard (angemeldet)`). Ein schlichtes
+„dashboard" liesse spaeter glauben, es sei belegt, wer gedreht hat.
+
+Im Dashboard steht der Zustand ausgeschrieben: dass die Seite kein Passwort
+verlangt, dass jeder mit der Adresse die Schwelle aendern kann, und wie sich
+das umstellen laesst. Eine offene Einstellung, die wie eine geschuetzte
+aussieht, waere der eigentliche Fehler.
+
+Validierung: 159 Dateien / 1615 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich.
