@@ -198,3 +198,66 @@ describe("LIVE_DATA_FAILURE_CANNOT_CREATE_VALID_SIGNAL", () => {
     await expectNothingWritten();
   });
 });
+
+/**
+ * Der Rueckfall, der im Log wie ein Datenproblem aussah.
+ *
+ * `resolveFromChain` fuehrt seine Versuche laengst mit — auf dem Erfolgspfad
+ * wurden sie weggeworfen. Die Folge: faellt die Kette vom Router auf die
+ * Marktdatenquelle zurueck, fehlen anschliessend Preiseinfluss und
+ * Ausstiegsfaehigkeit, der Snapshot traegt keinen Zeitstempel, und die
+ * Entscheidung endet drei Schritte spaeter mit `DATA_QUALITY_TOO_LOW`. Im Log
+ * stand dann ein Datenurteil, obwohl die Auskunft lautet: der Router hat nicht
+ * geantwortet.
+ */
+it("nennt die Quelle, die vor der liefernden nichts hergab", async () => {
+  const { resolveMarketInput } = await import("../market-input");
+  const { providerId, systemClock } = await import("@sae/core");
+
+  const stumm: MarketDataAdapter = {
+    providerId: providerId("jupiter-quote"),
+    capabilities: ["TOKEN_MARKET"],
+    fetchMarket: async () => null,
+  };
+  const liefernd: MarketDataAdapter = {
+    providerId: providerId("dexscreener"),
+    capabilities: ["TOKEN_MARKET"],
+    fetchMarket: async () => ({
+      value: {
+        priceUsd: 0.00042, liquidityUsd: 180_000, marketCapUsd: 2_100_000,
+        volume24hUsd: 95_000, volume5mUsd: 400, buys5m: 30, sells5m: 22,
+        priceImpactBps: null, exitCapacityRatio: null, holders: null,
+      },
+      observedAt: null,
+    }),
+  };
+
+  const result = await resolveMarketInput(
+    {
+      kind: "LIVE",
+      tokenId: asTokenId("00000000-0000-4000-8000-000000000001"),
+      mint: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
+      adapters: new Map<KnownProviderId, MarketDataAdapter>([
+        ["jupiter-quote", stumm],
+        ["dexscreener", liefernd],
+      ]),
+      statusOf: () => "CONNECTED",
+      env: {
+        DEXSCREENER_BASE_URL: "https://dexscreener.invalid",
+        JUPITER_BASE_URL: "https://jupiter.invalid",
+        SOLANA_RPC_URL: "https://rpc.invalid",
+        MARKET_DATA_PRIORITY: "jupiter-quote,dexscreener",
+      } as NodeJS.ProcessEnv,
+      firstSeenAt: null,
+      allowDegraded: false,
+    },
+    systemClock,
+  );
+
+  expect(result.kind).toBe("OK");
+  if (result.kind !== "OK") return;
+  // Der Kern: der stumme Router steht benannt im Ergebnis, nicht nur sein
+  // Fehlen im Resultat.
+  expect(result.fallbackFrom).toEqual(["jupiter-quote=NO_DATA"]);
+  expect(result.provenance.sourceProvider).toBe("dexscreener");
+});

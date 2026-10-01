@@ -1,7 +1,7 @@
 import { sharedMarketAdapters } from "../pipeline/shared-market-adapters";
 import { and, eq } from "drizzle-orm";
 import { systemClock } from "@sae/core";
-import { PAPER_PROFILES, loadEnv, providerEnvSchema } from "@sae/config";
+import { loadEnv, paperCandidate, providerEnvSchema, readPaperEntryScore } from "@sae/config";
 import { countSnapshots, JobQueueRepository, ProviderHealthStore, recordSecurityFinding, schema } from "@sae/db";
 import { RugcheckReportAdapter } from "@sae/providers";
 import { toStatusReports, type HandlerDeps } from "../handlers";
@@ -56,21 +56,36 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
     if (!market.ingested) return report("WAITING_EXECUTABLE_MARKET", {}, true);
     const accounts: { account: string; status: string; score: number | null; detail?: string }[] = [];
     let retry = false;
-    // Highest-entry-frequency profile first; security and market acquisition are shared.
-    for (const profile of [...PAPER_PROFILES].reverse().filter((p) => p.candidate.parameters.entryGates.paperLaunchMode)) {
+    const schwelle = readPaperEntryScore(deps.env);
+    if (schwelle.kind === "INVALID") return report("ENTRY_SCORE_INVALID", { detail: schwelle.problem });
+    // Ein Konto. Vorher liefen hier drei Profile je Launch-Ereignis — dreimal
+    // dieselbe Entscheidung auf denselben Daten, mit dreifachem Anfragebudget.
+    for (const profile of [{ label: "Paper", candidate: paperCandidate(schwelle.score) }]) {
       const strategy = await ensurePaperCandidateVersion(deps.db, new Date(), profile.candidate);
       const [open] = await deps.db.select({ id: schema.paperPositions.id }).from(schema.paperPositions)
         .innerJoin(schema.strategyVersions, eq(schema.strategyVersions.id, schema.paperPositions.strategyVersionId))
         .innerJoin(schema.strategies, eq(schema.strategies.id, schema.strategyVersions.strategyId))
         .where(and(eq(schema.paperPositions.tokenId, token.id), eq(schema.strategies.name, profile.candidate.strategyId))).limit(1);
       if (open) { accounts.push({ account: profile.label, status: "ALREADY_TRADED", score: null }); continue; }
-      const result = await runDecision({ db: deps.db, logger: deps.logger, env: deps.env,
-      tokenId: token.id, mint: token.mint, firstSeenAt: token.firstSeenAt, strategyVersionId: strategy.id,
-      snapshotCount, providerReports: toStatusReports(health),
-      adapters, statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
-      quotes: buildQuoteSource(env), loadValuation: buildPaperValuation(env),
-      quoteMint: QUOTE_ANCHOR_MINT, entryAmountRaw: null, liquidityUsd: null,
-    });
+      // Eine geworfene Entscheidung darf den Sniper nicht ins Dead Letter
+      // tragen: das Ereignis ist dann verloren, obwohl der Fehler an EINEM
+      // Coin hing. Gezaehlt und benannt statt gescheitert.
+      let result: Awaited<ReturnType<typeof runDecision>>;
+      try {
+        result = await runDecision({ db: deps.db, logger: deps.logger, env: deps.env,
+        tokenId: token.id, mint: token.mint, firstSeenAt: token.firstSeenAt, strategyVersionId: strategy.id,
+        snapshotCount, providerReports: toStatusReports(health),
+        adapters, statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
+        quotes: buildQuoteSource(env), loadValuation: buildPaperValuation(env),
+        quoteMint: QUOTE_ANCHOR_MINT, entryAmountRaw: null, liquidityUsd: null,
+      });
+      } catch (error: unknown) {
+        const klasse = error instanceof Error ? error.constructor.name : "Unknown";
+        deps.logger.error({ role: "sniper", mint: token.mint, err: error },
+          "Sniper-Entscheidung gescheitert — Ereignis bleibt aufgezeichnet");
+        result = { outcome: "BLOCKED", detail: `Entscheidung warf ${klasse}`,
+          label: `FEHLER_${klasse}`, finalScore: null, missing: [] };
+      }
       accounts.push({ account: profile.label, status: result.label, score: result.finalScore, detail: result.detail });
       retry ||= result.outcome !== "ENTERED" && /INCOMPLETE|NO_SOURCE|LAUNCH_BUY_PRESSURE|QUOTE|NO_FEATURE|STALE/.test(result.label);
     }

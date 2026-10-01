@@ -5711,3 +5711,106 @@ Sechs neue Faelle fuer die Tor-Kennung, einer fuer die Abgrenzung gegen fehlende
 Bereitschaft, einer fuer den scheiternden Auftrag in der Fehlerliste, einer fuer
 die Fehlerklasse im Log. Keine Schwelle geaendert, keine Handelslogik
 angefasst, keine Live-Freigabe.
+
+## §141 — Ein Konto, eine freie Schwelle, und der Fehler der alles anhielt (2026-10-01)
+
+Vier Aenderungen auf Ansage des Betreibers, und eine davon war die Ursache
+des Stillstands.
+
+### Der Fehler: ein Coin riss den ganzen Lauf mit
+
+`runResumable` ruft `process(unit)` ungeschuetzt auf. Wirft eine Entscheidung,
+propagiert die Ausnahme aus dem Handler, der Auftrag scheitert — und der
+Checkpoint hat dieses Token NIE als erledigt vermerkt. Der naechste Versuch
+nimmt dasselbe Token, wirft dieselbe Ausnahme, scheitert wieder. Fuer immer.
+
+Im Betrieb sah das so aus: `EVALUATE_OPPORTUNITY` jede Minute in Wiederholung,
+`PAPER_SNIPER` im Dead Letter, seit 10:50 keine einzige Entscheidungszeile —
+waehrend die Marktdaten ungestoert weiterliefen, weil das ein anderer Auftrag
+ist. Eine Rotation, die am ersten unbewertbaren Coin haengen bleibt, bewertet
+nie wieder einen.
+
+Gefangen wird jetzt in der Schleife des Handlers und ausdruecklich NICHT in
+`runResumable`: dort waere es ein stilles Verschlucken fuer alle Aufrufer. Hier
+ist es eine benannte Ablehnung (`FEHLER_<Klasse>`), die gezaehlt wird, in der
+Diagnose steht und den Lauf weiterlaufen laesst. Dasselbe im Sniper, wo eine
+geworfene Entscheidung bisher das ganze Launch-Ereignis ins Dead Letter trug.
+
+Die Fehlerklasse steht im Etikett, die MELDUNG nur im Log-Feld `err`, wo die
+Schwaerzung greift.
+
+### Ein Konto statt drei
+
+Drei Profile nebeneinander waren als Vergleich gedacht und haben das Gegenteil
+bewirkt: dreimal dieselbe Arbeit je Coin, dreimal dieselben Router-Anfragen,
+drei Buchfuehrungen, und keine davon mit genug Beobachtungen, um etwas
+auszusagen. Wer drei unvalidierte Strategien gleichzeitig laufen laesst, hat am
+Ende drei unvalidierte Strategien.
+
+Nebenbei ist das vermutlich auch die Reparatur des Rueckfalls aus §140: das
+Jupiter-Anfragebudget je Takt faellt auf ein Drittel. Vermutlich — nachgewiesen
+ist es erst, wenn `rueckfall` im Log leer bleibt.
+
+### Die Einstiegsschwelle ist frei waehlbar
+
+`PAPER_ENTRY_SCORE`, eine ganze Zahl zwischen 10 und 95. Drei Entwurfs-
+entscheidungen stecken darin:
+
+**Die Schwelle ist eine Version.** `strategy_versions` ist unveraenderlich; eine
+Entscheidung verweist auf die Version, unter der sie fiel. Wuerde die Schwelle
+in einer bestehenden Version veraendert, waere jede frueher getroffene
+Entscheidung rueckwirkend an einer Regel gemessen, die damals nicht galt. Also
+traegt jede Schwelle ihre eigene Version (`2.0.0-s50`). Die KONTOFUEHRUNG haengt
+dagegen an der Strategie-Familie — Barbestand, offene Positionen und
+Verlustgrenzen laufen ueber eine Schwellenaenderung hinweg weiter.
+
+**Eine unbrauchbare Einstellung faellt NICHT still auf die Voreinstellung
+zurueck.** Das waere der teuerste Fehler: der Betreiber glaubt, bei 20 zu
+handeln, und das System handelt bei 50. Stattdessen wird nicht entschieden und
+der Grund benannt. `readPaperEntryScore` gibt dafuer eine unterschiedene
+Vereinigung zurueck (`SET` / `DEFAULT` / `INVALID`) und im `INVALID`-Fall
+bewusst GAR KEINE Zahl.
+
+**Die uebrigen Tore wandern nicht mit.** Sicherheit, Momentum, Liquiditaet und
+Halterkonzentration messen etwas anderes als der Endscore. Wuerden sie
+mitskalieren, hiesse eine niedrigere Schwelle heimlich auch „weniger
+Sicherheitspruefung" — genau das soll die Einstellung nicht koennen. Ein Test
+haelt das fest, ein zweiter zeigt, dass dieselbe Beobachtung bei 35 einsteigt
+und bei 95 nicht.
+
+### Warum die Einstellung nicht im Dashboard steht
+
+Die Oberflaeche hat keine Anmeldung — `apps/web/lib/auth.ts` ist ein Vertrag
+ohne Implementierung, und es gibt keine Middleware. Ein Eingabefeld, das die
+Handelsschwelle schreibt, waere ein Schreibzugriff fuer jeden, der die Adresse
+kennt. Solange die Anmeldung nicht steht, wird die Schwelle in der Umgebung des
+Workers gesetzt.
+
+Die Anzeige liest ausserdem NICHT ihre eigene Umgebung. Dashboard und Worker
+laufen auf verschiedenen Maschinen (Vercel und Railway); `process.env` in der
+Oberflaeche zeigte eine Zahl, mit der nie jemand entschieden hat — die
+gefaehrlichste Sorte Anzeige, weil sie plausibel aussieht. Gemeldet wird, was
+der Worker im letzten Lauf benutzt hat, samt Herkunft.
+
+### Der Rueckfall hat jetzt einen Namen
+
+`resolveFromChain` fuehrt seine Versuche laengst mit; auf dem Erfolgspfad wurden
+sie weggeworfen. Faellt die Kette vom Router auf die Marktdatenquelle zurueck,
+fehlen anschliessend Preiseinfluss und Ausstiegsfaehigkeit, der Snapshot traegt
+keinen Zeitstempel, und die Entscheidung endet drei Schritte spaeter mit
+`DATA_QUALITY_TOO_LOW` — mit einem Grund, der nach einem Datenproblem aussieht,
+obwohl die Auskunft lautet: der Router hat nicht geantwortet. Neues Logfeld
+`rueckfall: jupiter-quote=NO_DATA`.
+
+### Dashboard
+
+Vorher war ALLES Monospace bei 13 px, auch die erklaerenden Absaetze. Monospace
+ist fuer Zahlen, Adressen und Etiketten gebaut; bei Fliesstext kostet sie Tempo,
+ohne etwas dafuer zu geben. Jetzt: Zahlen und Kennungen bleiben Monospace und
+tabellarisch ausgerichtet, Fliesstext bekommt eine Proportionalschrift, Flaechen
+bekommen Rahmen, Radien und Abstand, das Raster bricht von selbst um. Keine
+Zahl und keine Aussage wurde entfernt.
+
+Validierung: 157 Dateien / 1601 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Keine Live-Freigabe, keine Handelslogik ausserhalb der
+beschriebenen Schwelle angefasst.

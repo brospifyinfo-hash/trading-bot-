@@ -94,9 +94,9 @@ it("preserves a sell rate-limit cause so the sniper can retry", async () => {
 });
 
 it("applies the wider cost budget only to the very aggressive paper account", async () => {
-  const { MEMECOIN_VERY_AGGRESSIVE_PAPER_CANDIDATE } = await import("@sae/config");
+  const { paperCandidate } = await import("@sae/config");
   const { input } = setup();
   input.quotes.quote = async (plan) => observed({ outAmount: plan.inAmount, priceImpactBps: bps(100) }, providerId("TEST_FIXTURE"), at);
   expect(await preparePaperEntry(input)).toMatchObject({ kind: "BLOCKED", reason: "COSTS_EXCEED_LIMIT" });
-  expect(await preparePaperEntry({ ...input, parameters: MEMECOIN_VERY_AGGRESSIVE_PAPER_CANDIDATE.parameters })).toMatchObject({ kind: "READY" });
+  expect(await preparePaperEntry({ ...input, parameters: paperCandidate(35).parameters })).toMatchObject({ kind: "READY" });
 });

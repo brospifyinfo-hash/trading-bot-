@@ -97,6 +97,23 @@ export type MarketInputResult =
       readonly freshnessSeconds: number | null;
       /** Nur beim Fixture gesetzt — der Live-Pfad baut die Features selbst. */
       readonly features: FeatureVector | null;
+      /**
+       * Wer VOR der liefernden Quelle gefragt wurde und nichts hergab.
+       *
+       * Leer, wenn die erste Quelle geantwortet hat. Steht etwas darin, ist
+       * das ein Rueckfall — und bei Marktdaten ist ein Rueckfall keine
+       * Nebensaechlichkeit: faellt die Kette vom Router auf die
+       * Marktdatenquelle zurueck, fehlen anschliessend Preiseinfluss und
+       * Ausstiegsfaehigkeit, und der Snapshot traegt keinen Zeitstempel. Die
+       * Entscheidung endet dann drei Schritte spaeter mit
+       * `DATA_QUALITY_TOO_LOW` — mit einem Grund, der nach einem Datenproblem
+       * aussieht, obwohl die eigentliche Auskunft lautet: der Router hat
+       * nicht geantwortet, und zwar deshalb.
+       *
+       * `resolveFromChain` fuehrt die Versuche laengst mit; sie wurden auf dem
+       * Erfolgspfad nur weggeworfen.
+       */
+      readonly fallbackFrom: readonly string[];
     }
   /** Keine Quelle hat geantwortet. Regulaeres Ergebnis, kein Fehler. */
   | {
@@ -122,6 +139,8 @@ export async function resolveMarketInput(
       kind: "OK",
       market: null,
       features: request.features,
+      // Ein Fixture fragt keine Kette. Kein Rueckfall, nicht „unbekannt".
+      fallbackFrom: [],
       // Beim Fixture ist die Differenz eine echte Aussage: `asOf` ist ein
       // angegebener Datenzeitpunkt und nicht unsere Abrufzeit.
       freshnessSeconds:
@@ -186,6 +205,10 @@ export async function resolveMarketInput(
     kind: "OK",
     market: result.data.value,
     features,
+    // Alles vor dem erfolgreichen Versuch. `OK` steht nur am letzten.
+    fallbackFrom: result.attempts
+      .filter((a) => a.outcome !== "OK")
+      .map((a) => `${String(a.providerId)}=${a.outcome}`),
     // Unveraendert aus der Kette. Bei DexScreener ist das `null`.
     freshnessSeconds: result.data.freshnessSeconds,
     provenance: {

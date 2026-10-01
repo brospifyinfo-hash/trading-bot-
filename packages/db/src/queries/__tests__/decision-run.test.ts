@@ -66,3 +66,45 @@ it("preserves per-coin causes and ignores invalid diagnostic payloads", () => {
   expect(parseDecisionRun({ coinDiagnostics: [coin, { ...coin, mint: "bad" }] }, NOW).coinDiagnostics).toEqual([coin]);
   expect(parseDecisionRun({ coinDiagnostics: [{ ...coin, diagnostics: { ...coin.diagnostics, completeness: -1 } }] }, NOW).coinDiagnostics?.[0]?.diagnostics).toBeUndefined();
 });
+
+/**
+ * Die Schwelle, die der WORKER benutzt hat — und ihre Herkunft.
+ *
+ * Die Oberflaeche laeuft bei Vercel, der Worker bei Railway. Zwei getrennte
+ * Umgebungen. Laese das Dashboard seine eigene `PAPER_ENTRY_SCORE`, stuende
+ * dort eine Zahl, mit der nie jemand entschieden hat — und sie saehe
+ * vollkommen plausibel aus. Also meldet der Lauf beides mit, und hier wird
+ * festgehalten, dass es ankommt.
+ */
+it("meldet Schwelle und Herkunft aus dem Lauf, nicht aus der eigenen Umgebung", () => {
+  const gesetzt = parseDecisionRun(
+    { entryThreshold: 35, entryThresholdSource: "SET",
+      accounts: [{ label: "Paper", entryThreshold: 35, outcomes: { WATCH: 4 } }] },
+    NOW,
+  );
+  expect(gesetzt.entryThreshold).toBe(35);
+  expect(gesetzt.entryThresholdSource).toBe("SET");
+  // Das eine Konto darf nicht an der Etikettenpruefung haengen bleiben.
+  expect(gesetzt.accounts).toEqual([{ label: "Paper", entryThreshold: 35, outcomes: { WATCH: 4 } }]);
+
+  expect(parseDecisionRun({ entryThreshold: 50, entryThresholdSource: "DEFAULT" }, NOW).entryThresholdSource)
+    .toBe("DEFAULT");
+
+  // Alte Laeufe kannten das Feld nicht. Unbekannt bleibt unbekannt — hier
+  // „SET" anzunehmen hiesse zu behaupten, jemand haette gewaehlt.
+  expect(parseDecisionRun({ entryThreshold: 75 }, NOW).entryThresholdSource).toBeNull();
+  expect(parseDecisionRun({ entryThreshold: 75, entryThresholdSource: "IRGENDWAS" }, NOW).entryThresholdSource).toBeNull();
+});
+
+it("laesst historische Laeufe mit den alten Kontoetiketten lesbar", () => {
+  // Sonst verschwaende das Dashboard rueckwirkend jeden Lauf von vor der
+  // Umstellung auf ein Konto.
+  const alt = parseDecisionRun(
+    { accounts: [
+      { label: "Standard", entryThreshold: 75, outcomes: { WATCH: 1 } },
+      { label: "Sehr offensiv", entryThreshold: 35, outcomes: { WATCH: 2 } },
+    ] },
+    NOW,
+  );
+  expect(alt.accounts).toHaveLength(2);
+});

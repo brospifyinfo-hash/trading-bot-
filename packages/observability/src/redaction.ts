@@ -88,6 +88,9 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // die Verbindungszeichenfolge. Wer sie braucht, liest sie im Dashboard,
   // wo sie aus der Queue kommt und nicht durch die Logs reist.
   "failure",
+  // Wer vor der liefernden Quelle nichts hergab. Anbieterkennungen und
+  // Ausgangsarten, beide aus geschlossenen Aufzaehlungen.
+  "rueckfall",
 ]);
 
 /**

@@ -183,6 +183,8 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
    * Aus `EntryBlockCode`, also aus eigenem Code und nicht aus Anbietertext.
    */
   readonly code?: string;
+  /** Quellen, die vor der liefernden nichts hergaben. Leer heisst: keine. */
+  readonly fallbackFrom?: readonly string[];
   readonly diagnostics?: import("./opportunity-pipeline").InputDiagnostics;
 }> {
   const candidate = usesPaperCandidate(deps.env);
@@ -288,6 +290,8 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
     // Urteile ab; welches davon zutraf, ist die einzige Angabe, aus der sich
     // eine Gegenmassnahme ableiten laesst.
     ...(result.kind === "BLOCKED" && result.code !== undefined ? { code: result.code } : {}),
+    ...(result.kind === "BLOCKED" && result.fallbackFrom !== undefined
+      ? { fallbackFrom: result.fallbackFrom } : {}),
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
   };
 }

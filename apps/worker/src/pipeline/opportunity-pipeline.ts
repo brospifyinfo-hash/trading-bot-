@@ -131,6 +131,14 @@ export type PipelineOutcome = (
        * `BELOW_THRESHOLD`.
        */
       readonly code?: string;
+      /**
+       * Wer vor der liefernden Quelle nichts hergab.
+       *
+       * Bei `FALLBACK_TIER` ist das die eigentliche Auskunft: nicht „die Daten
+       * sind schlecht", sondern „der Router hat nicht geantwortet, und zwar
+       * deshalb".
+       */
+      readonly fallbackFrom?: readonly string[];
     }
   /** Bewertet, aber kein Einstieg. Die Gelegenheit wird trotzdem festgehalten. */
   | {
@@ -342,6 +350,7 @@ export async function runOpportunityPipeline(
       detail: blocked?.detail ?? "Kein Strom geoeffnet.",
       ...(blocked?.missing === undefined ? {} : { missing: blocked.missing }),
       ...(blocked?.code === undefined ? {} : { code: blocked.code }),
+      ...(input.fallbackFrom.length === 0 ? {} : { fallbackFrom: input.fallbackFrom }),
     };
   }
 

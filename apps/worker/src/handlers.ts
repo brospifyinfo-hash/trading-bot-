@@ -18,7 +18,7 @@ import {
 import { tally, type Logger } from "@sae/observability";
 import type { ProviderStatus, ProviderStatusReport } from "@sae/providers";
 import { buildMarketDataChain, runResumable, type MarketDataAdapter } from "@sae/pipeline";
-import { MEMECOIN_PAPER_CANDIDATE, PAPER_PROFILES, DEFAULT_STRATEGY_PARAMETERS, loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
+import { DEFAULT_STRATEGY_PARAMETERS, loadEnv, paperCandidate, providerEnvSchema, readPaperEntryScore, type KnownProviderId } from "@sae/config";
 
 import type { HandlerRegistry, JobHandler } from "./consumer";
 import { buildQuoteSource } from "./pipeline/quote-source";
@@ -353,14 +353,24 @@ class EvaluateOpportunityHandler implements JobHandler {
       return waitingForData("Ungueltige PAPER_STRATEGY-Konfiguration");
     }
     const candidate = usesPaperCandidate(this.deps.env);
-    const strategies = candidate
-      ? await Promise.all(PAPER_PROFILES.map(async (profile) => ({
-          ...await ensurePaperCandidateVersion(this.deps.db, systemClock.now(), profile.candidate),
-          label: profile.label, threshold: profile.candidate.parameters.entryGates.minFinalScore,
-        })))
+    // Die gewaehlte Einstiegsschwelle. Bei einer unbrauchbaren Einstellung
+    // wird NICHT still auf die Voreinstellung zurueckgefallen: der Betreiber
+    // glaubte dann, bei seiner Zahl zu handeln, und das System handelte bei
+    // einer anderen. Lieber keine Entscheidung und ein benannter Grund.
+    const schwelle = readPaperEntryScore(this.deps.env);
+    if (candidate && schwelle.kind === "INVALID") {
+      return waitingForData(schwelle.problem);
+    }
+    const profil = schwelle.kind === "INVALID" ? null : paperCandidate(schwelle.score);
+    const strategies = candidate && profil !== null
+      ? [{
+          ...await ensurePaperCandidateVersion(this.deps.db, systemClock.now(), profil),
+          label: "Paper", threshold: profil.parameters.entryGates.minFinalScore,
+        }]
       : [{ ...await ensureActiveStrategyVersion({ db: this.deps.db,
           parameters: DEFAULT_STRATEGY_PARAMETERS, at: systemClock.now() }),
           label: "Legacy", threshold: DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore }];
+    const entrySchwelle = strategies[0]!.threshold;
     const accounts = strategies.map((strategy) => ({ label: strategy.label,
       entryThreshold: strategy.threshold, outcomes: {} as Record<string, number> }));
 
@@ -423,6 +433,10 @@ class EvaluateOpportunityHandler implements JobHandler {
     // Vier davon treten im Betrieb regelmaessig auf, und jedes verlangt etwas
     // anderes. Ohne diese Auszaehlung war die Zahl im Log eine Wand.
     const datenTore: Record<string, number> = {};
+    // Wer vor der liefernden Quelle nichts hergab. Bei `FALLBACK_TIER` ist das
+    // die eigentliche Auskunft — nicht „die Daten sind schlecht", sondern
+    // „der Router hat nicht geantwortet, und zwar deshalb".
+    const rueckfaelle: Record<string, number> = {};
     const coinDiagnostics: { mint: string; account: string; outcome: string; detail: string; code?: string; diagnostics?: import("./pipeline/opportunity-pipeline").InputDiagnostics }[] = [];
 
     // Dieselbe Rotation wie beim Marktdaten-Lauf, mit eigenem Schluessel.
@@ -437,8 +451,31 @@ class EvaluateOpportunityHandler implements JobHandler {
       process: async (token) => {
       const adapters = sharedMarketAdapters(this.deps.adapters ?? new Map());
       for (const [index, strategy] of strategies.entries()) {
-      // Offensiv also evaluates discovered markets; launch events are an additional fast path.
-      const result = await runDecision({
+      /**
+       * Ein Token darf den ganzen Lauf nicht mitreissen.
+       *
+       * Der Fehler, der das System zum zweiten Mal stillgelegt hat — und
+       * diesmal vollstaendig: `runResumable` ruft `process(unit)` ungeschuetzt
+       * auf. Wirft eine Entscheidung, propagiert die Ausnahme aus dem
+       * Handler, der Auftrag scheitert, und — das ist der toedliche Teil —
+       * der Checkpoint hat dieses Token NIE als erledigt vermerkt. Der
+       * naechste Versuch nimmt dasselbe Token, wirft dieselbe Ausnahme,
+       * scheitert wieder. Fuer immer.
+       *
+       * Im Betrieb sah das so aus: `EVALUATE_OPPORTUNITY` wurde jede Minute
+       * wiederholt, `PAPER_SNIPER` ging ins Dead Letter, und seit 10:50 kam
+       * keine einzige Entscheidungszeile mehr — waehrend die Marktdaten
+       * ungestoert weiterliefen, weil das ein anderer Auftrag ist.
+       *
+       * Gefangen wird deshalb HIER und nicht in `runResumable`: dort waere es
+       * ein stilles Verschlucken fuer alle Aufrufer. Hier ist es eine
+       * benannte Ablehnung, die gezaehlt wird, in der Diagnose steht und den
+       * Lauf weiterlaufen laesst. Ein Token, das nicht bewertbar ist, ist
+       * ein Befund — kein Grund, die anderen neunzehn nicht zu bewerten.
+       */
+      let result: Awaited<ReturnType<typeof runDecision>>;
+      try {
+        result = await runDecision({
         db: this.deps.db,
         logger: this.deps.logger,
         env: this.deps.env,
@@ -457,7 +494,23 @@ class EvaluateOpportunityHandler implements JobHandler {
         liquidityUsd: null,
         quoteMint: QUOTE_ANCHOR_MINT,
         entryAmountRaw,
-      });
+        });
+      } catch (error: unknown) {
+        // Die Fehlerklasse ins Etikett, die MELDUNG nur ins Log-Feld `err`
+        // (dort ist die Behandlung bewusst und die Schwaerzung greift).
+        const klasse = error instanceof Error ? error.constructor.name : "Unknown";
+        this.deps.logger.error(
+          { role: "decision", mint: token.mint, err: error },
+          "Entscheidung fuer einen Coin gescheitert — Lauf geht weiter",
+        );
+        result = {
+          outcome: "BLOCKED",
+          detail: `Entscheidung warf ${klasse}`,
+          label: `FEHLER_${klasse}`,
+          finalScore: null,
+          missing: [],
+        };
+      }
       // Gezaehlt wird das Etikett MIT Grund, nicht die blosse Ergebnisart.
       // `NO_ENTRY=5` sagte, dass nichts gekauft wurde, und verschwieg warum —
       // genau die Auskunft, die beim Pruefen gebraucht wird (§122).
@@ -477,6 +530,10 @@ class EvaluateOpportunityHandler implements JobHandler {
       if (result.code !== undefined) {
         const bisher = datenTore[result.code];
         datenTore[result.code] = bisher === undefined ? 1 : bisher + 1;
+      }
+      for (const quelle of result.fallbackFrom ?? []) {
+        const bisher = rueckfaelle[quelle];
+        rueckfaelle[quelle] = bisher === undefined ? 1 : bisher + 1;
       }
       }
       },
@@ -510,11 +567,16 @@ class EvaluateOpportunityHandler implements JobHandler {
         // `BELOW_THRESHOLD` ist eine gemessene Marktaussage und gar kein
         // Datenproblem. Drei Lagen, drei Gegenmassnahmen.
         ...(Object.keys(datenTore).length > 0 ? { datenTor: tally(datenTore) } : {}),
+        // `jupiter-quote=NO_DATA` heisst: der Router hat nichts geliefert, und
+        // die Kette ist auf DexScreener zurueckgefallen — eine Quelle, die per
+        // Bauart keinen Einstieg tragen kann. Ohne diese Zeile sieht man am
+        // Ende nur das Ergebnis und nicht den Weg dorthin.
+        ...(Object.keys(rueckfaelle).length > 0 ? { rueckfall: tally(rueckfaelle) } : {}),
         ...(bester === null
           ? {}
           : {
               bestScore: bester,
-              entrySchwelle: candidate ? MEMECOIN_PAPER_CANDIDATE.parameters.entryGates.minFinalScore : DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+              entrySchwelle,
             }),
       },
       "Gelegenheiten geprueft",
@@ -532,7 +594,10 @@ class EvaluateOpportunityHandler implements JobHandler {
       skipped: run.skipped,
       roundComplete: run.completed,
       bestScore: bester,
-      entryThreshold: candidate ? MEMECOIN_PAPER_CANDIDATE.parameters.entryGates.minFinalScore : DEFAULT_STRATEGY_PARAMETERS.entryGates.minFinalScore,
+      entryThreshold: entrySchwelle,
+      // Woher die Schwelle stammt: gesetzt oder ausgeliefert. Eine Zahl ohne
+      // diese Angabe sieht nach einer getroffenen Entscheidung aus.
+      entryThresholdSource: schwelle.kind,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
       accounts,

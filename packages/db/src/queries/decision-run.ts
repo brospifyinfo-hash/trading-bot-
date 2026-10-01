@@ -28,6 +28,15 @@ export interface DecisionRunReport {
   readonly roundComplete: boolean | null;
   readonly bestScore: number | null;
   readonly entryThreshold: number | null;
+  /**
+   * Woher die Schwelle stammt, aus Sicht des WORKERS.
+   *
+   * Entscheidend, weil das Dashboard auf einer anderen Maschine laeuft als der
+   * Worker: die Variable steht bei Railway, die Oberflaeche bei Vercel. Liest
+   * die Oberflaeche ihre eigene Umgebung, zeigt sie eine Zahl an, mit der nie
+   * jemand entschieden hat. Also wird gemeldet, was der Worker benutzt hat.
+   */
+  readonly entryThresholdSource: "SET" | "DEFAULT" | null;
   readonly sizing: SizingReport | null;
   readonly accounts?: readonly { label: string; entryThreshold: number; outcomes: Readonly<Record<string, number>> }[];
 }
@@ -77,12 +86,21 @@ export function parseDecisionRun(result: unknown, finishedAt: Date): DecisionRun
     roundComplete: typeof r?.roundComplete === "boolean" ? r.roundComplete : null,
     bestScore: count(r?.bestScore),
     entryThreshold: count(r?.entryThreshold),
+    entryThresholdSource:
+      r?.entryThresholdSource === "SET" || r?.entryThresholdSource === "DEFAULT"
+        ? r.entryThresholdSource
+        : null,
     sizing: sizingReport(r?.sizing),
     ...(Array.isArray(r?.accounts) ? { accounts: r.accounts.flatMap((value: unknown) => {
       const a = record(value);
       const threshold = count(a?.entryThreshold);
       const outcomes = counts(a?.outcomes);
-      return a !== null && (a.label === "Standard" || a.label === "Offensiv" || a.label === "Sehr offensiv" || a.label === "Legacy")
+      // Die Etiketten stammen aus eigenem Code und werden hier gegen eine
+      // geschlossene Liste geprueft — ein Lauf schreibt sein Ergebnis als
+      // JSON, und daraus wird gelesen. "Paper" ist das einzige Konto; die
+      // drei alten Etiketten bleiben lesbar, damit historische Laeufe im
+      // Dashboard nicht verschwinden.
+      return a !== null && (a.label === "Paper" || a.label === "Standard" || a.label === "Offensiv" || a.label === "Sehr offensiv" || a.label === "Legacy")
         && threshold !== null && outcomes !== null
         ? [{ label: a.label, entryThreshold: threshold, outcomes }] : [];
     }) } : {}),
