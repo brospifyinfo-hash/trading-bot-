@@ -277,3 +277,13 @@ describe("Dispatcher als Schnittstelle des Schedulers", () => {
     expect(await dispatcher.enqueue(request)).toBe(false);
   });
 });
+
+it("prioritizes fresh sniper work without changing the default queue order", async () => {
+  await queue.enqueue({ ...job("old", "PAPER_SNIPER"), at: at(0) });
+  const fresh = await queue.enqueue({ ...job("fresh", "PAPER_SNIPER"), at: at(1000) });
+  expect(await queue.countRecentOpen("PAPER_SNIPER", at(500))).toBe(1);
+  const claimed = await queue.claim({ workerId: "sniper", kinds: ["PAPER_SNIPER"], newestFirst: true, limit: 1, now: at(2000), leaseMs: 60000 });
+  expect(claimed[0]?.id).toBe(fresh.kind === "ENQUEUED" ? fresh.jobId : "missing");
+  const next = await queue.claim({ workerId: "sniper", kinds: ["PAPER_SNIPER"], limit: 1, now: at(2000), leaseMs: 60000 });
+  expect(next[0]?.payload).toEqual({ note: "old" });
+});

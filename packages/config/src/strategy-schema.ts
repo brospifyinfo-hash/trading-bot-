@@ -15,6 +15,9 @@ export const takeProfitLevelSchema = z.object({
 
 export const entryGatesSchema = z.object({
   paperLaunchMode: z.boolean().optional(),
+  paperLaunchMinBuys: z.number().int().min(1).optional(),
+  paperLaunchMinBuyShare: z.number().min(0).max(1).optional(),
+  paperLaunchMaxAgeSeconds: z.number().int().min(1).max(120).optional(),
   minFinalScore: scoreSchema,
   minSecurityScore: scoreSchema,
   minLiquidityUsd: z.number().positive(),
@@ -36,6 +39,7 @@ export const entryGatesSchema = z.object({
 });
 
 export const riskSchema = z.object({
+  paperMaxRoundTripCostBps: bpsSchema.max(1000).optional(),
   riskPerTradePct: pctSchema.max(HARD_LIMITS.maxRiskPerTradePct),
   maxPositionPct: pctSchema.max(HARD_LIMITS.maxPositionPctOfPortfolio),
   maxPortfolioExposurePct: pctSchema.max(HARD_LIMITS.maxPortfolioExposurePct),

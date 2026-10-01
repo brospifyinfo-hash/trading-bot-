@@ -16,10 +16,12 @@ export async function loadPaperSniper(db: Database) {
   const text = (value: unknown) => typeof value === "string" ? value.slice(0,150) : null;
   return { updatedAt: feed[0]?.updatedAt ?? null, state: text(data.state), received: count("received"),
     dispatched: count("dispatched"), dropped: count("dropped"), pending: count("pending"), lastEvent: text(data.lastEvent),
-    jobs: jobs.map((j) => {
+    jobs: jobs.flatMap((j) => {
       const p = j.payload as Record<string, unknown> | null, r = j.result as Record<string, unknown> | null;
-      return { at: j.at, mint: text(p?.mint), event: text(p?.kind), outcome: text(r?.status) ?? j.state,
-        score: typeof r?.score === "number" && Number.isFinite(r.score) ? r.score : null,
-        latencyMs: typeof r?.latencyMs === "number" ? r.latencyMs : null };
+      const accounts = Array.isArray(r?.accounts) ? r.accounts.filter((a): a is Record<string, unknown> => a !== null && typeof a === "object") : [r];
+      return accounts.map((a) => ({ at: j.at, mint: text(p?.mint), event: text(p?.kind),
+        account: text(a?.account) ?? "Offensiv", outcome: text(a?.status) ?? j.state,
+        score: typeof a?.score === "number" && Number.isFinite(a.score) ? a.score : null,
+        latencyMs: typeof r?.latencyMs === "number" ? r.latencyMs : null }));
     }) };
 }

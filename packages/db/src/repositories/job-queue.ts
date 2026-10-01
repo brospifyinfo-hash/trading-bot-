@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, or, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
 import type { JobDispatcher, JobRequest } from "@sae/pipeline";
 
 import { asDate } from "../coerce";
@@ -114,9 +114,17 @@ export class JobQueueRepository {
    * anderer gerade beansprucht, statt auf sie zu warten. Damit skaliert die
    * Queue ueber mehrere Prozesse, ohne dass sie sich gegenseitig blockieren.
    */
+  async countRecentOpen(kind: string, since: Date): Promise<number> {
+    const [row] = await this.db.select({ n: sql<number>`count(*)::int` }).from(jobQueue)
+      .where(and(eq(jobQueue.kind, kind), or(eq(jobQueue.state, "RUNNING"),
+        and(eq(jobQueue.state, "QUEUED"), gte(jobQueue.enqueuedAt, since)))));
+    return row?.n ?? 0;
+  }
+
   async claim(input: {
     readonly workerId: string;
     readonly kinds?: readonly string[];
+    readonly newestFirst?: boolean;
     readonly limit: number;
     readonly now: Date;
     readonly leaseMs: number;
@@ -134,7 +142,7 @@ export class JobQueueRepository {
           kinds.length === 0 ? undefined : inArray(jobQueue.kind, [...kinds]),
         ),
       )
-      .orderBy(asc(jobQueue.priority), asc(jobQueue.runAfter))
+      .orderBy(asc(jobQueue.priority), input.newestFirst ? desc(jobQueue.enqueuedAt) : asc(jobQueue.runAfter))
       .limit(input.limit)
       // Der entscheidende Zusatz: ein Consumer ueberspringt gesperrte Zeilen,
       // statt auf sie zu warten.

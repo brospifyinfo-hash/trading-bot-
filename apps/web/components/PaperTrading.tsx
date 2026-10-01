@@ -12,7 +12,7 @@ export function PaperTrading({ data, label = "Standard", description, refresh = 
   return <section className="panel paper-account">
     <div className="paper-heading"><h2>Paper-Konto · {label}</h2>{refresh && <PaperRefresh />}</div>
     <p>Simulierter Handel mit Solana-Tokens über Jupiter-Router-Quotes. Kein echtes Geld.
-      Beide Konten handeln unabhängig mit jeweils eigenem Startkapital.</p>
+      Alle Konten handeln unabhängig mit jeweils eigenem Startkapital.</p>
     {description && <p>{description}</p>}
     <p className="muted">Datenstand: {date(data.updatedAt)}</p>
     {data.kind !== "READY" ? <p role="status">{data.kind === "WAITING"

@@ -165,7 +165,7 @@ export const consumerRole: RoleHandler = {
     if (usesPaperCandidate(process.env) && process.env.PAPER_SNIPER_ENABLED !== "false") {
       sniperConsumer = new JobConsumer({ workerId: `${hostname()}:${process.pid}:sniper`,
         queue, handlers, logger: ctx.logger, now: () => systemClock.now(),
-        leaseMs: 180_000, batchSize: 1, kinds: ["PAPER_SNIPER"] });
+        leaseMs: 180_000, batchSize: 1, newestFirst: true, kinds: ["PAPER_SNIPER"] });
       sniperConsumer.start(5000);
       stopLaunchFeed = startLaunchFeed(db, ctx.logger);
     }

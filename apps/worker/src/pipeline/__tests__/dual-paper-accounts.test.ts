@@ -29,7 +29,7 @@ it("keeps the deployed Standard rules and independent account ledgers for simult
     }));
     const opportunities = [];
     for (const input of inputs) opportunities.push(await repo.create(input));
-    expect(opportunities.map((o) => o.kind)).toEqual(["CREATED", "CREATED"]);
+    expect(opportunities.map((o) => o.kind)).toEqual(["CREATED", "CREATED", "CREATED"]);
     expect(opportunities[0]!.opportunityId).not.toBe(opportunities[1]!.opportunityId);
     for (const [i, input] of inputs.entries()) expect(await repo.create(input)).toEqual({ kind: "DUPLICATE", opportunityId: opportunities[i]!.opportunityId });
     const opened = [];
@@ -41,6 +41,11 @@ it("keeps the deployed Standard rules and independent account ledgers for simult
     const read = (index: number) => loadPaperTrading({ db, strategyName: PAPER_PROFILES[index]!.candidate.strategyId, now: at });
     const standard = await read(0);
     const offensive = await read(1);
+    const veryOffensive = await read(2);
+    expect(veryOffensive.kind).toBe("READY");
+    if (veryOffensive.kind !== "READY") throw new Error("Third account unavailable");
+    expect(veryOffensive.account.cash).toEqual(eur(2899));
+    expect(veryOffensive.open).toHaveLength(1);
     expect(standard.kind).toBe("READY"); expect(offensive.kind).toBe("READY");
     if (standard.kind !== "READY" || offensive.kind !== "READY") throw new Error("Account unavailable");
     expect(standard.account.cash).toEqual(eur(2949));
@@ -52,6 +57,7 @@ it("keeps the deployed Standard rules and independent account ledgers for simult
       proceeds: eur(120), costs: eur(1), at, reason: "TAKE_PROFIT", levelIndex: null,
       maxAdverseExcursion: 0, maxFavorableExcursion: .2, valuation: { source: "TEST_FIXTURE" } });
     expect(await read(0)).toEqual(standard);
+    expect(await read(2)).toEqual(veryOffensive);
     const settled = await read(1);
     if (settled.kind !== "READY") throw new Error("Account unavailable");
     expect(settled.account.cash).toEqual(eur(3018));
@@ -75,8 +81,8 @@ it("persists distinct strategy decisions for an identical feature observation", 
       await runOpportunityPipeline(request, { ...deps, decisionContext: { ...deps.decisionContext, tokenBlacklisted: true } });
     }
     const decisions = await h.db.select().from(schema.decisions);
-    expect(decisions).toHaveLength(2);
-    expect(new Set(decisions.map((d) => d.strategyVersionId)).size).toBe(2);
+    expect(decisions).toHaveLength(3);
+    expect(new Set(decisions.map((d) => d.strategyVersionId)).size).toBe(3);
     expect(decisions.every((d) => d.branchCount === 2)).toBe(true);
   } finally { await h.close(); }
 }, 30_000);
@@ -96,8 +102,8 @@ it("evaluates both accounts in rotation in addition to the offensive launch feed
       env: { DATABASE_URL: "postgres://test.invalid/test", PAPER_STRATEGY: "memecoin-risk-managed-v1" } }).EVALUATE_OPPORTUNITY!;
     const result = await handler.handle({} as never) as { processed: number; accounts: { label: string; entryThreshold: number; outcomes: Record<string, number> }[] };
     expect(result.processed).toBe(1);
-    expect(result.accounts.map((a) => [a.label, a.entryThreshold])).toEqual([["Standard", 75], ["Offensiv", 50]]);
-    expect(result.accounts.map((a) => Object.values(a.outcomes).reduce((sum, n) => sum + n, 0))).toEqual([1, 1]);
+    expect(result.accounts.map((a) => [a.label, a.entryThreshold])).toEqual([["Standard", 75], ["Offensiv", 50], ["Sehr offensiv", 35]]);
+    expect(result.accounts.map((a) => Object.values(a.outcomes).reduce((sum, n) => sum + n, 0))).toEqual([1, 1, 1]);
     expect(await db.select().from(schema.paperPositions)).toHaveLength(0); // Missing live data never becomes a forced trade.
   } finally { await close(); }
 }, 30_000);

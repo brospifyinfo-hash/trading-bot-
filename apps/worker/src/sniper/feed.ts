@@ -70,7 +70,7 @@ export function startLaunchFeed(db: Database, logger: Logger): () => Promise<voi
         pending.delete(mint); dropped++;
       }
       const event = [...pending.values()].find((e) => e.kind === "migrate") ?? pending.values().next().value;
-      if (event) {
+      if (event && await queue.countRecentOpen("PAPER_SNIPER", new Date(now.getTime() - 600_000)) < 2) {
         const result = await queue.enqueue({ kind: "PAPER_SNIPER", payload: { ...event, attempt: 0 },
           dedupeKey: `paper-sniper:${event.signature}:0`, at: now, priority: 50 });
         pending.delete(event.mint);

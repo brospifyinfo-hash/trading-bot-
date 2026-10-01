@@ -93,7 +93,10 @@ export async function preparePaperEntry(input: {
   const fullScenario = fullExit.fee + shortfall(fullExit.proceeds);
   const total = cost(purchase.notional, quote) + (ladderScenario > fullScenario ? ladderScenario : fullScenario);
   const reserve = money(total, purchase.notional.currency);
-  if (total * 10000n > purchase.notional.minor * BigInt(MEMECOIN_PAPER_CANDIDATE.maxRoundTripCostBps)) return block("COSTS_EXCEED_LIMIT");
+  const maxCostBps = input.context.executionMode === "paper" && parameters.entryGates.paperLaunchMode
+    ? parameters.risk.paperMaxRoundTripCostBps ?? MEMECOIN_PAPER_CANDIDATE.maxRoundTripCostBps
+    : MEMECOIN_PAPER_CANDIDATE.maxRoundTripCostBps;
+  if (total * 10000n > purchase.notional.minor * BigInt(maxCostBps)) return block("COSTS_EXCEED_LIMIT");
   if (purchase.notional.minor + total > account.cash.minor) return block("INSUFFICIENT_PAPER_CASH");
   const exposure = checkExposure(account.portfolio, money(purchase.notional.minor + total, account.cash.currency), parameters);
   if (!exposure.withinLimits) return block(exposure.violations[0] ?? "EXPOSURE_LIMIT");

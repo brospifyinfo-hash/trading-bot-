@@ -77,6 +77,7 @@ export interface ConsumerOptions {
   readonly logger: Logger;
   readonly now: () => Date;
   readonly batchSize?: number;
+  readonly newestFirst?: boolean;
   readonly leaseMs?: number;
   readonly policy?: BackoffPolicy;
   /** Nur diese Auftragsarten ziehen. Leer = alle. */
@@ -168,6 +169,7 @@ export class JobConsumer {
       limit: this.#o.batchSize ?? DEFAULT_BATCH,
       now,
       leaseMs: this.#o.leaseMs ?? DEFAULT_LEASE_MS,
+      ...(this.#o.newestFirst ? { newestFirst: true } : {}),
       ...(this.#o.kinds !== undefined ? { kinds: this.#o.kinds } : {}),
     });
 

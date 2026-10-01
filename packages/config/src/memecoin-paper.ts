@@ -62,7 +62,33 @@ export const MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE = {
   }),
 } as const;
 
+/** Higher-entry-frequency experiment. Independent paper ledger, never a live strategy. */
+export const MEMECOIN_VERY_AGGRESSIVE_PAPER_CANDIDATE = {
+  ...MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE,
+  strategyId: "memecoin-very-active-paper",
+  version: "1.0.0",
+  parameters: parseStrategyParameters({
+    ...MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE.parameters,
+    entryGates: {
+      ...MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE.parameters.entryGates,
+      minFinalScore: 35, minSecurityScore: 50, minMomentumScore: 30,
+      minLiquidityUsd: 5000, maxMarketCapUsd: 50000000,
+      maxTop10HolderSharePct: 60,
+      paperLaunchMinBuys: 1, paperLaunchMinBuyShare: 0.30,
+      paperLaunchMaxAgeSeconds: 120,
+    },
+    risk: {
+      ...MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE.parameters.risk,
+      maxOpenPositions: 10, maxPortfolioExposurePct: 30,
+      maxDailyLossPct: 10, maxConsecutiveLosses: 8,
+      maxSlippageBps: 500, maxPriceImpactBps: 500,
+      minExitCapacityRatio: 1, paperMaxRoundTripCostBps: 600,
+    },
+  }),
+} as const;
+
 export const PAPER_PROFILES = [
   { label: "Standard", candidate: MEMECOIN_PAPER_CANDIDATE },
   { label: "Offensiv", candidate: MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE },
+  { label: "Sehr offensiv", candidate: MEMECOIN_VERY_AGGRESSIVE_PAPER_CANDIDATE },
 ] as const;

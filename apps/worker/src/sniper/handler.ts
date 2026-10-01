@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { systemClock } from "@sae/core";
-import { MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE, loadEnv, providerEnvSchema } from "@sae/config";
+import { PAPER_PROFILES, loadEnv, providerEnvSchema } from "@sae/config";
 import { countSnapshots, JobQueueRepository, ProviderHealthStore, recordSecurityFinding, schema } from "@sae/db";
 import { RugcheckReportAdapter } from "@sae/providers";
 import { toStatusReports, type HandlerDeps } from "../handlers";
@@ -37,17 +37,9 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
       firstSeenAt: receivedAt, state: "SCREENING" }).onConflictDoNothing();
     const [token] = await deps.db.select().from(schema.tokens).where(eq(schema.tokens.mint, event.mint)).limit(1);
     if (!token || token.blacklistedAt || token.state === "REJECTED") return report("TOKEN_BLOCKED");
-    const [strategy, health, snapshotCount] = await Promise.all([
-      ensurePaperCandidateVersion(deps.db, new Date(), MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE),
+    const [health, snapshotCount] = await Promise.all([
       new ProviderHealthStore(deps.db).latest(), countSnapshots(deps.db),
     ]);
-    const [open] = await deps.db.select({ id: schema.paperPositions.id }).from(schema.paperPositions)
-      .innerJoin(schema.strategyVersions, eq(schema.strategyVersions.id, schema.paperPositions.strategyVersionId))
-      .innerJoin(schema.strategies, eq(schema.strategies.id, schema.strategyVersions.strategyId))
-      .where(and(eq(schema.paperPositions.tokenId, token.id),
-        eq(schema.strategies.name, MEMECOIN_AGGRESSIVE_PAPER_CANDIDATE.strategyId))).limit(1);
-    // One launch attempt may retry data acquisition; never re-buy the same launch after an exit.
-    if (open) return report("ALREADY_TRADED");
     const env = loadEnv(providerEnvSchema, deps.env);
     if (!env.RUGCHECK_BASE_URL) return report("SECURITY_NOT_CONFIGURED");
     const security = new RugcheckReportAdapter({ clock: systemClock, baseUrl: env.RUGCHECK_BASE_URL });
@@ -60,14 +52,26 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
       statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
       tokens: [{ id: token.id, mint: token.mint }], maxUnitsPerRun: 1, maxTokens: 1 });
     if (!market.ingested) return report("WAITING_EXECUTABLE_MARKET", {}, true);
-    const result = await runDecision({ db: deps.db, logger: deps.logger, env: deps.env,
+    const accounts: { account: string; status: string; score: number | null }[] = [];
+    let retry = false;
+    // Highest-entry-frequency profile first; security and market acquisition are shared.
+    for (const profile of [...PAPER_PROFILES].reverse().filter((p) => p.candidate.parameters.entryGates.paperLaunchMode)) {
+      const strategy = await ensurePaperCandidateVersion(deps.db, new Date(), profile.candidate);
+      const [open] = await deps.db.select({ id: schema.paperPositions.id }).from(schema.paperPositions)
+        .innerJoin(schema.strategyVersions, eq(schema.strategyVersions.id, schema.paperPositions.strategyVersionId))
+        .innerJoin(schema.strategies, eq(schema.strategies.id, schema.strategyVersions.strategyId))
+        .where(and(eq(schema.paperPositions.tokenId, token.id), eq(schema.strategies.name, profile.candidate.strategyId))).limit(1);
+      if (open) { accounts.push({ account: profile.label, status: "ALREADY_TRADED", score: null }); continue; }
+      const result = await runDecision({ db: deps.db, logger: deps.logger, env: deps.env,
       tokenId: token.id, mint: token.mint, firstSeenAt: token.firstSeenAt, strategyVersionId: strategy.id,
       snapshotCount, providerReports: toStatusReports(health),
       adapters: deps.adapters ?? new Map(), statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
       quotes: buildQuoteSource(env), loadValuation: buildPaperValuation(env),
       quoteMint: QUOTE_ANCHOR_MINT, entryAmountRaw: null, liquidityUsd: null,
     });
-    return report(result.label, { score: result.finalScore, diagnostics: result.diagnostics ?? null },
-      result.outcome !== "ENTERED" && /INCOMPLETE|NO_SOURCE|LAUNCH_BUY_PRESSURE|QUOTE|NO_FEATURE/.test(result.label));
+      accounts.push({ account: profile.label, status: result.label, score: result.finalScore });
+      retry ||= result.outcome !== "ENTERED" && /INCOMPLETE|NO_SOURCE|LAUNCH_BUY_PRESSURE|QUOTE|NO_FEATURE|STALE/.test(result.label);
+    }
+    return report(accounts.some((a) => a.status === "ENTERED") ? "ENTERED" : "EVALUATED", { accounts }, retry);
   } };
 }

@@ -224,14 +224,17 @@ export async function runOpportunityPipeline(
   }
   if (launch) {
     const buys = features.momentum.buys5m, sells = features.momentum.sells5m;
-    if (buys.kind !== "OBSERVED" || sells.kind !== "OBSERVED" || buys.value < 3 || buys.value <= sells.value) {
-      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: "Needs at least 3 buy transactions and more buys than sells" };
+    const minBuys = deps.parameters.entryGates.paperLaunchMinBuys ?? 3;
+    const minShare = deps.parameters.entryGates.paperLaunchMinBuyShare;
+    if (buys.kind !== "OBSERVED" || sells.kind !== "OBSERVED" || buys.value < minBuys ||
+      (minShare === undefined ? buys.value <= sells.value : buys.value / (buys.value + sells.value) < minShare)) {
+      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: `Needs ${minBuys} buys and ${minShare === undefined ? "more buys than sells" : `buy share >= ${minShare}`}` };
     }
   }
   const scoring: ScoringResult = launch ? computePaperLaunchScores(features) : computeScores(features);
   if (launch) {
     const age = deps.clock.now().getTime() - features.asOf.getTime();
-    if (age < 0 || age > 60_000) return { kind: "BLOCKED", reason: "STALE_LAUNCH_DATA", detail: "Launch market observation older than 60s" };
+    if (age < 0 || age > (deps.parameters.entryGates.paperLaunchMaxAgeSeconds ?? 60) * 1000) return { kind: "BLOCKED", reason: "STALE_LAUNCH_DATA", detail: "Launch market observation exceeds strategy freshness limit" };
   }
   const diagnostics: InputDiagnostics = { finalScore: scoring.finalScore, completeness: scoring.dataCompleteness,
     requiredCompleteness: deps.parameters.entryGates.minDataCompleteness,

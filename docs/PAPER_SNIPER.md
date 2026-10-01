@@ -42,3 +42,21 @@ sniper consumer (Standard continues). The dashboard reports stale heartbeat expl
 Both accounts also evaluate the ordinary discovered-market rotation. Launch events provide an additional offensive fast path. Market probes and paper execution share a per-origin request gate in the worker (2 seconds between starts, 8-second cooldown after HTTP 429). Provider-health in another process is outside this local budget. Sell failures retain their quote/valuation cause so transient quote failures can be retried.
 
 The Jupiter companion collector accepts known nonnegative pool ages, including pools younger than 15 minutes. Entry age/risk gates still belong to each strategy; the standalone DexScreener fallback retains its default selection rules. Previously the companion discarded launch data until 15 minutes, beyond the 10-minute event expiry.
+
+## Third paper account: Sehr offensiv
+
+Independent EUR 3,000 ledger (`memecoin-very-active-paper`, version 1.0.0).
+Entry score 35, security score 50, liquidity USD 5,000, at least one observed buy
+and 30% buy transaction share. Maximum top-ten holder concentration 60%, market
+cap USD 50m; observations remain subject to the 120-second hard freshness limit.
+Position risk remains 1%, position cap 5%, total exposure cap 30%, ten positions,
+10% daily-loss stop and eight consecutive-loss stop. Exact execution impact and
+slippage caps are 5%; modeled round-trip costs may reach 6%. Costs remain recorded.
+Active mint/freeze authority, missing required inputs, reported rugs and missing
+executable quotes are still blocked. This is an unvalidated paper experiment.
+Existing Standard and Offensiv rules and ledgers are unchanged.
+
+Launch events acquire security/market data once, then evaluate both launch profiles
+with separate decisions and preflights. The newest ready sniper jobs run first;
+feed dispatch pauses while two recent queued/running sniper jobs exist. This bounds
+new work under overload; dropped/stale feed events remain visible in counters.

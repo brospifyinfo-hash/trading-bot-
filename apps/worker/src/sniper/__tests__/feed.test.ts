@@ -23,6 +23,7 @@ it("wires validated feed events into the durable sniper queue once, never paid t
     send = vi.fn(); close = vi.fn();
     constructor() { Socket.instance = this; }
   }
+  const openCount = vi.spyOn(JobQueueRepository.prototype, "countRecentOpen").mockResolvedValue(2);
   const enqueue = vi.spyOn(JobQueueRepository.prototype, "enqueue").mockResolvedValue({ kind: "ENQUEUED", jobId: "test" });
   vi.spyOn(PostgresCheckpointStore.prototype, "save").mockResolvedValue();
   vi.useFakeTimers(); vi.setSystemTime(now); vi.stubGlobal("WebSocket", Socket);
@@ -32,7 +33,10 @@ it("wires validated feed events into the durable sniper queue once, never paid t
     expect(Socket.instance.send.mock.calls.map(([r]) => JSON.parse(r).method)).toEqual(["subscribeNewToken", "subscribeMigration"]);
     Socket.instance.onmessage?.({ data: JSON.stringify(event) });
     Socket.instance.onmessage?.({ data: JSON.stringify(event) });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(enqueue).not.toHaveBeenCalled();
+    openCount.mockResolvedValue(0);
+    await vi.advanceTimersByTimeAsync(15_000);
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ kind: "PAPER_SNIPER",
       payload: expect.objectContaining({ mint: event.mint, kind: "migrate", signature: event.signature }) }));
