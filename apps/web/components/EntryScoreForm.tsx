@@ -17,10 +17,12 @@ import { schwelleSetzen } from "@/app/actions";
  */
 export function EntryScoreForm({
   aktuell,
+  modus,
   min,
   max,
 }: {
   readonly aktuell: number;
+  readonly modus: "VORSICHTIG" | "OFFENSIV";
   readonly min: number;
   readonly max: number;
 }) {
@@ -44,6 +46,13 @@ export function EntryScoreForm({
             step={1}
             required
           />
+        </label>
+        <label className="field">
+          <span>Modus</span>
+          <select name="modus" defaultValue={modus}>
+            <option value="VORSICHTIG">Vorsichtig — nur mit vollständigen Daten</option>
+            <option value="OFFENSIV">Offensiv — entscheidet mit Teildaten</option>
+          </select>
         </label>
         <button type="submit" disabled={laeuft}>
           {laeuft ? "Speichere…" : "Speichern"}

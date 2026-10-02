@@ -31,8 +31,16 @@ export const ENTRY_SCORE_MAX = 95;
 /** Voreinstellung, solange nichts gesetzt wurde. Ausdruecklich als solche gefuehrt. */
 export const ENTRY_SCORE_DEFAULT = 50;
 
+/** Wie waehlerisch der Bot ist. Siehe `PaperMode` in `@sae/config`. */
+export type PaperSettingMode = "VORSICHTIG" | "OFFENSIV";
+
+export function isPaperMode(value: unknown): value is PaperSettingMode {
+  return value === "VORSICHTIG" || value === "OFFENSIV";
+}
+
 export interface EntryScoreSetting {
   readonly score: number;
+  readonly mode: PaperSettingMode;
   /**
    * Woher der Wert stammt.
    *
@@ -68,6 +76,7 @@ export async function loadEntryScore(db: Database): Promise<EntryScoreSetting> {
   if (row === undefined) {
     return {
       score: ENTRY_SCORE_DEFAULT,
+      mode: "VORSICHTIG",
       source: "DEFAULT",
       updatedAt: null,
       updatedBy: null,
@@ -81,6 +90,9 @@ export async function loadEntryScore(db: Database): Promise<EntryScoreSetting> {
   }
   return {
     score: row.entryScore,
+    // Ein unbekannter Wert in der Spalte wird NICHT als offensiv gelesen. Die
+    // vorsichtige Lesart ist bei einer unklaren Einstellung die richtige.
+    mode: isPaperMode(row.mode) ? row.mode : "VORSICHTIG",
     source: "SAVED",
     updatedAt: row.updatedAt,
     updatedBy: row.updatedBy,
@@ -97,7 +109,13 @@ export async function loadEntryScore(db: Database): Promise<EntryScoreSetting> {
  */
 export async function saveEntryScore(
   db: Database,
-  input: { readonly score: number; readonly actor: string; readonly at: Date },
+  input: {
+    readonly score: number;
+    readonly actor: string;
+    readonly at: Date;
+    /** Weggelassen heisst: Modus unveraendert lassen. */
+    readonly mode?: PaperSettingMode;
+  },
 ): Promise<EntryScoreSetting> {
   if (!isValidEntryScore(input.score)) {
     throw new Error(
@@ -122,36 +140,47 @@ export async function saveEntryScore(
     }
 
     const vorher = await tx
-      .select({ score: paperSettings.entryScore })
+      .select({ score: paperSettings.entryScore, mode: paperSettings.mode })
       .from(paperSettings)
       .where(eq(paperSettings.id, "singleton"))
       .limit(1);
+
+    // Weggelassener Modus heisst „unveraendert" — und bei noch leerer Tabelle
+    // die vorsichtige Lesart. Hier still auf OFFENSIV zu fallen waere die
+    // teuerste denkbare Voreinstellung.
+    const bisher = vorher[0];
+    const mode: PaperSettingMode =
+      input.mode ?? (bisher !== undefined && isPaperMode(bisher.mode) ? bisher.mode : "VORSICHTIG");
 
     await tx
       .insert(paperSettings)
       .values({
         id: "singleton",
         entryScore: input.score,
+        mode,
         updatedAt: input.at,
         updatedBy: input.actor,
       })
       .onConflictDoUpdate({
         target: paperSettings.id,
-        set: { entryScore: input.score, updatedAt: input.at, updatedBy: input.actor },
+        set: { entryScore: input.score, mode, updatedAt: input.at, updatedBy: input.actor },
       });
 
     await tx.insert(systemEvents).values({
       kind: "ENTRY_SCORE_CHANGED",
       at: input.at,
       detail: {
-        von: vorher[0]?.score ?? null,
+        von: bisher?.score ?? null,
         nach: input.score,
+        modusVon: bisher?.mode ?? null,
+        modusNach: mode,
         durch: input.actor,
       },
     });
 
     return {
       score: input.score,
+      mode,
       source: "SAVED" as const,
       updatedAt: input.at,
       updatedBy: input.actor,

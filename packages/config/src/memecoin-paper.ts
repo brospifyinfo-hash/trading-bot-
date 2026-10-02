@@ -82,7 +82,21 @@ export const PAPER_STRATEGY_ID = "memecoin-active-paper";
  * sie mitwandern, hiesse eine niedrigere Schwelle heimlich auch „weniger
  * Sicherheitspruefung" — und genau das soll die Einstellung nicht koennen.
  */
-export function paperCandidate(score: number): {
+/**
+ * Wie waehlerisch der Bot ist.
+ *
+ * - `VORSICHTIG` — es wird nur entschieden, wenn alle dreizehn Pflichtfelder
+ *   da sind. Vollstaendige Grundlage, dafuer seltener eine Entscheidung.
+ * - `OFFENSIV` — es wird mit dem entschieden, was bekannt IST. Fehlende
+ *   Angaben halten nicht auf; gemessene schlechte Werte schon.
+ *
+ * Beides ist ausschliesslich Papier. Der Unterschied steht in der
+ * Strategieversion, damit spaeter unterscheidbar bleibt, unter welcher Regel
+ * eine Position entstanden ist.
+ */
+export type PaperMode = "VORSICHTIG" | "OFFENSIV";
+
+export function paperCandidate(score: number, mode: PaperMode = "VORSICHTIG"): {
   readonly strategyId: string;
   readonly version: string;
   readonly executionMode: string;
@@ -93,40 +107,79 @@ export function paperCandidate(score: number): {
   return {
     ...MEMECOIN_PAPER_CANDIDATE,
     strategyId: PAPER_STRATEGY_ID,
-    // Die Schwelle steht IM Versionsnamen. Zwei Laeufe mit verschiedenen
-    // Schwellen koennen damit nie dieselbe Version benutzen, und im Nachhinein
-    // ist an jeder Entscheidung ablesbar, wogegen sie gemessen wurde.
-    version: `2.0.0-s${String(score)}`,
+    // Schwelle UND Modus stehen im Versionsnamen. Zwei Laeufe mit
+    // verschiedenen Einstellungen koennen damit nie dieselbe unveraenderliche
+    // Version benutzen, und im Nachhinein ist an jeder Entscheidung ablesbar,
+    // wogegen sie gemessen wurde. Das ist die einzige Stelle, an der der
+    // Offensiv-Modus eine Spur hinterlassen MUSS: eine Papier-Statistik, die
+    // vorsichtige und offensive Einstiege vermengt, beantwortet keine Frage.
+    version: mode === "OFFENSIV"
+      ? `2.0.0-s${String(score)}-offensiv`
+      : `2.0.0-s${String(score)}`,
     parameters: parseStrategyParameters({
       ...MEMECOIN_PAPER_CANDIDATE.parameters,
       entryGates: {
         ...MEMECOIN_PAPER_CANDIDATE.parameters.entryGates,
         paperLaunchMode: true,
-        paperLaunchMinBuys: 1,
-        paperLaunchMinBuyShare: 0.3,
         paperLaunchMaxAgeSeconds: 120,
         minTokenAgeSeconds: 0,
-        minDataCompleteness: 1,
+        paperLaunchMinBuys: 1,
+        paperLaunchMinBuyShare: mode === "OFFENSIV" ? 0 : 0.3,
         // Die eine freie Zahl.
         minFinalScore: score,
-        minSecurityScore: 50,
-        minMomentumScore: 30,
-        minLiquidityUsd: 5_000,
-        maxMarketCapUsd: 50_000_000,
-        maxTop10HolderSharePct: 60,
+        ...(mode === "OFFENSIV"
+          ? {
+              // Offensiv: fehlende Angaben halten nicht auf. Die Zahlen hier
+              // sind bewusst die aeussersten, die das Schema und die harten
+              // Obergrenzen zulassen — weiter aufmachen geht nur im Code, und
+              // das waere dann eine andere Entscheidung.
+              paperOffensive: true,
+              minDataCompleteness: 0,
+              minWeightCoverage: 0,
+              minSecurityScore: 0,
+              minMomentumScore: 0,
+              minLiquidityUsd: 1,
+              maxMarketCapUsd: 1_000_000_000_000,
+              maxTop10HolderSharePct: 100,
+            }
+          : {
+              minDataCompleteness: 1,
+              minSecurityScore: 50,
+              minMomentumScore: 30,
+              minLiquidityUsd: 5_000,
+              maxMarketCapUsd: 50_000_000,
+              maxTop10HolderSharePct: 60,
+            }),
       },
       risk: {
         ...MEMECOIN_PAPER_CANDIDATE.parameters.risk,
-        riskPerTradePct: 1,
-        maxPositionPct: 5,
-        maxPortfolioExposurePct: 30,
-        maxDailyLossPct: 10,
-        maxOpenPositions: 10,
         maxConsecutiveLosses: 8,
-        maxSlippageBps: 500,
-        maxPriceImpactBps: 500,
         minExitCapacityRatio: 1,
-        paperMaxRoundTripCostBps: 600,
+        ...(mode === "OFFENSIV"
+          ? {
+              // Ausgereizt bis an die harten Obergrenzen aus `HARD_LIMITS`.
+              // Die sind ausdruecklich NICHT konfigurierbar — sie sind die
+              // Notbremse gegen eine Fehleinstellung, und eine Lockerung dort
+              // waere eine Codeaenderung mit eigener Begruendung.
+              riskPerTradePct: 5,
+              maxPositionPct: 10,
+              maxPortfolioExposurePct: 40,
+              maxDailyLossPct: 20,
+              maxOpenPositions: 20,
+              maxSlippageBps: 1_000,
+              maxPriceImpactBps: 500,
+              paperMaxRoundTripCostBps: 1_000,
+            }
+          : {
+              riskPerTradePct: 1,
+              maxPositionPct: 5,
+              maxPortfolioExposurePct: 30,
+              maxDailyLossPct: 10,
+              maxOpenPositions: 10,
+              maxSlippageBps: 500,
+              maxPriceImpactBps: 500,
+              paperMaxRoundTripCostBps: 600,
+            }),
       },
     }),
   };

@@ -366,7 +366,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       raw: this.deps.env["PAPER_ENTRY_SCORE"],
       at: systemClock.now(),
     });
-    const profil = paperCandidate(schwelle.score);
+    const profil = paperCandidate(schwelle.score, schwelle.mode);
     const strategies = candidate
       ? [{
           ...await ensurePaperCandidateVersion(this.deps.db, systemClock.now(), profil),
@@ -603,6 +603,7 @@ class EvaluateOpportunityHandler implements JobHandler {
       // Woher die Schwelle stammt: gesetzt oder ausgeliefert. Eine Zahl ohne
       // diese Angabe sieht nach einer getroffenen Entscheidung aus.
       entryThresholdSource: schwelle.source,
+      entryMode: schwelle.mode,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
       accounts,

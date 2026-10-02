@@ -4,7 +4,13 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { ENTRY_SCORE_MAX, ENTRY_SCORE_MIN, isValidEntryScore, saveEntryScore } from "@sae/db";
+import {
+  ENTRY_SCORE_MAX,
+  ENTRY_SCORE_MIN,
+  isPaperMode,
+  isValidEntryScore,
+  saveEntryScore,
+} from "@sae/db";
 
 import { db } from "@/lib/db";
 import {
@@ -112,13 +118,25 @@ export async function schwelleSetzen(
     return `Bitte eine ganze Zahl zwischen ${String(ENTRY_SCORE_MIN)} und ${String(ENTRY_SCORE_MAX)} angeben.`;
   }
 
+  // Ein unbekannter Modus wird abgewiesen und NICHT als „offensiv" gelesen.
+  const modusRoh = formData.get("modus");
+  if (modusRoh !== null && !isPaperMode(modusRoh)) {
+    return "Unbekannter Modus.";
+  }
+  const modus = isPaperMode(modusRoh) ? modusRoh : undefined;
+
   // Wer es war, so genau wie es ehrlich geht. Ohne Anmeldung ist „jemand ueber
   // das Dashboard" die ganze Wahrheit, und sie gehoert so in die
   // Aenderungsspur — ein schlichtes „dashboard" liesse spaeter glauben, es sei
   // belegt, wer gedreht hat.
   const actor = (await schutzAktiv()) ? "dashboard (angemeldet)" : "dashboard (offen)";
   try {
-    await saveEntryScore(db(), { score: wert, actor, at: new Date() });
+    await saveEntryScore(db(), {
+      score: wert,
+      actor,
+      at: new Date(),
+      ...(modus === undefined ? {} : { mode: modus }),
+    });
   } catch (error: unknown) {
     // Die Obergrenze je Minute meldet sich hier. Sie als technischen Fehler
     // durchzureichen hiesse, dem Betreiber eine Sammelmeldung zu zeigen, wo
@@ -128,5 +146,5 @@ export async function schwelleSetzen(
   // Die Seite liest die Datenbank bei jedem Aufruf; ohne diese Zeile zeigte
   // der naechste Aufruf trotzdem die zwischengespeicherte alte Zahl.
   revalidatePath("/");
-  return `Gespeichert: ${String(wert)}. Der Worker rechnet ab dem naechsten Lauf damit.`;
+  return `Gespeichert: Schwelle ${String(wert)}${modus === undefined ? "" : `, Modus ${modus}`}. Der Worker rechnet ab dem naechsten Lauf damit.`;
 }

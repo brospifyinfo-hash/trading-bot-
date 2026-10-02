@@ -37,6 +37,8 @@ export interface DecisionRunReport {
    * jemand entschieden hat. Also wird gemeldet, was der Worker benutzt hat.
    */
   readonly entryThresholdSource: "SAVED" | "DEFAULT" | "SET" | null;
+  /** Unter welchem Modus dieser Lauf entschieden hat. `null` bei alten Laeufen. */
+  readonly entryMode: "VORSICHTIG" | "OFFENSIV" | null;
   readonly sizing: SizingReport | null;
   readonly accounts?: readonly { label: string; entryThreshold: number; outcomes: Readonly<Record<string, number>> }[];
 }
@@ -94,6 +96,8 @@ export function parseDecisionRun(result: unknown, finishedAt: Date): DecisionRun
       r?.entryThresholdSource === "SET"
         ? r.entryThresholdSource
         : null,
+    entryMode:
+      r?.entryMode === "VORSICHTIG" || r?.entryMode === "OFFENSIV" ? r.entryMode : null,
     sizing: sizingReport(r?.sizing),
     ...(Array.isArray(r?.accounts) ? { accounts: r.accounts.flatMap((value: unknown) => {
       const a = record(value);

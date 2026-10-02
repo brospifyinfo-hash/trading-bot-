@@ -47,7 +47,9 @@ describe("Einstiegsschwelle in der Datenbank", () => {
     await saveEntryScore(db, { score: 35, actor: "dashboard", at });
 
     const gelesen = await loadEntryScore(db);
-    expect(gelesen).toEqual({ score: 35, source: "SAVED", updatedAt: at, updatedBy: "dashboard" });
+    expect(gelesen).toEqual({
+      score: 35, mode: "VORSICHTIG", source: "SAVED", updatedAt: at, updatedBy: "dashboard",
+    });
 
     // Ohne Aenderungsspur waere spaeter nicht beantwortbar, warum an einem Tag
     // ploetzlich zwanzig Positionen entstanden sind.
@@ -158,4 +160,43 @@ describe("Umzug aus der Umgebungsvariablen", () => {
     },
     30_000,
   );
+});
+
+/**
+ * Der Modus: gespeichert, gelesen, und im Zweifel vorsichtig.
+ */
+describe("Modus", () => {
+  it("steht ohne Zeile auf vorsichtig", async () => {
+    const { db: leer, close: schliessen } = await createTestDatabase();
+    try {
+      expect((await loadEntryScore(leer)).mode).toBe("VORSICHTIG");
+    } finally { await schliessen(); }
+  }, 30_000);
+
+  it("speichert und liest beide Modi und haelt den Wechsel fest", async () => {
+    const { db: eigen, close: schliessen } = await createTestDatabase();
+    try {
+      const at = new Date("2026-10-02T12:00:00Z");
+      await saveEntryScore(eigen, { score: 10, actor: "dashboard", at, mode: "OFFENSIV" });
+      expect((await loadEntryScore(eigen)).mode).toBe("OFFENSIV");
+
+      // Weggelassener Modus heisst „unveraendert" — nicht „zurueck auf
+      // vorsichtig" und erst recht nicht „offensiv".
+      await saveEntryScore(eigen, { score: 20, actor: "dashboard", at });
+      const nachher = await loadEntryScore(eigen);
+      expect(nachher.score).toBe(20);
+      expect(nachher.mode).toBe("OFFENSIV");
+
+      await saveEntryScore(eigen, { score: 20, actor: "dashboard", at, mode: "VORSICHTIG" });
+      expect((await loadEntryScore(eigen)).mode).toBe("VORSICHTIG");
+
+      // Der Wechsel steht in der Aenderungsspur. Ohne ihn waere spaeter nicht
+      // beantwortbar, warum an einem Tag ploetzlich alles gekauft wurde.
+      const ereignisse = await eigen.select().from(systemEvents);
+      const wechsel = ereignisse.filter(
+        (e) => (e.detail as { modusNach?: string }).modusNach === "OFFENSIV",
+      );
+      expect(wechsel.length).toBeGreaterThanOrEqual(1);
+    } finally { await schliessen(); }
+  }, 30_000);
 });

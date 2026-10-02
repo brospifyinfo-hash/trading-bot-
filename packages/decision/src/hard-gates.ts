@@ -49,7 +49,14 @@ const GATES: readonly Gate[] = [
     ctx.scoring.dataCompleteness < ctx.parameters.entryGates.minDataCompleteness
       ? "DATA_INCOMPLETE"
       : null,
-  (ctx) => (ctx.scoring.weightCoverage < MIN_WEIGHT_COVERAGE ? "DATA_INCOMPLETE" : null),
+  // Die Abdeckung der Bewertungsgewichte. Stand als feste Konstante hier und
+  // war damit das einzige Einstiegstor, das eine Strategieversion nicht
+  // beschreiben konnte. Fehlt die Angabe, gilt weiterhin 0.6.
+  (ctx) => {
+    const verlangt = ctx.parameters.entryGates.minWeightCoverage;
+    const grenze = verlangt === undefined ? MIN_WEIGHT_COVERAGE : verlangt;
+    return ctx.scoring.weightCoverage < grenze ? "DATA_INCOMPLETE" : null;
+  },
 
   // Sicherheit: die drei Kriterien, bei denen kein Score der Welt hilft.
   (ctx) => {
@@ -69,9 +76,14 @@ const GATES: readonly Gate[] = [
     return isPresent(lp) && !lp.value ? "LIQUIDITY_NOT_LOCKED" : null;
   },
 
+  // Liquiditaet. FEHLEND und ZU NIEDRIG sind hier zwei verschiedene Dinge, und
+  // der Offensiv-Modus oeffnet nur das erste: ohne Angabe wird trotzdem
+  // entschieden, eine GEMESSENE Unterschreitung bleibt ein Ausschluss.
   (ctx) => {
     const liquidity = ctx.features.market.liquidityUsd;
-    if (!isPresent(liquidity)) return "DATA_INCOMPLETE";
+    if (!isPresent(liquidity)) {
+      return ctx.parameters.entryGates.paperOffensive === true ? null : "DATA_INCOMPLETE";
+    }
     return liquidity.value < ctx.parameters.entryGates.minLiquidityUsd
       ? "LIQUIDITY_TOO_LOW"
       : null;
@@ -81,6 +93,14 @@ const GATES: readonly Gate[] = [
   // trotzdem eine Falle sein, weil die Position nicht wieder herausgeht.
   (ctx) => {
     const ratio = ctx.features.execution.exitCapacityRatio;
+    // Im Offensiv-Modus entfaellt dieses Tor ganz — und das ist die
+    // folgenschwerste der Lockerungen, deshalb steht sie hier ausgeschrieben:
+    // ohne Ausstiegspruefung kann eine Papier-Position in einem Pool landen,
+    // der sie nicht wieder hergibt. Auf Papier kostet das kein Geld, aber die
+    // spaetere Auswertung muss wissen, dass sie es mit solchen Positionen zu
+    // tun hat — dafuer traegt der Offensiv-Modus seine eigene
+    // Strategieversion.
+    if (ctx.parameters.entryGates.paperOffensive === true) return null;
     if (!isPresent(ratio)) return "DATA_INCOMPLETE";
     return ratio.value < ctx.parameters.risk.minExitCapacityRatio
       ? "EXIT_CAPACITY_INSUFFICIENT"

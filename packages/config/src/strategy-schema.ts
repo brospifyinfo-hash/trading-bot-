@@ -30,6 +30,40 @@ export const entryGatesSchema = z.object({
   /** Anteil vorhandener Inputs, unter dem nicht gehandelt wird. */
   minDataCompleteness: z.number().min(0).max(1),
   /**
+   * Anteil der Bewertungsgewichte, der abgedeckt sein muss.
+   *
+   * Stand als feste Konstante `MIN_WEIGHT_COVERAGE = 0.6` im Hard Gate und war
+   * damit das einzige Einstiegstor, das eine Strategieversion nicht beschreiben
+   * konnte. Fehlt die Angabe, gilt weiterhin 0.6 — die Vorgabe aendert sich
+   * also nicht, sie ist nur erstmals benennbar.
+   */
+  minWeightCoverage: z.number().min(0).max(1).optional(),
+  /**
+   * Entscheidet auch mit unvollstaendigen Daten. NUR fuer Papier.
+   *
+   * Dieses Feld oeffnet die Tore, die auf FEHLENDE Daten reagieren — nicht die,
+   * die auf GEMESSENE schlechte Daten reagieren. Der Unterschied ist der
+   * ganze Punkt:
+   *
+   * - Geoeffnet: fehlende Liquiditaetsangabe, fehlende Ausstiegsfaehigkeit,
+   *   fehlender Preiseinfluss, unvollstaendige Pflichtfelder. Ohne diese
+   *   Angaben entsteht kein vollstaendiges Bild, aber eine Entscheidung ist
+   *   moeglich — der Score wird dann aus dem gebildet, was bekannt IST, und
+   *   seine Abdeckung steht in `weightCoverage`.
+   * - NICHT geoeffnet: aktive Mint- oder Freeze-Autoritaet, nicht gesperrte
+   *   Liquiditaet, Risikostufe CRITICAL. Das sind Messergebnisse und keine
+   *   Wissenslucken — ein Token, bei dem nachweislich jemand beliebig
+   *   nachpraegen kann, ist kein Kandidat mit duennen Daten, sondern ein
+   *   bekanntes Risiko.
+   *
+   * Es wird dabei KEIN Wert erfunden. Was fehlt, bleibt fehlend und bleibt in
+   * `missingFields` sichtbar; es zaehlt nur nicht mehr als Ausschlussgrund.
+   *
+   * Die Erzwingung „nur Papier" liegt in der Pipeline (`PAPER_ONLY_MODEL`),
+   * nicht in diesem Schema: ein Schema kann den Ausfuehrungsmodus nicht sehen.
+   */
+  paperOffensive: z.boolean().optional(),
+  /**
    * Ab wie vielen abgeschlossenen Trades im passenden Bucket eine EV-Schaetzung
    * als belastbar gilt. Darunter ist der Erwartungswert UNKNOWN — und UNKNOWN
    * heisst im Auto-Modus: kein Trade.

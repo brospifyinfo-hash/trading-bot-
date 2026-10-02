@@ -69,3 +69,78 @@ it("macht aus einem fehlenden Pflichtfeld keinen niedrigen Score, sondern keinen
   // ueber 10. Es fehlt also nicht an der Qualitaet der Coins.
   expect(computePaperLaunchScores(v).finalScore).toBeGreaterThan(10);
 });
+
+/**
+ * Der Offensiv-Modus: rechnen mit dem, was bekannt ist.
+ *
+ * Der Betreiber will den Bot handeln SEHEN und nimmt dafuer in Kauf, dass die
+ * Grundlage dünner ist. Entscheidend ist, dass dabei nichts erfunden wird:
+ * fehlende Felder bleiben fehlend und bleiben sichtbar, und die Zahl, die die
+ * Datenlage beschreibt, wird nicht mitgesenkt.
+ */
+it("bildet im Offensiv-Modus einen Score aus Teildaten, ohne etwas zu erfinden", () => {
+  const v = healthyToken();
+  const ohneAusfuehrung = {
+    ...v,
+    execution: {
+      expectedCostBps: gone<number>(),
+      exitCapacityRatio: gone<number>(),
+      priceImpactBps: gone<number>(),
+    },
+  };
+
+  // Streng: kein Score. Das ist der Zustand, der 24 Stunden lang jeden
+  // Einstieg verhindert hat.
+  expect(computePaperLaunchScores(ohneAusfuehrung).finalScore).toBeNull();
+
+  const offensiv = computePaperLaunchScores(ohneAusfuehrung, { partial: true });
+  expect(offensiv.finalScore).not.toBeNull();
+  expect(offensiv.scoreEngineVersion).toBe("paper-launch-partial-1.0.0");
+
+  // Die Abdeckung sagt, auf wie viel Grundlage die Zahl steht: die
+  // Ausfuehrungsbewertung (Gewicht 0.25) fehlt, also bleiben 0.75.
+  expect(offensiv.weightCoverage).toBeCloseTo(0.75, 5);
+
+  // Und die Datenlage wird weiter an ALLEN dreizehn Feldern gemessen. Stuende
+  // hier 1, waere die Messlatte mitgesenkt worden und die Zahl wertlos.
+  expect(offensiv.dataCompleteness).toBeCloseTo(10 / 13, 5);
+
+  // Was fehlt, bleibt benannt.
+  expect(offensiv.missingFields.map((f) => f.field)).toContain("execution.exitCapacityRatio");
+});
+
+it("verlangt auch offensiv einen Preis", () => {
+  // Ohne Einstiegspreis gaebe es keine Papier-Position, sondern eine
+  // erfundene. Das ist keine gelockerte Regel, sondern Arithmetik.
+  const v = healthyToken();
+  const ohnePreis = { ...v, market: { ...v.market, priceUsd: gone<number>() } };
+  expect(computePaperLaunchScores(ohnePreis, { partial: true }).finalScore).toBeNull();
+});
+
+it("normiert den Teilscore, statt Unwissen als schlechtes Urteil auszugeben", () => {
+  const v = healthyToken();
+  const voll = computePaperLaunchScores(v, { partial: true });
+  // Nur noch das Momentum rechenbar (Gewicht 0.15). Ohne Normierung waere der
+  // Gesamtscore rund ein Siebtel des Momentum-Scores — eine Zahl, die
+  // fehlende Daten wie ein miserables Urteil aussehen laesst.
+  const nurMomentum = computePaperLaunchScores(
+    {
+      ...v,
+      security: {
+        mintAuthorityActive: gone<boolean>(), freezeAuthorityActive: gone<boolean>(),
+        lpBurnedOrLocked: gone<boolean>(), top10HolderSharePct: gone<number>(),
+        topHolderSharePct: gone<number>(), riskLevel: gone<"LOW">(),
+      },
+      market: { ...v.market, liquidityUsd: gone<number>(), volume24hUsd: gone<number>() },
+      execution: {
+        expectedCostBps: gone<number>(), exitCapacityRatio: gone<number>(),
+        priceImpactBps: gone<number>(),
+      },
+    },
+    { partial: true },
+  );
+  expect(nurMomentum.weightCoverage).toBeCloseTo(0.15, 5);
+  expect(nurMomentum.finalScore).not.toBeNull();
+  expect(nurMomentum.finalScore).toBeGreaterThan(10);
+  expect(voll.finalScore).not.toBeNull();
+});

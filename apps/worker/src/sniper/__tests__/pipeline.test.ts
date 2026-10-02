@@ -81,3 +81,79 @@ it("laesst den Kaufdruck-Gate von der Schwelle unberuehrt", async () => {
     }
   } finally { await h.close(); }
 }, 30000);
+
+/**
+ * Der Offensiv-Modus, durch die ganze Kette.
+ *
+ * Der Betreiber will den Bot handeln sehen und nimmt eine duennere Grundlage
+ * in Kauf. Geprueft wird hier beides: dass es wirkt — und dass es NICHT zu
+ * weit geht.
+ */
+it("steigt offensiv auch ohne Ausfuehrungsdaten ein, vorsichtig nicht", async () => {
+  const { missing: fehlt } = await import("@sae/core");
+  const at = new Date("2026-10-02T12:00:00Z"), h = await createHarness(at);
+  try {
+    const request = testFixtureRequest({ tokenId: h.tokenId, asOf: at, label: "offensive-test" });
+    // Genau das Bild aus dem Betrieb: der Router hat geschwiegen, also fehlen
+    // Preiseinfluss, Ausstiegsfaehigkeit und die daraus gerechneten Kosten.
+    const ohneRouter = { ...request.features, execution: {
+      expectedCostBps: fehlt("NOT_YET_COLLECTED" as const, at, null),
+      exitCapacityRatio: fehlt("NOT_YET_COLLECTED" as const, at, null),
+      priceImpactBps: fehlt("NOT_YET_COLLECTED" as const, at, null),
+    } };
+
+    const vorsichtig = await runOpportunityPipeline(
+      { ...request, features: ohneRouter },
+      h.deps({ parameters: paperCandidate(10, "VORSICHTIG").parameters }),
+    );
+    expect(vorsichtig.kind).toBe("NO_ENTRY");
+    if (vorsichtig.kind === "NO_ENTRY") {
+      expect(vorsichtig.decision.rejectionReasons).toContain("DATA_INCOMPLETE");
+    }
+
+    h.clock.set(new Date(at.getTime() + 1_000));
+    const offensiv = await runOpportunityPipeline(
+      { ...request, features: { ...ohneRouter, asOf: h.clock.now() } },
+      h.deps({ parameters: paperCandidate(10, "OFFENSIV").parameters }),
+    );
+    expect(offensiv.kind, JSON.stringify(offensiv, (_k, v) => typeof v === "bigint" ? String(v) : v)).toBe("ENTERED");
+  } finally { await h.close(); }
+}, 30000);
+
+it("bleibt offensiv NUR auf Papier", async () => {
+  // Mit unvollstaendigen Daten zu entscheiden ist auf Papier eine
+  // Beobachtungsentscheidung und im Live-Handel eine Fehlkonfiguration.
+  const at = new Date("2026-10-02T12:00:00Z"), h = await createHarness(at);
+  try {
+    const request = testFixtureRequest({ tokenId: h.tokenId, asOf: at, label: "offensive-live" });
+    const deps = h.deps({ parameters: paperCandidate(10, "OFFENSIV").parameters });
+    expect(await runOpportunityPipeline(request, { ...deps,
+      decisionContext: { ...deps.decisionContext, executionMode: "live" } }))
+      .toMatchObject({ kind: "BLOCKED", reason: "PAPER_ONLY_MODEL" });
+  } finally { await h.close(); }
+}, 30000);
+
+it("laesst offensiv die vier gemessenen Sicherheitsbefunde NICHT durch", async () => {
+  // Fehlende Daten halten nicht auf. Ein Token, bei dem nachweislich jemand
+  // beliebig nachpraegen kann, ist aber keine Wissenslucke, sondern ein
+  // Befund — und bleibt ausgeschlossen.
+  const { observed, providerId } = await import("@sae/core");
+  const at = new Date("2026-10-02T12:00:00Z"), h = await createHarness(at);
+  try {
+    const request = testFixtureRequest({ tokenId: h.tokenId, asOf: at, label: "offensive-security" });
+    const deps = h.deps({ parameters: paperCandidate(10, "OFFENSIV").parameters });
+    const faelle = [
+      ["mintAuthorityActive", "MINT_AUTHORITY_ACTIVE"],
+      ["freezeAuthorityActive", "FREEZE_AUTHORITY_ACTIVE"],
+    ] as const;
+    for (const [feld, grund] of faelle) {
+      h.clock.set(new Date(at.getTime() + 1_000));
+      const result = await runOpportunityPipeline({ ...request, features: {
+        ...request.features, asOf: h.clock.now(),
+        security: { ...request.features.security, [feld]: observed(true, providerId("test"), at) },
+      } }, deps);
+      expect(result.kind).toBe("NO_ENTRY");
+      if (result.kind === "NO_ENTRY") expect(result.decision.rejectionReasons).toContain(grund);
+    }
+  } finally { await h.close(); }
+}, 30000);

@@ -236,8 +236,13 @@ export async function runOpportunityPipeline(
 
   /* ---------------------------------------------- 3. Scoring */
   const launch = deps.parameters.entryGates.paperLaunchMode === true;
-  if (launch && deps.decisionContext.executionMode !== "paper") {
-    return { kind: "BLOCKED", reason: "PAPER_ONLY_MODEL", detail: "Launch model is paper-only" };
+  const offensiv = deps.parameters.entryGates.paperOffensive === true;
+  if ((launch || offensiv) && deps.decisionContext.executionMode !== "paper") {
+    // Der Offensiv-Modus entscheidet mit unvollstaendigen Daten. Das ist auf
+    // Papier eine Beobachtungsentscheidung und im Live-Handel eine
+    // Fehlkonfiguration — ein Schema kann den Ausfuehrungsmodus nicht sehen,
+    // diese Zeile schon.
+    return { kind: "BLOCKED", reason: "PAPER_ONLY_MODEL", detail: "Launch and offensive models are paper-only" };
   }
   // Die Launch-Schwellen stehen im Profil. Vorher standen sie als `?? 3` und
   // `?? 60` an der Benutzungsstelle — ein numerischer Ersatz fuer eine
@@ -264,12 +269,22 @@ export async function runOpportunityPipeline(
     maxLaunchAgeMs = maxAgeSeconds * 1_000;
     const buys = features.momentum.buys5m, sells = features.momentum.sells5m;
     const minShare = deps.parameters.entryGates.paperLaunchMinBuyShare;
-    if (buys.kind !== "OBSERVED" || sells.kind !== "OBSERVED" || buys.value < minBuys ||
-      (minShare === undefined ? buys.value <= sells.value : buys.value / (buys.value + sells.value) < minShare)) {
-      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: `Observed buys=${buys.kind === "OBSERVED" ? buys.value : "missing"}, sells=${sells.kind === "OBSERVED" ? sells.value : "missing"}; needs ${minBuys} buys and ${minShare === undefined ? "more buys than sells" : `buy share >= ${minShare}`}` };
+    // Fehlende Transaktionszahlen halten den Offensiv-Modus nicht auf. Eine
+    // GEMESSENE Unterschreitung schon — wer null Kaeufe gemessen hat, hat
+    // keinen Kaufdruck gemessen, und das ist ein Befund und keine Luecke.
+    const zahlenFehlen = buys.kind !== "OBSERVED" || sells.kind !== "OBSERVED";
+    if (zahlenFehlen && !offensiv) {
+      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: `Observed buys=${buys.kind === "OBSERVED" ? buys.value : "missing"}, sells=${sells.kind === "OBSERVED" ? sells.value : "missing"}; needs ${minBuys} buys` };
+    }
+    if (!zahlenFehlen && buys.kind === "OBSERVED" && sells.kind === "OBSERVED" &&
+      (buys.value < minBuys ||
+        (minShare === undefined ? buys.value <= sells.value : buys.value / (buys.value + sells.value) < minShare))) {
+      return { kind: "BLOCKED", reason: "LAUNCH_BUY_PRESSURE", detail: `Observed buys=${buys.value}, sells=${sells.value}; needs ${minBuys} buys and ${minShare === undefined ? "more buys than sells" : `buy share >= ${minShare}`}` };
     }
   }
-  const scoring: ScoringResult = launch ? computePaperLaunchScores(features) : computeScores(features);
+  const scoring: ScoringResult = launch
+    ? computePaperLaunchScores(features, { partial: offensiv })
+    : computeScores(features);
   if (maxLaunchAgeMs !== null) {
     const age = deps.clock.now().getTime() - features.asOf.getTime();
     if (age < 0 || age > maxLaunchAgeMs) return { kind: "BLOCKED", reason: "STALE_LAUNCH_DATA", detail: `Launch market observation is ${Math.round(age / 1_000)}s old, limit is ${maxLaunchAgeMs / 1_000}s` };

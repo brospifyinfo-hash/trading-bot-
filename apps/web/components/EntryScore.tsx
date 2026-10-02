@@ -76,6 +76,26 @@ export function EntryScore({
       </p>
 
       <p>
+        <strong>
+          {setting.mode === "OFFENSIV"
+            ? "Modus: offensiv — entscheidet mit Teildaten."
+            : "Modus: vorsichtig — nur mit vollständigen Pflichtdaten."}
+        </strong>
+      </p>
+
+      {setting.mode === "OFFENSIV" && (
+        <p className="hint">
+          Fehlende Angaben halten den Bot nicht mehr auf: der Score wird aus dem gebildet,
+          was bekannt ist, und seine Abdeckung steht in der Betriebsdiagnose. Gemessene
+          schlechte Werte bremsen weiterhin — und vier Dinge bleiben zu: aktive Mint- oder
+          Freeze-Autoritaet, nicht gesperrte Liquiditaet, Risikostufe CRITICAL. Das sind
+          keine Wissenslucken, sondern Befunde. Positionen aus diesem Modus laufen unter
+          einer eigenen Strategieversion, damit die Statistik beide Modi auseinanderhalten
+          kann.
+        </p>
+      )}
+
+      <p>
         {setting.source === "SAVED"
           ? "Von Ihnen gespeichert."
           : "Ausgelieferte Voreinstellung — noch nichts gespeichert."}{" "}
@@ -116,7 +136,7 @@ export function EntryScore({
       )}
 
       {aenderbar ? (
-        <EntryScoreForm aktuell={setting.score} min={min} max={max} />
+        <EntryScoreForm aktuell={setting.score} modus={setting.mode} min={min} max={max} />
       ) : (
         <>
           <h3>Aendern</h3>

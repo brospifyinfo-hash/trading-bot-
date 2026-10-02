@@ -41,6 +41,17 @@ export const paperSettings = pgTable(
      * uebernommen". Ein Nutzerbezug waere eine Genauigkeit, die es nicht gibt.
      */
     updatedBy: text("updated_by").notNull(),
+    /**
+     * Wie waehlerisch der Bot ist.
+     *
+     * `VORSICHTIG` entscheidet nur mit vollstaendigen Pflichtdaten,
+     * `OFFENSIV` mit dem, was bekannt ist. Beides ausschliesslich Papier; die
+     * Erzwingung liegt in der Pipeline, weil eine Tabelle den
+     * Ausfuehrungsmodus nicht sehen kann.
+     */
+    mode: text("mode", { enum: ["VORSICHTIG", "OFFENSIV"] })
+      .notNull()
+      .default("VORSICHTIG"),
   },
   (t) => [
     check("paper_settings_singleton", sql`${t.id} = 'singleton'`),

@@ -6113,3 +6113,96 @@ der erste Lauf auf einem Hoster, der laeuft.
 
 Validierung: 159 Dateien / 1617 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich.
+
+## §146 — Offensiv-Modus: entscheiden mit dem, was bekannt ist (2026-10-02)
+
+Entscheidung des Betreibers: er will den Bot handeln SEHEN und nimmt dafuer
+eine duennere Entscheidungsgrundlage in Kauf. Umgesetzt als zweiter Modus
+neben der Einstiegsschwelle, im Dashboard umschaltbar.
+
+### Welche Tore ueberhaupt im Weg standen
+
+Die Suche nach §144 hat gezeigt, dass vier Tore auf FEHLENDE Daten reagieren
+und drei davon nicht einstellbar waren:
+
+| Tor | vorher |
+|---|---|
+| `finalScore` bei unvollstaendigen Pflichtfeldern | `null`, alles-oder-nichts |
+| `weightCoverage < 0.6` | feste Konstante `MIN_WEIGHT_COVERAGE` |
+| Liquiditaetsangabe fehlt | `DATA_INCOMPLETE`, fest |
+| Ausstiegsfaehigkeit fehlt | `DATA_INCOMPLETE`, fest |
+
+Drei feste Werte in einem System, dessen ganzer Zweck einstellbare
+Strategieversionen sind. Sie sind jetzt beschreibbar: `minWeightCoverage` als
+regulaerer Parameter (fehlt er, gilt weiterhin 0.6) und `paperOffensive` als
+Modusschalter.
+
+### Die Unterscheidung, auf der alles steht
+
+Geoeffnet werden ausschliesslich die Tore, die auf **fehlende** Daten
+reagieren. Die Tore, die auf **gemessene schlechte** Daten reagieren, bleiben
+zu:
+
+- offen: fehlende Liquiditaetsangabe, fehlende Ausstiegsfaehigkeit, fehlender
+  Preiseinfluss, fehlende Transaktionszahlen, unvollstaendige Pflichtfelder,
+  geringe Gewichtsabdeckung;
+- zu: aktive Mint-Autoritaet, aktive Freeze-Autoritaet, nicht gesperrte
+  Liquiditaet, Risikostufe CRITICAL — und jede GEMESSENE Unterschreitung einer
+  Schwelle.
+
+Ein Token, bei dem nachweislich jemand beliebig nachpraegen kann, ist kein
+Kandidat mit duennen Daten, sondern ein bekanntes Risiko. Wer null Kaeufe
+gemessen hat, hat keinen Kaufdruck gemessen — das ist ein Befund und keine
+Luecke. Diese Linie ist der Unterschied zwischen „weniger abwarten" und
+„Messergebnisse ignorieren", und sie ist in `strategy-schema.ts` und
+`hard-gates.ts` ausgeschrieben.
+
+### Es wird nichts erfunden
+
+Der Teilscore entsteht aus den vorhandenen Teilbewertungen, **normiert auf das
+abgedeckte Gewicht** — dasselbe Verfahren, das der Standard-Bewerter seit
+immer benutzt (`v1/engine.ts`). Ohne die Normierung waere eine einzige
+rechenbare Teilbewertung mit Gewicht 0.15 automatisch ein miserabler
+Gesamtscore, also eine Zahl, die Unwissen als Urteil ausgibt.
+
+Zwei Zahlen bleiben dabei ehrlich:
+
+- `weightCoverage` sagt, auf wie viel Grundlage der Score steht.
+- `dataCompleteness` wird weiter an ALLEN dreizehn Feldern gemessen, auch
+  offensiv. Sonst stuende dort 100 Prozent, weil die Messlatte mitgesenkt
+  wurde — und die Zahl, die die Datenlage beschreiben soll, waere wertlos.
+
+Verlangt bleibt der PREIS. Ohne Einstiegspreis gaebe es keine
+Papier-Position, sondern eine erfundene; das ist keine gelockerte Regel,
+sondern Arithmetik.
+
+### Die Spur, ohne die das nicht zu verantworten waere
+
+Der Modus steht im Namen der unveraenderlichen Strategieversion
+(`2.0.0-s10-offensiv` gegen `2.0.0-s10`). Damit traegt JEDE Entscheidung und
+jede Position ueber `strategyVersionId` automatisch mit, unter welcher Regel
+sie entstanden ist — ohne neue Spalte. Eine Papier-Statistik, die vorsichtige
+und offensive Einstiege vermengt, beantwortet keine Frage, und das waere der
+teuerste Preis fuer diesen Modus. Der Wechsel selbst steht zusaetzlich in
+`system_events`.
+
+Erzwungen bleibt „nur Papier": `paperOffensive` plus `executionMode: "live"`
+ergibt `PAPER_ONLY_MODEL`. Die Pruefung liegt in der Pipeline, nicht im
+Schema — ein Schema kann den Ausfuehrungsmodus nicht sehen.
+
+### Was ausgereizt wurde und was nicht
+
+Die Risikogrenzen gehen offensiv bis an `HARD_LIMITS`: 5 % Risiko je Trade,
+10 % je Position, 40 % Gesamtexposure, 20 % Tagesverlust, 20 offene
+Positionen, 10 % Slippage, 5 % Preiseinfluss. Diese Obergrenzen sind
+ausdruecklich nicht konfigurierbar — sie sind die Notbremse gegen eine
+Fehleinstellung im Dashboard, und eine Lockerung dort waere eine
+Codeaenderung mit eigener Begruendung. Sollte im Betrieb die 5-Prozent-Grenze
+beim Preiseinfluss binden, ist das der erste Kandidat fuer eine solche
+Begruendung.
+
+Validierung: 159 Dateien / 1626 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Die Gegenproben sind Teil der Suite: vorsichtig lehnt
+dieselbe Beobachtung ab, offensiv steigt ein; offensiv im Live-Modus wird
+blockiert; die vier gemessenen Sicherheitsbefunde bleiben auch offensiv ein
+Ausschluss. Neue Migration `0016_paper_mode.sql`.
