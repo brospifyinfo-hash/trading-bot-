@@ -131,3 +131,74 @@ it("haelt Entscheidungen auseinander, die unter verschiedenen Schwellen fielen",
     expect(decisions.every((d) => d.branchCount === 2)).toBe(true);
   } finally { await h.close(); }
 }, 30_000);
+
+/**
+ * Den Verkauf von Hand anfordern.
+ *
+ * Es wird dabei NICHT verkauft. Das Dashboard laeuft auf einer anderen
+ * Maschine als der Worker, hat keinen Router-Zugang und muesste einen
+ * Ausstiegskurs erfinden, um selbst zu schliessen — und ein erfundener
+ * Ausstiegskurs macht die Papier-Statistik ab diesem Trade wertlos.
+ *
+ * Geprueft wird deshalb genau das: ein Vermerk entsteht, die Position bleibt
+ * OFFEN, `version` bleibt unberuehrt, und der Eingriff steht in der Spur.
+ */
+it("vermerkt einen angeforderten Verkauf, ohne die Position zu schliessen", async () => {
+  const { requestPositionClose, cancelPositionClose } = await import("@sae/db");
+  const { db, close } = await createTestDatabase();
+  try {
+    const at = new Date("2026-10-02T12:00:00Z");
+    const version = await ensurePaperCandidateVersion(db, at, paperCandidate(10, "OFFENSIV"));
+    const [token] = await db
+      .insert(schema.tokens)
+      .values({ mint: "manual-close-test", discoverySource: "test" })
+      .returning();
+    const repo = new OpportunityRepository(db);
+    const gelegenheit = await repo.create({
+      tokenId: token!.id, strategyVersionId: version.id, stream: "AUTO_PAPER" as const,
+      provenance: { sourceType: "LIVE" as const, sourceProvider: "test",
+        sourceTier: "PRIMARY" as const, sourceTimestamp: at, dataTimestamp: at,
+        decisionTimestamp: at, dataQuality: 1 },
+      decisionKind: "ENTER" as const, finalScore: 85, reasons: [], risks: [],
+      rejectionReasons: [], decidedAt: at, respondBy: null,
+      snapshot: { tokenId: token!.id, observedAt: at, features: {}, missingFields: [],
+        dataCompleteness: 1, scoreEngineVersion: "1", featureSetVersion: "1",
+        inputHash: "manual-close" },
+    });
+    if (gelegenheit.kind !== "CREATED") throw new Error("Gelegenheit fehlt");
+
+    const offen = await new PaperPositionRepository(db).open({
+      opportunityId: gelegenheit.opportunityId, tokenId: token!.id,
+      strategyVersionId: version.id, stream: "AUTO_PAPER", sizingMode: "RISK_BASED",
+      entryNotional: eur(25), entryAmountRaw: 1_000n, entryCostsMinor: 30n,
+      openedAt: at, fromState: "OFFERED", sourceType: "LIVE",
+    });
+    if (offen.kind !== "OPENED") throw new Error("Position fehlt");
+
+    expect(await requestPositionClose(db, { positionId: offen.positionId, actor: "dashboard", at }))
+      .toMatchObject({ kind: "REQUESTED" });
+
+    const [zeile] = await db.select().from(schema.paperPositions);
+    expect(zeile?.closeRequestedAt).toEqual(at);
+    // Der Kern: offen geblieben. Hier zu schliessen hiesse, einen
+    // Ausstiegskurs zu erfinden.
+    expect(zeile?.closedAt).toBeNull();
+    expect(zeile?.exitReason).toBeNull();
+    // Und `version` unberuehrt, sonst liefe eine gerade laufende Abrechnung
+    // des Monitors ins Leere.
+    expect(zeile?.version).toBe(0);
+
+    // Ein zweiter Klick aendert nichts und sagt das.
+    expect(await requestPositionClose(db, { positionId: offen.positionId, actor: "dashboard", at }))
+      .toMatchObject({ kind: "ALREADY_REQUESTED" });
+
+    expect(await cancelPositionClose(db, { positionId: offen.positionId, actor: "dashboard", at }))
+      .toMatchObject({ kind: "REQUESTED" });
+    const [zurueck] = await db.select().from(schema.paperPositions);
+    expect(zurueck?.closeRequestedAt).toBeNull();
+
+    const ereignisse = await db.select().from(schema.systemEvents);
+    expect(ereignisse.map((e) => e.kind)).toContain("POSITION_CLOSE_REQUESTED");
+    expect(ereignisse.map((e) => e.kind)).toContain("POSITION_CLOSE_CANCELLED");
+  } finally { await close(); }
+}, 60_000);

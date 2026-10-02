@@ -320,6 +320,27 @@ export const paperPositions = pgTable(
     exitReason: text("exit_reason"),
     openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /**
+     * Wann ein Verkauf von Hand angefordert wurde. `null` = nicht angefordert.
+     *
+     * Bewusst nur ein VERMERK und keine Buchung. Das Dashboard kann keinen
+     * ausfuehrbaren Kurs beschaffen — es laeuft auf einer anderen Maschine als
+     * der Worker und hat keinen Router-Zugang. Wuerde es die Position selbst
+     * schliessen, muesste es einen Ausstiegskurs erfinden, und die
+     * Papier-Statistik waere ab diesem Trade wertlos.
+     *
+     * Stattdessen setzt es diesen Vermerk, und der Positions-Monitor — der
+     * ohnehin im Takt laeuft und Quote, Bewertung und Abrechnung bereits
+     * verdrahtet hat — behandelt ihn wie einen regulaeren Komplettausstieg.
+     * Bleibt ein ausfuehrbares Quote aus, bleibt der Vermerk stehen und das
+     * Dashboard sagt, dass gewartet wird.
+     *
+     * `version` wird beim Setzen NICHT erhoeht: der Vermerk ist keine
+     * Zustandsaenderung der Buchfuehrung, und ein Hochzaehlen wuerde eine
+     * gerade laufende Abrechnung des Monitors ins Leere laufen lassen.
+     */
+    closeRequestedAt: timestamp("close_requested_at", { withTimezone: true }),
+    closeRequestedBy: text("close_requested_by"),
 
     /**
      * Optimistische Sperre.

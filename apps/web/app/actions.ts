@@ -11,6 +11,8 @@ import {
   isValidEntryNotional,
   isValidEntryScore,
   ENTRY_NOTIONAL_MAX_MINOR,
+  cancelPositionClose,
+  requestPositionClose,
   saveEntryScore,
 } from "@sae/db";
 
@@ -185,4 +187,49 @@ export async function schwelleSetzen(
         ? ", Einsatz nach Risikobudget"
         : `, Einsatz ${(Number(einsatzMinor) / 100).toLocaleString("de-DE")} EUR`;
   return `Gespeichert: Schwelle ${String(wert)}${modus === undefined ? "" : `, Modus ${modus}`}${einsatzText}. Der Worker rechnet ab dem naechsten Lauf damit.`;
+}
+
+/**
+ * Verkauf einer offenen Position anfordern.
+ *
+ * Es wird NICHT hier verkauft. Diese Oberflaeche laeuft auf einer anderen
+ * Maschine als der Worker, hat keinen Router-Zugang und muesste einen
+ * Ausstiegskurs erfinden, um selbst zu schliessen — und ein erfundener
+ * Ausstiegskurs macht die Papier-Statistik ab diesem Trade wertlos.
+ *
+ * Also wird ein Vermerk gesetzt. Der Positions-Monitor fuehrt ihn im naechsten
+ * Takt aus, mit echtem Quote und echter Bewertung, durch genau denselben Pfad
+ * wie ein Stop Loss. Bleibt ein ausfuehrbares Quote aus, bleibt der Vermerk
+ * stehen und wird beim naechsten Takt erneut versucht.
+ */
+export async function positionVerkaufen(
+  _zustand: string | null,
+  formData: FormData,
+): Promise<string> {
+  if (!(await darfAendern())) return "Nicht angemeldet.";
+
+  const id = formData.get("positionId");
+  // Eine UUID und sonst nichts. Der Wert kommt aus einem Formular.
+  if (typeof id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return "Unbekannte Position.";
+  }
+  const zuruecknehmen = formData.get("zuruecknehmen") === "ja";
+
+  const ergebnis = zuruecknehmen
+    ? await cancelPositionClose(db(), { positionId: id, actor: "dashboard", at: new Date() })
+    : await requestPositionClose(db(), { positionId: id, actor: "dashboard", at: new Date() });
+  revalidatePath("/");
+
+  if (ergebnis.kind === "NOT_OPEN") {
+    return zuruecknehmen
+      ? "Es lag keine Anforderung vor, die sich zuruecknehmen liesse."
+      : "Diese Position ist nicht mehr offen.";
+  }
+  if (ergebnis.kind === "ALREADY_REQUESTED") {
+    return `Verkauf war schon angefordert (${ergebnis.at.toISOString()}). Der Worker fuehrt ihn aus, sobald ein ausfuehrbares Quote vorliegt.`;
+  }
+  return zuruecknehmen
+    ? "Anforderung zurueckgenommen. Die Position bleibt offen."
+    : "Verkauf angefordert. Der Worker fuehrt ihn im naechsten Takt aus — mit echtem Quote, nicht mit einem geschaetzten Kurs.";
 }

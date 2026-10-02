@@ -6276,3 +6276,81 @@ statt dass der Knopf stumm nichts tut.
 
 Validierung: 159 Dateien / 1635 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich. Neue Migration `0017_paper_entry_notional.sql`.
+
+## §148 — Aktueller Stand, Verkauf von Hand, ruhigeres Dashboard (2026-10-02)
+
+Drei Wuensche des Betreibers. Der zweite hatte eine Falle, und die ist der
+eigentliche Inhalt dieses Eintrags.
+
+### Der aktuelle Stand einer offenen Position
+
+Das Dashboard zeigte ausschliesslich REALISIERTE Ergebnisse und schrieb
+darunter, unrealisierte Kursgewinne seien nicht enthalten. Das war ehrlich und
+fuer die einzige Frage, die man bei einer offenen Position hat, unbrauchbar:
+steht sie im Plus oder im Minus?
+
+Gerechnet wird wie im Positions-Monitor, aus dem Verhaeltnis zweier Preise
+DERSELBEN Reihe (`token_snapshots.priceUsd`): Kurs jetzt geteilt durch Kurs
+beim Einstieg. Ein Verhaeltnis ist waehrungsfrei und laesst sich deshalb auf
+den Einstand in Euro anwenden, ohne irgendwo einen Wechselkurs zu erfinden.
+Bewertet wird nur der noch im Markt stehende Anteil des Einsatzes — sonst
+waere ein teilweise abgebauter Trade mit seinem vollen Einsatz bewertet.
+
+Fehlt einer der beiden Preise, steht dort „nicht messbar" und keine Null.
+„Nicht messbar" und „kein Gewinn" sind zwei verschiedene Aussagen, und bei
+einer offenen Position ist der Unterschied der ganze Punkt. Das Kursalter
+steht daneben: ein Stand von vor einer halben Stunde ist bei Memecoins keine
+Auskunft ueber das Jetzt, und wer ihn ohne Alter liest, haelt ihn fuer eine.
+
+### Verkauf von Hand — und warum das Dashboard nicht verkauft
+
+Die naheliegende Umsetzung waere: Knopf klicken, Position schliessen, Ergebnis
+buchen. Sie ist falsch, und zwar aus einem Grund, der nichts mit Vorsicht zu
+tun hat.
+
+Ein Verkauf braucht einen Ausstiegskurs. Das Dashboard laeuft bei Vercel, der
+Worker bei Railway; die Oberflaeche hat keinen Router-Zugang und bekommt kein
+Quote. Sie muesste den Ausstiegskurs also SCHAETZEN — aus dem letzten
+Snapshot, aus dem Einstand, egal woraus. Jede dieser Zahlen waere erfunden,
+und ab diesem Trade waere die Papier-Buchfuehrung keine Messung mehr. Genau
+das ist der Zweck des ganzen Projekts.
+
+Also: das Dashboard setzt einen VERMERK (`paper_positions.closeRequestedAt`),
+und der Positions-Monitor fuehrt ihn aus. Der laeuft ohnehin im Takt und hat
+Quote, Bewertung und Abrechnung bereits verdrahtet — ein von Hand
+angeforderter Verkauf ist dort ein regulaerer Komplettausstieg mit dem Grund
+`MANUAL_CLOSE` und laeuft durch genau denselben Pfad wie ein Stop Loss. Kein
+zweiter Abrechnungsweg, keine Duplizierung, kein erfundener Kurs.
+
+Drei Einzelheiten, die dazugehoeren:
+
+- **`version` wird beim Vermerk nicht erhoeht.** Er ist keine Aenderung der
+  Buchfuehrung; ein Hochzaehlen wuerde eine gerade laufende Abrechnung des
+  Monitors per optimistischer Sperre ins Leere laufen lassen.
+- **Der Vermerk hat Vorrang vor den Haltregeln.** Wer von Hand verkauft, will
+  verkaufen und nicht das Urteil einer Logik.
+- **Bleibt ein ausfuehrbares Quote aus, bleibt der Vermerk stehen.** Der
+  naechste Takt versucht es erneut, und der Knopf sagt bis dahin „angefordert"
+  statt einen abgeschlossenen Verkauf zu behaupten. Er laesst sich
+  zurueckziehen, solange nichts ausgefuehrt wurde.
+
+Beide Eingriffe stehen in `system_events`. Ohne sie waere spaeter nicht
+unterscheidbar, ob eine Regel oder ein Mensch verkauft hat — bei der
+Auswertung der entscheidende Unterschied.
+
+### Das Layout sah kaputt aus, und es war das Raster
+
+`.workspace` stand auf `repeat(auto-fit, minmax(340px, 1fr))`. Im Entwurf
+aufgeraeumt, im Betrieb kaputt: die Panels sind sehr unterschiedlich hoch —
+eine Statuszeile neben einer Tabelle mit zwanzig Zeilen —, und ein Raster mit
+ungleichen Hoehen laesst Luecken, die wie Darstellungsfehler wirken. Dazu
+wechselte mit der Fensterbreite die Spaltenzahl und damit die Reihenfolge, in
+der man liest.
+
+Jetzt eine Spalte, 1180 px breit, feste Reihenfolge, keine Luecken. Raster gibt
+es nur noch INNEN, wo es sinnvoll ist (`.kv`, `.paper-metrics`). Dazu eine
+begrenzte Zeilenlaenge fuer Fliesstext: erklaerender Text ueber die ganze
+Breite ist messbar langsamer zu lesen.
+
+Validierung: 159 Dateien / 1639 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Neue Migration `0018_manual_close.sql`.

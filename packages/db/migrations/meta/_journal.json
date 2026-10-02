@@ -120,6 +120,13 @@
       "when": 1790995000000,
       "tag": "0017_paper_entry_notional",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0018_manual_close",
+      "breakpoints": true
     }
   ]
 }

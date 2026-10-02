@@ -148,9 +148,31 @@ export async function monitorPaperPositions(
       return typeof level === "number" && Number.isInteger(level) ? [level] : [];
     }));
     const state = stateOf(position, parameters);
-    const decision = evaluatePosition({ ...state, takeProfits: state.takeProfits.map((tp) => ({ ...tp, hit: hitLevels.has(tp.index) })) }, market);
+    const regeln = evaluatePosition({ ...state, takeProfits: state.takeProfits.map((tp) => ({ ...tp, hit: hitLevels.has(tp.index) })) }, market);
+    /**
+     * Ein von Hand angeforderter Verkauf.
+     *
+     * Er wird wie ein regulaerer Komplettausstieg behandelt und laeuft durch
+     * genau denselben Pfad: Quote, Bewertung, Abrechnung. Das Dashboard setzt
+     * nur den Vermerk — es laeuft auf einer anderen Maschine, hat keinen
+     * Router-Zugang und muesste einen Ausstiegskurs erfinden, um selbst zu
+     * schliessen. Ein erfundener Ausstiegskurs macht die Papier-Statistik ab
+     * diesem Trade wertlos.
+     *
+     * Vorrang vor den Regeln: wer von Hand verkauft, will verkaufen und nicht
+     * das Urteil einer Haltelogik. Die Regeln bleiben fuer alles andere
+     * zustaendig.
+     *
+     * Bleibt ein ausfuehrbares Quote aus, bleibt der Vermerk stehen — der
+     * naechste Takt versucht es erneut, und das Dashboard sagt bis dahin, dass
+     * gewartet wird.
+     */
+    const vonHand = position.closeRequestedAt !== null;
+    const decision = vonHand
+      ? { ...regeln, actions: [{ kind: "EXIT_ALL" as const }], signals: [] }
+      : regeln;
     const aktion = decision.actions[0] ?? { kind: "HOLD" as const };
-    zaehle(aktion.kind);
+    zaehle(vonHand ? "MANUAL_CLOSE" : aktion.kind);
 
     // MAE/MFE bei JEDEM Takt fortschreiben, nicht erst beim Schliessen: der
     // tiefste und der hoechste Punkt liegen dazwischen, und wer sie erst am
@@ -206,7 +228,8 @@ export async function monitorPaperPositions(
         valuation.proceeds.currency !== position.currency || valuation.proceeds.minor < 0n || valuation.source.length === 0) {
         zaehle("NO_VALUATION"); break;
       }
-      const reason = action.kind === "SELL_PORTION" ? `TAKE_PROFIT_${action.levelIndex}`
+      const reason = vonHand ? "MANUAL_CLOSE"
+        : action.kind === "SELL_PORTION" ? `TAKE_PROFIT_${action.levelIndex}`
         : decision.signals.find((signal) => signal.action.kind === "EXIT_ALL")?.ruleId ?? "EXIT_ALL";
       const settled = await repo.settleSale({
         positionId: position.id, expectedVersion: position.version, soldAmountRaw: sold,
