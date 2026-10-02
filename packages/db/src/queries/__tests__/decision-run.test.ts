@@ -108,3 +108,27 @@ it("laesst historische Laeufe mit den alten Kontoetiketten lesbar", () => {
   );
   expect(alt.accounts).toHaveLength(2);
 });
+
+/**
+ * Das eine Konto darf nicht an der Etikettenpruefung haengen bleiben.
+ *
+ * Die Kontoliste war nach der Umstellung auf ein Konto angepasst, die
+ * Pruefung der Coin-Diagnose eine Funktion weiter NICHT. Damit haette die
+ * Ansicht „Datenpruefung pro Coin" lautlos aufgehoert zu erscheinen — also
+ * genau die Ansicht, die den Grund je Coin nennt, und damit die, auf die
+ * jede Fehlersuche hier angewiesen ist.
+ */
+it("behaelt die Coin-Diagnose des einen Kontos", () => {
+  const mint = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
+  const coin = { mint, account: "Paper", outcome: "REJECT_DATA_INCOMPLETE" };
+  expect(parseDecisionRun({ coinDiagnostics: [coin] }, NOW).coinDiagnostics).toEqual([coin]);
+
+  // Historische Laeufe bleiben lesbar.
+  for (const alt of ["Standard", "Offensiv", "Sehr offensiv", "Legacy"]) {
+    expect(parseDecisionRun({ coinDiagnostics: [{ ...coin, account: alt }] }, NOW).coinDiagnostics)
+      .toHaveLength(1);
+  }
+  // Ein erfundenes Etikett kommt weiterhin nicht durch.
+  expect(parseDecisionRun({ coinDiagnostics: [{ ...coin, account: "Fremd" }] }, NOW).coinDiagnostics)
+    .toEqual([]);
+});

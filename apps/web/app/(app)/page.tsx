@@ -11,6 +11,7 @@ import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/r
 
 import { BotStatusBar } from "@/components/BotStatusBar";
 import { EntryScore } from "@/components/EntryScore";
+import { WorkerStatus } from "@/components/WorkerStatus";
 import { OperatingStatus } from "@/components/OperatingStatus";
 
 /**
@@ -185,6 +186,19 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
     <>
       <BotStatusBar paper={state.paperCounts} account={account} />
 
+      {/* Ganz oben, vor allem anderen: laeuft ueberhaupt etwas. Steht diese
+          Auskunft weiter unten, liest man die Zahlen darueber als aktuell. */}
+      {!state.systemState.workerAlive && (
+        <main className="workspace workspace--banner">
+          <WorkerStatus
+            alive={state.systemState.workerAlive}
+            lastRunAt={state.latestDecisionRun?.finishedAt ?? null}
+            lastSampleAt={state.systemState.lastProviderSampleAt}
+            now={state.generatedAt}
+          />
+        </main>
+      )}
+
       <section className="headline" data-connected={state.marketDataConnected}>
         <h1>{state.headline}</h1>
         {!state.marketDataConnected && (
@@ -207,6 +221,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           setting={schwelle}
           benutzt={state.latestDecisionRun?.entryThreshold ?? null}
           run={state.latestDecisionRun}
+          laufAktuell={isRecentObservation(state.latestDecisionRun?.finishedAt ?? null, state.generatedAt)}
           aenderbar={aenderbar}
           geschuetzt={geschuetzt}
           min={ENTRY_SCORE_MIN}

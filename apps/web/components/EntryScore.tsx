@@ -21,6 +21,7 @@ export function EntryScore({
   setting,
   benutzt,
   run,
+  laufAktuell,
   aenderbar,
   geschuetzt,
   min,
@@ -30,6 +31,16 @@ export function EntryScore({
   readonly benutzt: number | null;
   /** Der letzte Lauf — fuer die Frage, ob die Schwelle ueberhaupt gewirkt hat. */
   readonly run: DecisionRunReport | null;
+  /**
+   * Ist dieser Lauf aktuell?
+   *
+   * Ohne diese Angabe wurde hier eine Aussage ueber die Gegenwart aus einem 24
+   * Stunden alten Lauf gebildet: „im letzten Lauf kam bei keinem Coin eine
+   * Bewertung zustande" las sich wie „der Bot lehnt gerade alles ab", waehrend
+   * der Worker in Wahrheit stillstand. Eine alte Zahl zu zeigen ist in
+   * Ordnung; aus ihr eine Diagnose zu formen ist es nicht.
+   */
+  readonly laufAktuell: boolean;
   /** Darf hier gerade geaendert werden — offen oder angemeldet. */
   readonly aenderbar: boolean;
   /** Ist ein Passwort hinterlegt? Entscheidet nur, WAS hier zu lesen ist. */
@@ -51,7 +62,9 @@ export function EntryScore({
    * geprueft wurden, hatte kein einziger vollstaendige Pflichtdaten.
    */
   const ohneWirkung =
-    run !== null && run.bestScore === null && (run.processed ?? 0) > 0;
+    laufAktuell && run !== null && run.bestScore === null && (run.processed ?? 0) > 0;
+  /** Es gibt einen Lauf, aber er ist alt. Dann traegt er keine Diagnose. */
+  const laufVeraltet = run !== null && !laufAktuell;
 
   return (
     <section className="panel">
@@ -83,7 +96,17 @@ export function EntryScore({
         </p>
       )}
 
-      {!wirksam && (
+      {laufVeraltet && (
+        <p className="placeholder" role="status">
+          <strong>KEIN AKTUELLER LAUF</strong>
+          <br />
+          Der letzte Bewertungslauf ist von {run.finishedAt.toISOString()}. Ob diese
+          Schwelle etwas bewirkt, ist daran nicht ablesbar — sie wurde seitdem nicht
+          angewendet.
+        </p>
+      )}
+
+      {!wirksam && !laufVeraltet && (
         <p className="placeholder" role="status">
           <strong>NOCH NICHT WIRKSAM</strong>
           <br />

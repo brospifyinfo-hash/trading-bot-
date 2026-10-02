@@ -136,7 +136,13 @@ function parseCoins(value: unknown): CoinDiagnostic[] {
   return value.slice(0, 20).flatMap((item: unknown) => {
     const r = record(item);
     if (!r || typeof r.mint !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(r.mint) ||
-      typeof r.account !== "string" || !["Standard", "Offensiv", "Sehr offensiv", "Legacy"].includes(r.account) ||
+      // „Paper" ist das eine Konto. Es fehlte hier, waehrend die
+      // Kontoliste eine Zeile weiter schon angepasst war — damit haette die
+      // Diagnose JE COIN nach der Umstellung lautlos aufgehoert zu
+      // erscheinen, also genau die Ansicht, die den Grund nennt. Die drei
+      // alten Etiketten bleiben lesbar, damit historische Laeufe nicht
+      // verschwinden.
+      typeof r.account !== "string" || !["Paper", "Standard", "Offensiv", "Sehr offensiv", "Legacy"].includes(r.account) ||
       typeof r.outcome !== "string" || !/^[A-Z_]{1,100}$/.test(r.outcome)) return [];
     const d = record(r.diagnostics);
     const fraction = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;

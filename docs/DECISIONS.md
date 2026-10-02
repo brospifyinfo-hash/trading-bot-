@@ -6049,3 +6049,67 @@ Validierung: 159 Dateien / 1617 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich. Der Reproduktionstest schlug vor der Aenderung fehl
 (`expected { kind: 'MISSING' } to match { kind: 'OBSERVED', value: 50 }`) und
 besteht danach.
+
+## §145 — Die Anzeige hat eine Diagnose aus einem toten Lauf gebildet (2026-10-02)
+
+Richtigstellung zu §144, und sie betrifft mich selbst.
+
+Die Beobachtung lautete: 24 Stunden auf Einstiegsschwelle 10, kein einziger
+Einstieg. Ich habe daraus auf einen Datenfehler geschlossen, ihn gesucht,
+gefunden und reparariert. Der Fehler ist echt und durch einen
+Reproduktionstest belegt — aber er ist NICHT der Grund fuer diese 24 Stunden.
+
+Der Grund ist einfacher: **der Worker lief nicht.** Die Railway-Testphase war
+abgelaufen, alle drei Dienste standen auf „Service is offline", das letzte
+Deployment war entfernt, und der letzte abgeschlossene Bewertungslauf war vom
+2026-10-01 08:50:27 UTC. In diesen 24 Stunden gab es keine Entscheidung, die
+die Schwelle 10 haette anwenden koennen. Keine meiner Aenderungen aus §141 bis
+§144 hat je ausgefuehrt.
+
+### Warum das nicht auffiel — und das ist der eigentliche Befund
+
+Das Dashboard zeigte durchgehend Ergebnisse: fuenf geprueffte Coins,
+Ablehnungsgruende, Datenurteile je Coin, und seit §144 zusaetzlich den Hinweis
+„DIE SCHWELLE HAT NICHTS ENTSCHIEDEN — im letzten Lauf wurden 5 Coins
+geprueft und bei keinem kam eine Gesamtbewertung zustande".
+
+Alles davon stammte aus demselben 24 Stunden alten Lauf. Alles davon stand im
+Praesens. Daraus liess sich nur ein falscher Schluss ziehen: dass der Bot
+laeuft und ablehnt.
+
+Besonders bitter ist der Hinweis aus §144. Er war als Hilfe gedacht — „die
+Schwelle ist nicht der Grund" — und hat die Fehlsuche verlaengert, weil er eine
+Diagnose ueber die Gegenwart aus einem toten Lauf formte. Eine alte Zahl zu
+ZEIGEN ist in Ordnung. Aus ihr eine Aussage ueber das Jetzt zu bilden ist es
+nicht, und der Unterschied ist genau der, um den es in diesem Projekt die
+ganze Zeit geht.
+
+Die Auskunft war im Uebrigen vorhanden: `systemState.workerAlive` steht seit
+langem im Dashboard-Zustand, und die Betriebsdiagnose schrieb korrekt „Kein
+aktueller abgeschlossener Bewertungslauf nachgewiesen". Nur stand das im
+vierten Panel, waehrend die Zahlen darueber wie Gegenwart aussahen. Eine
+richtige Angabe an der falschen Stelle ist im Ergebnis keine Angabe.
+
+### Was sich aendert
+
+- **Ein Alarmband ganz oben**, sobald `workerAlive` falsch ist: „Der Bot laeuft
+  nicht", mit dem Alter des letzten Lebenszeichens und dem ausdruecklichen
+  Satz, dass alles weiter unten aus dieser Zeit stammt und nichts ueber die
+  Gegenwart aussagt. Dazu die drei haeufigsten Ursachen in der Reihenfolge, in
+  der man sie prueft — Plan abgelaufen, kein Deployment, Absturz beim Start.
+- **Der Hinweis aus §144 prueft jetzt die Frische.** Ist der Lauf nicht
+  aktuell, steht dort „KEIN AKTUELLER LAUF" samt Zeitpunkt statt einer
+  Diagnose.
+- **`parseCoins` kennt das Etikett „Paper".** Es fehlte dort, waehrend die
+  Kontoliste eine Funktion weiter schon angepasst war (§141) — damit haette
+  die Ansicht „Datenpruefung pro Coin" nach der Umstellung lautlos aufgehoert
+  zu erscheinen. Also genau die Ansicht, die den Grund je Coin nennt. Mein
+  Fehler, bei der Umstellung nur die halbe Allowlist gefunden zu haben.
+
+§144 bleibt gueltig: der Tausch eines vollstaendigen gespeicherten Snapshots
+gegen einen unvollstaendigen frischen war ein Fehler und ist repariert. Ob er
+der Grund fuer ausbleibende Einstiege ist, steht weiter offen — das sagt erst
+der erste Lauf auf einem Hoster, der laeuft.
+
+Validierung: 159 Dateien / 1617 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich.
