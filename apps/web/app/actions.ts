@@ -10,6 +10,9 @@ import {
   isPaperMode,
   isValidEntryNotional,
   isValidEntryScore,
+  isValidMaxCoinAge,
+  isValidMaxMarketCap,
+  MAX_MARKET_CAP_CEILING,
   ENTRY_NOTIONAL_MAX_MINOR,
   cancelPositionClose,
   requestPositionClose,
@@ -158,6 +161,42 @@ export async function schwelleSetzen(
     }
   }
 
+  /*
+   * Die Groessengrenze, in USD. Ganze Dollar genuegen — ein Marktkapital auf
+   * den Cent genau zu begrenzen beschreibt eine Genauigkeit, die die
+   * Anbieterzahlen nicht haben.
+   */
+  const capRoh = formData.get("marktkapital");
+  let capUsd: bigint | undefined;
+  if (typeof capRoh === "string" && capRoh.trim() !== "") {
+    const geputzt = capRoh.trim().replace(/[._\s]/g, "");
+    if (!/^\d{1,13}$/.test(geputzt)) {
+      return "Groessengrenze: bitte eine ganze Zahl in USD angeben, zum Beispiel 5000000.";
+    }
+    const wert = BigInt(geputzt);
+    if (!isValidMaxMarketCap(wert)) {
+      return `Groessengrenze muss groesser als 0 und hoechstens ${String(MAX_MARKET_CAP_CEILING)} USD sein.`;
+    }
+    capUsd = wert;
+  }
+
+  /*
+   * Das Hoechstalter in Minuten. Leer heisst ausdruecklich „keine Grenze" und
+   * nicht „0 Minuten" — das waere ein leerer Suchraum.
+   */
+  const alterRoh = formData.get("alter");
+  let alterMinuten: number | null | undefined;
+  if (typeof alterRoh === "string") {
+    const geputzt = alterRoh.trim();
+    if (geputzt === "") {
+      alterMinuten = null;
+    } else if (!/^\d{1,6}$/.test(geputzt) || !isValidMaxCoinAge(Number(geputzt))) {
+      return "Hoechstalter: bitte eine ganze Zahl Minuten angeben, oder leer lassen fuer keine Grenze.";
+    } else {
+      alterMinuten = Number(geputzt);
+    }
+  }
+
   // Wer es war, so genau wie es ehrlich geht. Ohne Anmeldung ist „jemand ueber
   // das Dashboard" die ganze Wahrheit, und sie gehoert so in die
   // Aenderungsspur — ein schlichtes „dashboard" liesse spaeter glauben, es sei
@@ -170,6 +209,8 @@ export async function schwelleSetzen(
       at: new Date(),
       ...(modus === undefined ? {} : { mode: modus }),
       ...(einsatzMinor === undefined ? {} : { entryNotionalMinor: einsatzMinor }),
+      ...(capUsd === undefined ? {} : { maxMarketCapUsd: capUsd }),
+      ...(alterMinuten === undefined ? {} : { maxCoinAgeMinutes: alterMinuten }),
     });
   } catch (error: unknown) {
     // Die Obergrenze je Minute meldet sich hier. Sie als technischen Fehler
@@ -186,7 +227,15 @@ export async function schwelleSetzen(
       : einsatzMinor === null
         ? ", Einsatz nach Risikobudget"
         : `, Einsatz ${(Number(einsatzMinor) / 100).toLocaleString("de-DE")} EUR`;
-  return `Gespeichert: Schwelle ${String(wert)}${modus === undefined ? "" : `, Modus ${modus}`}${einsatzText}. Der Worker rechnet ab dem naechsten Lauf damit.`;
+  const capText = capUsd === undefined
+    ? ""
+    : `, Groessengrenze ${Number(capUsd).toLocaleString("de-DE")} USD`;
+  const alterText = alterMinuten === undefined
+    ? ""
+    : alterMinuten === null
+      ? ", kein Hoechstalter"
+      : `, Hoechstalter ${String(alterMinuten)} min`;
+  return `Gespeichert: Schwelle ${String(wert)}${modus === undefined ? "" : `, Modus ${modus}`}${einsatzText}${capText}${alterText}. Der Worker rechnet ab dem naechsten Lauf damit.`;
 }
 
 /**

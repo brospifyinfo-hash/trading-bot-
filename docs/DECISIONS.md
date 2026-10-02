@@ -6354,3 +6354,64 @@ Breite ist messbar langsamer zu lesen.
 
 Validierung: 159 Dateien / 1639 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich. Neue Migration `0018_manual_close.sql`.
+
+## §149 — Der Groessendeckel war offen, und zwar weil ich ihn aufgemacht habe (2026-10-02)
+
+Der Betreiber beobachtete Einstiege in grosse Coins und wollte neue, kleine.
+Die Ursache steht in §146, und sie ist mein Fehler.
+
+### Was ich falsch gemacht habe
+
+Fuer den Offensiv-Modus habe ich `maxMarketCapUsd` auf `1_000_000_000_000`
+gesetzt — eine Billion, also faktisch keinen Deckel. Das war eine
+Fehluebersetzung der Ansage „er muss nicht die ganzen Sachen abwarten".
+
+Ein offener Groessendeckel laesst den Bot nicht FRUEHER handeln. Er laesst ihn
+das FALSCHE handeln. Die Ansage betraf das Warten auf fehlende Daten, und
+genau dafuer war der Modus auch gedacht; die Groesse eines Coins ist keine
+Wissenslucke, sondern eine Messung, und eine Messung aufzugeben hat mit
+„weniger abwarten" nichts zu tun. Wer einen Memecoin-Sniper baut und ihm
+erlaubt, einen Milliarden-Coin zu kaufen, hat keinen Sniper gebaut.
+
+Dieselbe Linie wie in §146 — fehlende Daten gegen gemessene Werte — habe ich
+dort fuer die Sicherheitsbefunde richtig gezogen und bei der Groesse
+uebersehen.
+
+### Drei Zahlen fuer eine Frage
+
+Beim Nachsehen kam heraus, dass der Deckel an drei Stellen getrennt stand:
+
+- als Literal `50000000` im SQL von `selectActivePaperTokens`,
+- als `50_000_000` im Launch-Profil,
+- als `5_000_000` im Standard-Profil.
+
+Keine davon war einstellbar, und im Offensiv-Modus kam eine vierte dazu, die
+alles aufmachte. Dass der Suchraum bei 50 Mio. endete und das Einstiegstor bei
+einer Billion, hat ausserdem erklaert, warum ueberhaupt grosse Coins
+durchkamen: der Sniper-Pfad geht nicht ueber den Suchraum, sondern direkt ueber
+das Tor.
+
+Jetzt eine Einstellung, die an BEIDEN Stellen gilt — Suchraum und Tor. Die
+Voreinstellung ist 5 Mio. USD und damit klein; eine grosszuegige
+Voreinstellung waere derselbe Fehler, nur leiser.
+
+### Nur neue Coins
+
+Zusaetzlich ein Hoechstalter in Minuten. Es rechnet an `tokens.launched_at` —
+der Entstehungszeit des HANDELSPAARS aus der Anbieterantwort, nicht unserem
+Erstkontakt. Der Unterschied ist wichtig: `firstSeenAt` haette gemessen, wann
+WIR einen Coin gesehen haben, und das sagt ueber seinen Markt nichts.
+
+Ist die Entstehungszeit unbekannt, faellt der Coin bei gesetzter Grenze heraus.
+„Ich weiss nicht, wie alt er ist" ist bei der Vorgabe „nur neue" kein
+Durchlassgrund. Offene Positionen bleiben unberuehrt — sonst verschwaende ein
+laufender Trade aus der Beobachtung, bloss weil der Coin aelter geworden ist.
+Voreinstellung: keine Altersgrenze, damit die Einstellung eine Entscheidung
+bleibt und nicht ueberraschend den Suchraum leert.
+
+Validierung: 159 Dateien / 1645 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Die Gegenproben gehoeren zur Suite: der Deckel ist
+offensiv genauso streng wie vorsichtig, ein grosser Coin faellt ohne Angabe
+heraus und mit hoeherer Grenze herein, und bei gesetztem Hoechstalter fallen
+sowohl der alte als auch der mit unbekannter Entstehungszeit heraus. Neue
+Migration `0019_universe_limits.sql`.

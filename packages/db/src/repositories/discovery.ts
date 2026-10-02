@@ -399,7 +399,35 @@ export async function recordSecurityFinding(
 /** Budgeted active cohort from observed markets, not a claim of whole-market coverage.
  * Latest LIVE observation wins, including deterioration; never cherry-pick old good data.
  */
-export async function selectActivePaperTokens(db: Database, now: Date, limit = 20, includeOpen = false): Promise<readonly TrackedToken[]> {
+/**
+ * Der Suchraum: welche Coins ueberhaupt bewertet werden.
+ *
+ * Die Groessengrenze stand hier als Literal `50000000` im SQL — und parallel
+ * dazu `50_000_000` im Launch-Profil und `5_000_000` im Standard-Profil. Drei
+ * Zahlen fuer eine Frage, keine davon einstellbar. Jetzt kommt sie als
+ * Parameter aus den Einstellungen, und dieselbe Zahl gilt auch am
+ * Einstiegstor.
+ *
+ * Das Hoechstalter ist neu. Es rechnet an `tokens.launched_at` — der
+ * Entstehungszeit des HANDELSPAARS aus der Anbieterantwort, nicht unserem
+ * Erstkontakt. Ist sie unbekannt, faellt der Coin bei gesetzter Grenze heraus:
+ * „ich weiss nicht, wie alt er ist" ist bei der Vorgabe „nur neue" kein
+ * Durchlassgrund. Offene Positionen bleiben davon unberuehrt — sonst
+ * verschwaende ein laufender Trade aus der Beobachtung, bloss weil der Coin
+ * aelter geworden ist.
+ */
+export async function selectActivePaperTokens(
+  db: Database,
+  now: Date,
+  limit = 20,
+  includeOpen = false,
+  limits: { maxMarketCapUsd?: bigint; maxCoinAgeMinutes?: number | null } = {},
+): Promise<readonly TrackedToken[]> {
+  const maxCap = limits.maxMarketCapUsd === undefined ? 5_000_000n : limits.maxMarketCapUsd;
+  const maxAlter = limits.maxCoinAgeMinutes ?? null;
+  const juengerAls = maxAlter === null
+    ? null
+    : new Date(now.getTime() - maxAlter * 60_000).toISOString();
   const rows = await db.execute<{ id: string; mint: string; first_seen_at: Date }>(sql`
     select t.id, t.mint, t.first_seen_at
     from tokens t
@@ -417,8 +445,10 @@ export async function selectActivePaperTokens(db: Database, now: Date, limit = 2
     )) or (t.blacklisted_at is null and t.state <> 'REJECTED'
       and latest.observed_at >= ${new Date(now.getTime() - 6 * 3600000).toISOString()}::timestamptz
       and latest.price_usd > 0 and latest.liquidity_usd >= 5000
-      and latest.market_cap_usd > 0 and latest.market_cap_usd <= 50000000
-      and latest.volume_24h_usd > 0)
+      and latest.market_cap_usd > 0 and latest.market_cap_usd <= ${Number(maxCap)}
+      and latest.volume_24h_usd > 0
+      and (${juengerAls}::timestamptz is null
+        or (t.launched_at is not null and t.launched_at >= ${juengerAls}::timestamptz)))
     order by case when ${includeOpen} and exists (
       select 1 from paper_positions p where p.token_id = t.id and p.closed_at is null
       and p.stream = 'AUTO_PAPER' and p.sizing_mode = 'RISK_BASED'

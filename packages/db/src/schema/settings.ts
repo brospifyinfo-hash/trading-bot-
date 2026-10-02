@@ -65,6 +65,30 @@ export const paperSettings = pgTable(
      * sagt, welche gebunden hat.
      */
     entryNotionalMinor: bigint("entry_notional_minor", { mode: "bigint" }),
+    /**
+     * Obergrenze der Marktkapitalisierung in USD.
+     *
+     * Stand vorher an DREI Stellen getrennt: als Literal `50000000` im SQL der
+     * Suchraum-Auswahl, als `50_000_000` im Launch-Profil und als `5_000_000`
+     * im Standard-Profil. Drei Zahlen fuer eine Frage, keine davon
+     * einstellbar — und im Offensiv-Modus eine vierte, die den Deckel ganz
+     * aufgemacht hat.
+     */
+    maxMarketCapUsd: bigint("max_market_cap_usd", { mode: "bigint" })
+      .notNull()
+      .default(5_000_000n),
+    /**
+     * Hoechstalter eines Coins in Minuten, gerechnet ab Entstehung des Pools.
+     * `null` = keine Grenze.
+     *
+     * Gemessen an `tokens.launched_at`, und das ist die Entstehungszeit des
+     * HANDELSPAARS aus der Anbieterantwort — nicht unser Erstkontakt. Fehlt
+     * sie, ist das Alter unbekannt: bei gesetzter Grenze wird so ein Coin
+     * ausgeschlossen, denn „ich weiss nicht, wie alt er ist" ist bei der
+     * Vorgabe „nur neue" kein Durchlassgrund. Wie viele deswegen herausfallen,
+     * steht im Log.
+     */
+    maxCoinAgeMinutes: integer("max_coin_age_minutes"),
   },
   (t) => [
     check("paper_settings_singleton", sql`${t.id} = 'singleton'`),

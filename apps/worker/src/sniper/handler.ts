@@ -62,7 +62,7 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
     const schwelle = await loadEntryScore(deps.db);
     // Ein Konto. Vorher liefen hier drei Profile je Launch-Ereignis — dreimal
     // dieselbe Entscheidung auf denselben Daten, mit dreifachem Anfragebudget.
-    for (const profile of [{ label: "Paper", candidate: paperCandidate(schwelle.score, schwelle.mode) }]) {
+    for (const profile of [{ label: "Paper", candidate: paperCandidate(schwelle.score, schwelle.mode, { maxMarketCapUsd: Number(schwelle.maxMarketCapUsd) }) }]) {
       const strategy = await ensurePaperCandidateVersion(deps.db, new Date(), profile.candidate);
       const [open] = await deps.db.select({ id: schema.paperPositions.id }).from(schema.paperPositions)
         .innerJoin(schema.strategyVersions, eq(schema.strategyVersions.id, schema.paperPositions.strategyVersionId))

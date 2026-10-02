@@ -366,7 +366,9 @@ class EvaluateOpportunityHandler implements JobHandler {
       raw: this.deps.env["PAPER_ENTRY_SCORE"],
       at: systemClock.now(),
     });
-    const profil = paperCandidate(schwelle.score, schwelle.mode);
+    const profil = paperCandidate(schwelle.score, schwelle.mode, {
+      maxMarketCapUsd: Number(schwelle.maxMarketCapUsd),
+    });
     const strategies = candidate
       ? [{
           ...await ensurePaperCandidateVersion(this.deps.db, systemClock.now(), profil),
@@ -384,7 +386,10 @@ class EvaluateOpportunityHandler implements JobHandler {
     // `MAX_TOKENS_PER_RUN`, und damit sah dieser Lauf immer dieselben fuenf
     // juengsten Token — die am wenigsten fertigen, die es gibt (§128).
     const tokens = candidate
-      ? await selectActivePaperTokens(this.deps.db, systemClock.now())
+      ? await selectActivePaperTokens(this.deps.db, systemClock.now(), 20, false, {
+          maxMarketCapUsd: schwelle.maxMarketCapUsd,
+          maxCoinAgeMinutes: schwelle.maxCoinAgeMinutes,
+        })
       : await selectTrackedTokens(this.deps.db, MAX_TOKENS_TRACKED);
     if (tokens.length === 0) return waitingForData(candidate
       ? "Keine Coins mit ausreichenden aktuellen Marktdaten in der aktiven Paper-Liste; die breite Suche laeuft weiter."
@@ -607,6 +612,8 @@ class EvaluateOpportunityHandler implements JobHandler {
       entryMode: schwelle.mode,
       entryNotionalMinor:
         schwelle.entryNotionalMinor === null ? null : String(schwelle.entryNotionalMinor),
+      maxMarketCapUsd: String(schwelle.maxMarketCapUsd),
+      maxCoinAgeMinutes: schwelle.maxCoinAgeMinutes,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
       accounts,

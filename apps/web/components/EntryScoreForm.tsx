@@ -19,6 +19,8 @@ export function EntryScoreForm({
   aktuell,
   modus,
   einsatzMinor,
+  capUsd,
+  alterMinuten,
   min,
   max,
 }: {
@@ -26,6 +28,10 @@ export function EntryScoreForm({
   readonly modus: "VORSICHTIG" | "OFFENSIV";
   /** Einsatz je Trade in Cent, oder `null` fuer „Risikobudget". */
   readonly einsatzMinor: bigint | null;
+  /** Obergrenze der Marktkapitalisierung in USD. */
+  readonly capUsd: bigint;
+  /** Hoechstalter in Minuten, oder `null` fuer keine Grenze. */
+  readonly alterMinuten: number | null;
   readonly min: number;
   readonly max: number;
 }) {
@@ -67,11 +73,44 @@ export function EntryScoreForm({
             placeholder="leer = Risikobudget"
           />
         </label>
+        <label className="field">
+          <span>Max. Marktkapital (USD)</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            name="marktkapital"
+            defaultValue={capUsd.toString()}
+            placeholder="z. B. 5000000"
+          />
+        </label>
+        <label className="field">
+          <span>Max. Alter (Minuten)</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            name="alter"
+            defaultValue={alterMinuten === null ? "" : String(alterMinuten)}
+            placeholder="leer = keine Grenze"
+          />
+        </label>
         <button type="submit" disabled={laeuft}>
           {laeuft ? "Speichere…" : "Speichern"}
         </button>
       </form>
       <p className="hint">Gaengige Schwellen: {beispiele.join(" · ")}. Jede Zahl dazwischen geht genauso.</p>
+      <p className="hint">
+        Das Marktkapital-Limit gilt an BEIDEN Stellen: bei der Auswahl, welche Coins
+        überhaupt bewertet werden, und am Einstiegstor. Vorher stand es an drei Stellen
+        getrennt im Code, und im Offensiv-Modus war es ganz offen — daher die Einstiege in
+        große Coins.
+      </p>
+      <p className="hint">
+        Das Höchstalter rechnet an der Entstehungszeit des Handelspaars, die der Anbieter
+        mitliefert — nicht an unserem Erstkontakt. Ist sie unbekannt, fällt der Coin bei
+        gesetzter Grenze heraus: „ich weiß nicht, wie alt er ist" ist bei „nur neue" kein
+        Durchlassgrund. Leer lassen heißt: keine Altersgrenze. Laufende Positionen bleiben
+        unberührt, auch wenn ihr Coin älter wird.
+      </p>
       <p className="hint">
         Der Einsatz ist eine OBERGRENZE, keine Zusage: es gilt immer der kleinere Wert aus
         Ihrer Vorgabe, der Portfolio-Grenze, der Liquiditaet und dem Barbestand. Welche

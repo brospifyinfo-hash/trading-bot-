@@ -41,6 +41,21 @@ export function isPaperMode(value: unknown): value is PaperSettingMode {
 /** Obergrenze fuer den Einsatz je Trade, in Cent. 10.000 € — eine Plausibilitaetsgrenze. */
 export const ENTRY_NOTIONAL_MAX_MINOR = 1_000_000n;
 
+/** Voreinstellung der Groessengrenze: klein. Ein Memecoin-Versuch sucht keine etablierten Werte. */
+export const MAX_MARKET_CAP_DEFAULT = 5_000_000n;
+/** Plausibilitaetsgrenze: darueber ist es kein Memecoin-Suchraum mehr. */
+export const MAX_MARKET_CAP_CEILING = 10_000_000_000n;
+
+export function isValidMaxMarketCap(value: unknown): value is bigint {
+  return typeof value === "bigint" && value > 0n && value <= MAX_MARKET_CAP_CEILING;
+}
+
+/** `null` = keine Altersgrenze. 0 ist ungueltig — das waere ein leerer Suchraum. */
+export function isValidMaxCoinAge(value: unknown): value is number | null {
+  if (value === null) return true;
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 525_600;
+}
+
 /**
  * Taugt dieser Wert als Einsatz je Trade?
  *
@@ -58,6 +73,10 @@ export interface EntryScoreSetting {
   readonly mode: PaperSettingMode;
   /** Einsatz je Trade in Cent. `null` = keine Vorgabe, Risikobudget gilt. */
   readonly entryNotionalMinor: bigint | null;
+  /** Obergrenze der Marktkapitalisierung in USD. */
+  readonly maxMarketCapUsd: bigint;
+  /** Hoechstalter eines Coins in Minuten. `null` = keine Grenze. */
+  readonly maxCoinAgeMinutes: number | null;
   /**
    * Woher der Wert stammt.
    *
@@ -95,6 +114,8 @@ export async function loadEntryScore(db: Database): Promise<EntryScoreSetting> {
       score: ENTRY_SCORE_DEFAULT,
       mode: "VORSICHTIG",
       entryNotionalMinor: null,
+      maxMarketCapUsd: MAX_MARKET_CAP_DEFAULT,
+      maxCoinAgeMinutes: null,
       source: "DEFAULT",
       updatedAt: null,
       updatedBy: null,
@@ -117,6 +138,13 @@ export async function loadEntryScore(db: Database): Promise<EntryScoreSetting> {
     entryNotionalMinor: isValidEntryNotional(row.entryNotionalMinor)
       ? row.entryNotionalMinor
       : null,
+    // Ein unmoeglicher Wert wird zur Voreinstellung und nicht zu „kein
+    // Deckel". Der CHECK verhindert ihn, aber verlassen wird sich darauf
+    // nicht — ein fehlender Deckel ist genau der Fehler, um den es hier geht.
+    maxMarketCapUsd: isValidMaxMarketCap(row.maxMarketCapUsd)
+      ? row.maxMarketCapUsd
+      : MAX_MARKET_CAP_DEFAULT,
+    maxCoinAgeMinutes: isValidMaxCoinAge(row.maxCoinAgeMinutes) ? row.maxCoinAgeMinutes : null,
     source: "SAVED",
     updatedAt: row.updatedAt,
     updatedBy: row.updatedBy,
@@ -147,6 +175,10 @@ export async function saveEntryScore(
      * zu fuehren hiesse, eine Loeschung nicht ausdruecken zu koennen.
      */
     readonly entryNotionalMinor?: bigint | null;
+    /** Weggelassen heisst: Groessengrenze unveraendert lassen. */
+    readonly maxMarketCapUsd?: bigint;
+    /** Weggelassen heisst: unveraendert. `null` heisst: keine Altersgrenze. */
+    readonly maxCoinAgeMinutes?: number | null;
   },
 ): Promise<EntryScoreSetting> {
   if (!isValidEntryScore(input.score)) {
@@ -159,6 +191,15 @@ export async function saveEntryScore(
     throw new Error(
       `Einsatz je Trade muss groesser als 0 und hoechstens ${String(ENTRY_NOTIONAL_MAX_MINOR / 100n)} sein`,
     );
+  }
+
+  if (input.maxMarketCapUsd !== undefined && !isValidMaxMarketCap(input.maxMarketCapUsd)) {
+    throw new Error(
+      `Groessengrenze muss groesser als 0 und hoechstens ${String(MAX_MARKET_CAP_CEILING)} USD sein`,
+    );
+  }
+  if (input.maxCoinAgeMinutes !== undefined && !isValidMaxCoinAge(input.maxCoinAgeMinutes)) {
+    throw new Error("Hoechstalter muss eine ganze Zahl Minuten groesser als 0 sein, oder leer");
   }
 
   return db.transaction(async (tx) => {
@@ -182,6 +223,8 @@ export async function saveEntryScore(
         score: paperSettings.entryScore,
         mode: paperSettings.mode,
         notional: paperSettings.entryNotionalMinor,
+        cap: paperSettings.maxMarketCapUsd,
+        alter: paperSettings.maxCoinAgeMinutes,
       })
       .from(paperSettings)
       .where(eq(paperSettings.id, "singleton"))
@@ -195,6 +238,11 @@ export async function saveEntryScore(
       input.mode ?? (bisher !== undefined && isPaperMode(bisher.mode) ? bisher.mode : "VORSICHTIG");
     const entryNotionalMinor =
       input.entryNotionalMinor !== undefined ? input.entryNotionalMinor : (bisher?.notional ?? null);
+    const maxMarketCapUsd = input.maxMarketCapUsd ??
+      (isValidMaxMarketCap(bisher?.cap) ? bisher.cap : MAX_MARKET_CAP_DEFAULT);
+    const maxCoinAgeMinutes = input.maxCoinAgeMinutes !== undefined
+      ? input.maxCoinAgeMinutes
+      : (isValidMaxCoinAge(bisher?.alter) ? bisher.alter : null);
 
     await tx
       .insert(paperSettings)
@@ -203,6 +251,8 @@ export async function saveEntryScore(
         entryScore: input.score,
         mode,
         entryNotionalMinor,
+        maxMarketCapUsd,
+        maxCoinAgeMinutes,
         updatedAt: input.at,
         updatedBy: input.actor,
       })
@@ -210,6 +260,7 @@ export async function saveEntryScore(
         target: paperSettings.id,
         set: {
           entryScore: input.score, mode, entryNotionalMinor,
+          maxMarketCapUsd, maxCoinAgeMinutes,
           updatedAt: input.at, updatedBy: input.actor,
         },
       });
@@ -225,6 +276,10 @@ export async function saveEntryScore(
         einsatzVon: bisher?.notional === undefined || bisher.notional === null
           ? null : String(bisher.notional),
         einsatzNach: entryNotionalMinor === null ? null : String(entryNotionalMinor),
+        capVon: bisher?.cap === undefined || bisher.cap === null ? null : String(bisher.cap),
+        capNach: String(maxMarketCapUsd),
+        alterVon: bisher?.alter ?? null,
+        alterNach: maxCoinAgeMinutes,
         durch: input.actor,
       },
     });
@@ -233,6 +288,8 @@ export async function saveEntryScore(
       score: input.score,
       mode,
       entryNotionalMinor,
+      maxMarketCapUsd,
+      maxCoinAgeMinutes,
       source: "SAVED" as const,
       updatedAt: input.at,
       updatedBy: input.actor,

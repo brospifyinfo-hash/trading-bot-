@@ -77,6 +77,16 @@ export function EntryScore({
 
       <p>
         <strong>
+          Suchraum: höchstens{" "}
+          {Number(setting.maxMarketCapUsd).toLocaleString("de-DE")} USD Marktkapital
+          {setting.maxCoinAgeMinutes === null
+            ? ", kein Höchstalter"
+            : `, höchstens ${String(setting.maxCoinAgeMinutes)} Minuten alt`}
+        </strong>
+      </p>
+
+      <p>
+        <strong>
           Einsatz je Trade:{" "}
           {setting.entryNotionalMinor === null
             ? "nach Risikobudget"
@@ -149,6 +159,8 @@ export function EntryScore({
           aktuell={setting.score}
           modus={setting.mode}
           einsatzMinor={setting.entryNotionalMinor}
+          capUsd={setting.maxMarketCapUsd}
+          alterMinuten={setting.maxCoinAgeMinutes}
           min={min}
           max={max}
         />

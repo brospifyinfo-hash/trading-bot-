@@ -127,6 +127,13 @@
       "when": 1791000000000,
       "tag": "0018_manual_close",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791010000000,
+      "tag": "0019_universe_limits",
+      "breakpoints": true
     }
   ]
 }

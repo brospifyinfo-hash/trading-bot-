@@ -7,6 +7,7 @@ import { paperSettings } from "../../schema/settings";
 import {
   ENTRY_SCORE_DEFAULT,
   ENTRY_SCORE_MAX_CHANGES_PER_MINUTE,
+  MAX_MARKET_CAP_DEFAULT,
   ENTRY_SCORE_MAX,
   ENTRY_SCORE_MIN,
   isValidEntryScore,
@@ -49,6 +50,7 @@ describe("Einstiegsschwelle in der Datenbank", () => {
     const gelesen = await loadEntryScore(db);
     expect(gelesen).toEqual({
       score: 35, mode: "VORSICHTIG", entryNotionalMinor: null,
+      maxMarketCapUsd: MAX_MARKET_CAP_DEFAULT, maxCoinAgeMinutes: null,
       source: "SAVED", updatedAt: at, updatedBy: "dashboard",
     });
 

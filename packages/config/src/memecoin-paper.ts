@@ -96,7 +96,33 @@ export const PAPER_STRATEGY_ID = "memecoin-active-paper";
  */
 export type PaperMode = "VORSICHTIG" | "OFFENSIV";
 
-export function paperCandidate(score: number, mode: PaperMode = "VORSICHTIG"): {
+/**
+ * Die Grenzen des Suchraums, wie der Betreiber sie gesetzt hat.
+ *
+ * Getrennt vom Modus, und zwar aus einem Fehler heraus: der Offensiv-Modus
+ * hatte `maxMarketCapUsd` auf eine Billion gesetzt — also faktisch keinen
+ * Deckel. Das war eine Fehluebersetzung von „soll nicht so lange abwarten":
+ * ein offener Groessendeckel laesst den Bot nicht FRUEHER handeln, sondern
+ * das FALSCHE handeln. Wer einen Memecoin-Sniper baut und ihm erlaubt, einen
+ * Milliarden-Coin zu kaufen, hat keinen Sniper gebaut.
+ *
+ * Deshalb steht die Groesse jetzt nicht mehr im Modus, sondern als eigene
+ * Einstellung — und sie gilt an BEIDEN Stellen, an denen sie vorher getrennt
+ * verdrahtet war: in der Auswahl des Suchraums und am Einstiegstor.
+ */
+export interface PaperLimits {
+  /** Obergrenze der Marktkapitalisierung in USD. */
+  readonly maxMarketCapUsd: number;
+}
+
+/** Voreinstellung: klein. Ein Memecoin-Versuch sucht keine etablierten Werte. */
+export const MAX_MARKET_CAP_DEFAULT_USD = 5_000_000;
+
+export function paperCandidate(
+  score: number,
+  mode: PaperMode = "VORSICHTIG",
+  limits: PaperLimits = { maxMarketCapUsd: MAX_MARKET_CAP_DEFAULT_USD },
+): {
   readonly strategyId: string;
   readonly version: string;
   readonly executionMode: string;
@@ -139,15 +165,17 @@ export function paperCandidate(score: number, mode: PaperMode = "VORSICHTIG"): {
               minSecurityScore: 0,
               minMomentumScore: 0,
               minLiquidityUsd: 1,
-              maxMarketCapUsd: 1_000_000_000_000,
               maxTop10HolderSharePct: 100,
+              // Die Groesse bleibt die Groesse — auch offensiv. Siehe
+              // `PaperLimits`.
+              maxMarketCapUsd: limits.maxMarketCapUsd,
             }
           : {
               minDataCompleteness: 1,
               minSecurityScore: 50,
               minMomentumScore: 30,
               minLiquidityUsd: 5_000,
-              maxMarketCapUsd: 50_000_000,
+              maxMarketCapUsd: limits.maxMarketCapUsd,
               maxTop10HolderSharePct: 60,
             }),
       },
