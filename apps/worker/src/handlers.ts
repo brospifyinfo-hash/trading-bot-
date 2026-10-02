@@ -499,6 +499,7 @@ class EvaluateOpportunityHandler implements JobHandler {
         liquidityUsd: null,
         quoteMint: QUOTE_ANCHOR_MINT,
         entryAmountRaw,
+        entryNotionalMinor: schwelle.entryNotionalMinor,
         });
       } catch (error: unknown) {
         // Die Fehlerklasse ins Etikett, die MELDUNG nur ins Log-Feld `err`
@@ -604,6 +605,8 @@ class EvaluateOpportunityHandler implements JobHandler {
       // diese Angabe sieht nach einer getroffenen Entscheidung aus.
       entryThresholdSource: schwelle.source,
       entryMode: schwelle.mode,
+      entryNotionalMinor:
+        schwelle.entryNotionalMinor === null ? null : String(schwelle.entryNotionalMinor),
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
       accounts,

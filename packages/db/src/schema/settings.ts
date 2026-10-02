@@ -1,4 +1,4 @@
-import { check, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { bigint, check, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 /**
@@ -52,9 +52,27 @@ export const paperSettings = pgTable(
     mode: text("mode", { enum: ["VORSICHTIG", "OFFENSIV"] })
       .notNull()
       .default("VORSICHTIG"),
+    /**
+     * Gewuenschter Einsatz je Trade, in der kleinsten Einheit (Cent).
+     *
+     * `null` heisst: keine Vorgabe, es gilt das Risikobudget der
+     * Strategieversion. Ausdruecklich KEINE 0 dafuer — 0 waere ein Einsatz von
+     * null und damit ein Trade, den es nicht gibt.
+     *
+     * `bigint`, weil Geld in diesem System nie als Gleitkommazahl gefuehrt
+     * wird. Die Obergrenzen des Kontos gelten weiter: wer mehr einstellt, als
+     * die Portfolio-Grenze hergibt, bekommt die Grenze — und das Dashboard
+     * sagt, welche gebunden hat.
+     */
+    entryNotionalMinor: bigint("entry_notional_minor", { mode: "bigint" }),
   },
   (t) => [
     check("paper_settings_singleton", sql`${t.id} = 'singleton'`),
     check("paper_settings_entry_score", sql`${t.entryScore} BETWEEN 10 AND 95`),
+    // Null ist erlaubt (keine Vorgabe), 0 oder negativ nicht.
+    check(
+      "paper_settings_entry_notional",
+      sql`${t.entryNotionalMinor} IS NULL OR ${t.entryNotionalMinor} > 0`,
+    ),
   ],
 );

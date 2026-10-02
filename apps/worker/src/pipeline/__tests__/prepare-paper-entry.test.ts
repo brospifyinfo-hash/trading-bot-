@@ -19,7 +19,8 @@ const context: PipelineDeps["decisionContext"] = {
   hasOpenIntentOnMint: false, criticalProvidersUnavailable: [], exposureViolations: [],
   breakers: { open: [], entriesBlocked: false, allTradingBlocked: false, reasons: [] },
   sizing: { size: eur(100), tradeable: true, bindingConstraint: "RISK_BUDGET",
-    candidates: { RISK_BUDGET: eur(100), LIQUIDITY: eur(100), CONFIDENCE: eur(100), PORTFOLIO_CAP: eur(100) } },
+    candidates: { RISK_BUDGET: eur(100), LIQUIDITY: eur(100), CONFIDENCE: eur(100),
+      PORTFOLIO_CAP: eur(100), FIXED_NOTIONAL: eur(100) } },
   ev: { estimate: { kind: "UNKNOWN", reason: "INSUFFICIENT_SAMPLE", sampleSize: 0 },
     pointEv: null, conservativeEv: null, winRate: null, winRateLowerBound: null, avgWin: null, avgLoss: null },
 };

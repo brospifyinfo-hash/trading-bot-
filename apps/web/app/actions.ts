@@ -8,7 +8,9 @@ import {
   ENTRY_SCORE_MAX,
   ENTRY_SCORE_MIN,
   isPaperMode,
+  isValidEntryNotional,
   isValidEntryScore,
+  ENTRY_NOTIONAL_MAX_MINOR,
   saveEntryScore,
 } from "@sae/db";
 
@@ -125,6 +127,35 @@ export async function schwelleSetzen(
   }
   const modus = isPaperMode(modusRoh) ? modusRoh : undefined;
 
+  /*
+   * Der Einsatz je Trade, in Euro eingegeben und in Cent gespeichert.
+   *
+   * Die Umrechnung laeuft ueber Zeichenketten und nicht ueber `* 100`: 19.99
+   * mal 100 ergibt in Gleitkomma 1998.9999999999998, und Geld wird in diesem
+   * System nie als Gleitkommazahl gefuehrt.
+   *
+   * Leeres Feld heisst „keine Vorgabe" und damit Risikobudget — das ist eine
+   * ausdrueckliche Wahl und kein fehlender Wert.
+   */
+  const einsatzRoh = formData.get("einsatz");
+  let einsatzMinor: bigint | null | undefined;
+  if (typeof einsatzRoh === "string") {
+    const geputzt = einsatzRoh.trim().replace(",", ".");
+    if (geputzt === "") {
+      einsatzMinor = null;
+    } else {
+      const treffer = /^(\d{1,8})(?:\.(\d{1,2}))?$/.exec(geputzt);
+      if (treffer === null) {
+        return "Einsatz je Trade: bitte einen Betrag wie 25 oder 12,50 angeben.";
+      }
+      const cent = BigInt(treffer[1] ?? "0") * 100n + BigInt((treffer[2] ?? "").padEnd(2, "0"));
+      if (!isValidEntryNotional(cent)) {
+        return `Einsatz je Trade muss groesser als 0 und hoechstens ${String(ENTRY_NOTIONAL_MAX_MINOR / 100n)} Euro sein.`;
+      }
+      einsatzMinor = cent;
+    }
+  }
+
   // Wer es war, so genau wie es ehrlich geht. Ohne Anmeldung ist „jemand ueber
   // das Dashboard" die ganze Wahrheit, und sie gehoert so in die
   // Aenderungsspur — ein schlichtes „dashboard" liesse spaeter glauben, es sei
@@ -136,6 +167,7 @@ export async function schwelleSetzen(
       actor,
       at: new Date(),
       ...(modus === undefined ? {} : { mode: modus }),
+      ...(einsatzMinor === undefined ? {} : { entryNotionalMinor: einsatzMinor }),
     });
   } catch (error: unknown) {
     // Die Obergrenze je Minute meldet sich hier. Sie als technischen Fehler
@@ -146,5 +178,11 @@ export async function schwelleSetzen(
   // Die Seite liest die Datenbank bei jedem Aufruf; ohne diese Zeile zeigte
   // der naechste Aufruf trotzdem die zwischengespeicherte alte Zahl.
   revalidatePath("/");
-  return `Gespeichert: Schwelle ${String(wert)}${modus === undefined ? "" : `, Modus ${modus}`}. Der Worker rechnet ab dem naechsten Lauf damit.`;
+  const einsatzText =
+    einsatzMinor === undefined
+      ? ""
+      : einsatzMinor === null
+        ? ", Einsatz nach Risikobudget"
+        : `, Einsatz ${(Number(einsatzMinor) / 100).toLocaleString("de-DE")} EUR`;
+  return `Gespeichert: Schwelle ${String(wert)}${modus === undefined ? "" : `, Modus ${modus}`}${einsatzText}. Der Worker rechnet ab dem naechsten Lauf damit.`;
 }

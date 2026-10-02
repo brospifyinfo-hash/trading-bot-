@@ -157,6 +157,7 @@ export async function createHarness(at: Date): Promise<Harness> {
               LIQUIDITY: eur(100),
               PORTFOLIO_CAP: eur(100),
               CONFIDENCE: eur(100),
+              FIXED_NOTIONAL: eur(100),
             },
             tradeable: true,
           },

@@ -6206,3 +6206,73 @@ Web-Build erfolgreich. Die Gegenproben sind Teil der Suite: vorsichtig lehnt
 dieselbe Beobachtung ab, offensiv steigt ein; offensiv im Live-Modus wird
 blockiert; die vier gemessenen Sicherheitsbefunde bleiben auch offensiv ein
 Ausschluss. Neue Migration `0016_paper_mode.sql`.
+
+## §147 — Verlauf, Einsatz je Trade, Adresse kopieren (2026-10-02)
+
+Drei Wuensche des Betreibers, und der zweite hat Substanz.
+
+### Einsatz je Trade
+
+Die Positionsgroesse kam bisher ausschliesslich aus dem Risikobudget
+(`riskPerTradePct` geteilt durch den Stopabstand). Jetzt laesst sich ein
+Betrag je Trade einstellen.
+
+Entscheidend ist, WIE: `fixedNotional` ist ein WEITERER Kandidat in
+`computePositionSize` und kein Ersatz fuer die anderen. Es gilt weiter die
+kleinste der Grenzen — Risikobudget, Liquiditaet, Portfolio-Deckel,
+Konfidenz, Wunsch. Ein Wunsch, der die Obergrenzen ueberschreibt, waere eine
+Buchfuehrung, die mehr ausgibt als vorhanden ist, und damit eine erfundene
+Statistik. `bindingConstraint` nennt die Grenze, die tatsaechlich gebunden
+hat; das Dashboard zeigt sie unter „Passt die Positionsgroesse?".
+
+Praktische Folge, die hier stehen muss: bei `evConfidence: 0` — und das ist
+im Kandidatenpfad fest so — liegt der Konfidenz-Deckel bei 25 % des
+Risikobudgets. Wer einen grossen Betrag einstellt, bekommt deshalb unter
+Umstaenden `CONFIDENCE` als bindende Grenze, obwohl er daran nichts
+eingestellt hat. Das ist richtig gerechnet und schlecht benannt; die
+Einstellung selbst taugt als Obergrenze unverandert.
+
+Drei Zustaende werden auseinandergehalten, und das ist keine Spitzfindigkeit:
+ein Betrag, ausdruecklich KEINE Vorgabe (`null`, es gilt das Risikobudget),
+und „nicht angefasst" (`undefined`). Wer die letzten zwei in einem Wert
+fuehrt, kann eine Aufhebung nicht ausdruecken. 0 ist ungueltig — ein Einsatz
+von null ist kein Trade, und ihn als „keine Vorgabe" zu lesen waere eine
+stille Umdeutung. Der CHECK in `paper_settings` haelt das auch in der
+Datenbank fest.
+
+Die Eingabe laeuft in Euro und wird in Cent gespeichert, umgerechnet ueber
+Zeichenketten und nicht ueber `* 100`: 19.99 mal 100 ergibt in Gleitkomma
+1998.9999999999998, und Geld wird in diesem System nie als Gleitkommazahl
+gefuehrt.
+
+### Verlauf
+
+Die beiden bestehenden Tabellen zeigen offene und geschlossene Positionen
+getrennt. Fuer die Frage „was ist passiert" ist das die falsche Sortierung:
+ein Kauf um 14:02 und der Verkauf um 14:19 gehoeren nebeneinander. Der neue
+Verlauf fuehrt jede Buchung chronologisch, neueste zuerst.
+
+Jede Zeile traegt die Strategieversion, und die enthaelt Schwelle und Modus
+(`2.0.0-s10-offensiv`). Damit ist an jedem einzelnen Trade ablesbar, unter
+welcher Regel er entstand — ohne das waere eine Statistik aus vorsichtigen
+und offensiven Einstiegen ein Mischwert ohne Bedeutung. Dafuer reicht
+`strategyVersions.version` im bestehenden Join; keine neue Spalte.
+
+Darunter die Aenderungen an den Einstellungen, aus `system_events`. Eine
+Reihe von Trades ohne sie ist nicht auswertbar: „warum sind an diesem
+Nachmittag zwanzig Positionen entstanden" beantwortet keine Trade-Liste,
+sondern die Zeile „Schwelle von 70 auf 10, Modus offensiv".
+
+### Adresse kopieren
+
+Eine Mint-Adresse ist 32 bis 44 Zeichen Base58 und in der Tabelle gekuerzt.
+Sie abzuschreiben ist nicht zumutbar, und ein Tippfehler darin fuehrt nicht
+zu einer Fehlermeldung, sondern zu einem anderen Token. Ein Knopf je Zeile,
+dazu ein Link auf Solscan.
+
+`navigator.clipboard` braucht einen sicheren Kontext und kann verweigert
+werden. Schlaegt es fehl, erscheint die Adresse in einem Feld zum Markieren,
+statt dass der Knopf stumm nichts tut.
+
+Validierung: 159 Dateien / 1635 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Neue Migration `0017_paper_entry_notional.sql`.

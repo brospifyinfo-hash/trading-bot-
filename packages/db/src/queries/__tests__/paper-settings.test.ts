@@ -48,7 +48,8 @@ describe("Einstiegsschwelle in der Datenbank", () => {
 
     const gelesen = await loadEntryScore(db);
     expect(gelesen).toEqual({
-      score: 35, mode: "VORSICHTIG", source: "SAVED", updatedAt: at, updatedBy: "dashboard",
+      score: 35, mode: "VORSICHTIG", entryNotionalMinor: null,
+      source: "SAVED", updatedAt: at, updatedBy: "dashboard",
     });
 
     // Ohne Aenderungsspur waere spaeter nicht beantwortbar, warum an einem Tag
@@ -200,3 +201,80 @@ describe("Modus", () => {
     } finally { await schliessen(); }
   }, 30_000);
 });
+
+/**
+ * Der Einsatz je Trade.
+ *
+ * Drei Zustaende, die auseinandergehalten werden muessen: ein Betrag,
+ * ausdruecklich KEINE Vorgabe (`null`), und „nicht angefasst" (`undefined`).
+ * Wer die letzten zwei in einem Wert fuehrt, kann eine Loeschung nicht
+ * ausdruecken.
+ */
+describe("Einsatz je Trade", () => {
+  it("steht ohne Zeile auf keine Vorgabe", async () => {
+    const { db: leer, close: schliessen } = await createTestDatabase();
+    try {
+      expect((await loadEntryScore(leer)).entryNotionalMinor).toBeNull();
+    } finally { await schliessen(); }
+  }, 30_000);
+
+  it("speichert einen Betrag, laesst ihn stehen und laesst ihn aufheben", async () => {
+    const { db: eigen, close: schliessen } = await createTestDatabase();
+    try {
+      const at = new Date("2026-10-02T12:00:00Z");
+      await saveEntryScore(eigen, { score: 10, actor: "dashboard", at, entryNotionalMinor: 2_500n });
+      expect((await loadEntryScore(eigen)).entryNotionalMinor).toBe(2_500n);
+
+      // Weggelassen heisst „unveraendert".
+      await saveEntryScore(eigen, { score: 20, actor: "dashboard", at });
+      expect((await loadEntryScore(eigen)).entryNotionalMinor).toBe(2_500n);
+
+      // `null` heisst „Vorgabe aufheben" — und ist etwas anderes als 0.
+      await saveEntryScore(eigen, { score: 20, actor: "dashboard", at, entryNotionalMinor: null });
+      expect((await loadEntryScore(eigen)).entryNotionalMinor).toBeNull();
+    } finally { await schliessen(); }
+  }, 30_000);
+
+  it.each([0n, -100n, 100_000_001n])("weist %s als Einsatz ab", async (wert) => {
+    const { db: eigen, close: schliessen } = await createTestDatabase();
+    try {
+      await expect(saveEntryScore(eigen, {
+        score: 10, actor: "test", at: new Date(), entryNotionalMinor: wert,
+      })).rejects.toThrow();
+      // Ein Einsatz von 0 ist kein Trade. Ihn als „keine Vorgabe" zu lesen
+      // waere eine stille Umdeutung.
+      expect(await eigen.select().from(paperSettings)).toHaveLength(0);
+    } finally { await schliessen(); }
+  }, 30_000);
+});
+
+/**
+ * Die Aenderungsspur, aus der die Historie im Dashboard entsteht.
+ *
+ * Eine Reihe von Trades ohne die Aenderungen an den Regeln ist nicht
+ * auswertbar: „warum sind an diesem Nachmittag zwanzig Positionen entstanden"
+ * beantwortet keine Trade-Liste, sondern die Zeile „Schwelle von 70 auf 10".
+ */
+it("liefert die Aenderungen fuer die Historie, neueste zuerst", async () => {
+  const { loadSettingsHistory } = await import("../history");
+  const { db: eigen, close: schliessen } = await createTestDatabase();
+  try {
+    const t0 = new Date("2026-10-02T10:00:00Z");
+    await saveEntryScore(eigen, { score: 70, actor: "dashboard", at: t0 });
+    await saveEntryScore(eigen, {
+      score: 10, actor: "dashboard", at: new Date(t0.getTime() + 60_000),
+      mode: "OFFENSIV", entryNotionalMinor: 5_000n,
+    });
+
+    const verlauf = await loadSettingsHistory(eigen);
+    expect(verlauf).toHaveLength(2);
+    // Neueste zuerst — die Historie liest man von oben.
+    expect(verlauf[0]).toMatchObject({
+      scoreVon: 70, scoreNach: 10,
+      modusVon: "VORSICHTIG", modusNach: "OFFENSIV",
+      einsatzVon: null, einsatzNach: 5_000n,
+      durch: "dashboard",
+    });
+    expect(verlauf[1]).toMatchObject({ scoreVon: null, scoreNach: 70 });
+  } finally { await schliessen(); }
+}, 30_000);

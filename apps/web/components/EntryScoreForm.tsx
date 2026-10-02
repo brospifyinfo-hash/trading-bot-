@@ -18,11 +18,14 @@ import { schwelleSetzen } from "@/app/actions";
 export function EntryScoreForm({
   aktuell,
   modus,
+  einsatzMinor,
   min,
   max,
 }: {
   readonly aktuell: number;
   readonly modus: "VORSICHTIG" | "OFFENSIV";
+  /** Einsatz je Trade in Cent, oder `null` fuer „Risikobudget". */
+  readonly einsatzMinor: bigint | null;
   readonly min: number;
   readonly max: number;
 }) {
@@ -54,11 +57,28 @@ export function EntryScoreForm({
             <option value="OFFENSIV">Offensiv — entscheidet mit Teildaten</option>
           </select>
         </label>
+        <label className="field">
+          <span>Einsatz je Trade (EUR)</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            name="einsatz"
+            defaultValue={einsatzMinor === null ? "" : (Number(einsatzMinor) / 100).toString()}
+            placeholder="leer = Risikobudget"
+          />
+        </label>
         <button type="submit" disabled={laeuft}>
           {laeuft ? "Speichere…" : "Speichern"}
         </button>
       </form>
-      <p className="hint">Gaengige Werte: {beispiele.join(" · ")}. Jede Zahl dazwischen geht genauso.</p>
+      <p className="hint">Gaengige Schwellen: {beispiele.join(" · ")}. Jede Zahl dazwischen geht genauso.</p>
+      <p className="hint">
+        Der Einsatz ist eine OBERGRENZE, keine Zusage: es gilt immer der kleinere Wert aus
+        Ihrer Vorgabe, der Portfolio-Grenze, der Liquiditaet und dem Barbestand. Welche
+        Grenze gebunden hat, steht in der Betriebsdiagnose unter „Passt die
+        Positionsgroesse?". Leeres Feld heisst: der Bot rechnet die Groesse wie bisher aus
+        dem Risikobudget.
+      </p>
       {meldung !== null && (
         <p className="placeholder" role="status">
           <strong>HINWEIS</strong>

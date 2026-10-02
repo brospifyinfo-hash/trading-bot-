@@ -93,6 +93,8 @@ export interface DecisionRunDeps {
    * Handeln der teuerste Fehler ueberhaupt.
    */
   readonly entryAmountRaw: bigint | null;
+  /** Gewuenschter Einsatz je Trade in Cent. `null`/weggelassen = Risikobudget. */
+  readonly entryNotionalMinor?: bigint | null;
   readonly strategyVersionId: string;
   readonly snapshotCount: number;
   readonly providerReports: readonly ProviderStatusReport[];
@@ -254,6 +256,7 @@ export async function runDecision(deps: DecisionRunDeps): Promise<{
       if (version === undefined || account === null) return { kind: "BLOCKED", reason: "INVALID_STRATEGY_VERSION" };
       if (account.kind !== "READY") return { kind: "BLOCKED", reason: account.reason };
       return preparePaperEntry({ account, valuation: await deps.loadValuation?.("EUR") ?? null,
+        ...(deps.entryNotionalMinor === undefined ? {} : { entryNotionalMinor: deps.entryNotionalMinor }),
         quotes: deps.quotes, clock: systemClock, parameters, inputMint: deps.quoteMint, outputMint: deps.mint,
         tokenId: deps.tokenId, context: pipelineDeps.decisionContext });
     } } : pipelineDeps;

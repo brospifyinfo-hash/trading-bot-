@@ -23,6 +23,12 @@ export async function preparePaperEntry(input: {
   readonly outputMint: string;
   readonly tokenId: string;
   readonly context: PipelineDeps["decisionContext"];
+  /**
+   * Gewuenschter Einsatz je Trade in der kleinsten Einheit. `null` = keine
+   * Vorgabe. Er wirkt als WEITERE Obergrenze; Portfolio-, Liquiditaets- und
+   * Barbestandsgrenzen gelten unveraendert weiter.
+   */
+  readonly entryNotionalMinor?: bigint | null;
   readonly random?: () => number;
 }): Promise<PreparedPaperEntry> {
   const block = (reason: string): PreparedPaperEntry => ({ kind: "BLOCKED", reason });
@@ -31,9 +37,13 @@ export async function preparePaperEntry(input: {
   if (valuation === null) return block("NO_VALUATION");
   if (account.cash.minor <= 0n) return block("INSUFFICIENT_PAPER_CASH");
   if (account.portfolio.openPositions.some((p) => p.tokenId === input.tokenId)) return block("DUPLICATE_TOKEN");
+  const wunsch = input.entryNotionalMinor;
   const sizing = computePositionSize({ portfolioValue: account.portfolio.value, evConfidence: 0,
     stopDistance: parameters.exit.stopLossBps / 10000, maxNotionalByLiquidity: account.cash,
-    minimumNotional: money(1n, account.cash.currency), parameters });
+    minimumNotional: money(1n, account.cash.currency), parameters,
+    ...(wunsch === undefined || wunsch === null
+      ? {}
+      : { fixedNotional: money(wunsch, account.cash.currency) }) });
   const purchase = valuation.preparePurchase(sizing.size, clock.now());
   if (purchase === null) return block("NO_ORDER_VALUATION");
   const plan: ExecutionPlan = { intentId: "paper-preflight", side: "buy", inputMint: input.inputMint as never,

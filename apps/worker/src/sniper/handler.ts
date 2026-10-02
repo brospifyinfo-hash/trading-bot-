@@ -80,6 +80,7 @@ export function buildSniperHandler(deps: HandlerDeps): JobHandler {
         adapters, statusOf: deps.statusOf ?? (() => "UNAVAILABLE"),
         quotes: buildQuoteSource(env), loadValuation: buildPaperValuation(env),
         quoteMint: QUOTE_ANCHOR_MINT, entryAmountRaw: null, liquidityUsd: null,
+        entryNotionalMinor: schwelle.entryNotionalMinor,
       });
       } catch (error: unknown) {
         const klasse = error instanceof Error ? error.constructor.name : "Unknown";

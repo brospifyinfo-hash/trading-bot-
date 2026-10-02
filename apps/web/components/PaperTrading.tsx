@@ -1,4 +1,5 @@
 import type { PaperTrading as TradingState } from "@sae/db";
+import { CopyButton } from "./CopyButton";
 import { PaperRefresh } from "./PaperRefresh";
 
 export function paperMoney(minor: bigint, currency = "EUR") {
@@ -44,7 +45,7 @@ function Account({ data }: { data: Extract<TradingState, { kind: "READY" }> }) {
     {data.open.length === 0 ? <p>Noch keine offenen Positionen. Käufe erscheinen hier, sobald die Strategie einen Einstieg ausführt.</p>
       : <div className="paper-table"><table><thead><tr><th>Coin</th><th>Eröffnet (UTC)</th><th>Einsatz</th><th>Restbestand</th><th>Kosten bisher</th><th>Realisiert netto</th></tr></thead>
         <tbody>{data.open.map(({ position: p, token }) => <tr key={p.id}>
-          <td><strong>{token.symbol ?? token.name ?? "Unbekannter Token"}</strong><small className="paper-mint">{token.mint}</small></td>
+          <td><strong>{token.symbol ?? token.name ?? "Unbekannter Token"}</strong><span className="mint-cell"><a href={`https://solscan.io/token/${token.mint}`} target="_blank" rel="noreferrer noopener" className="paper-mint" title={token.mint}>{token.mint.slice(0, 4)}…{token.mint.slice(-4)}</a><CopyButton value={token.mint} label="Mint-Adresse" /></span></td>
           <td>{date(p.openedAt)}</td><td>{fmt(p.entryNotionalMinor)}</td>
           <td>{(Number(p.remainingAmountRaw * 10000n / p.entryAmountRaw) / 100).toLocaleString("de-DE")} %</td>
           <td>{fmt(p.costsPaidMinor)}</td><td>{fmt(p.realizedPnlMinor - p.costsPaidMinor)}</td>
@@ -53,7 +54,7 @@ function Account({ data }: { data: Extract<TradingState, { kind: "READY" }> }) {
     {data.closedCount === 0 ? <p>Noch keine abgeschlossenen Trades.</p>
       : <div className="paper-table"><table><thead><tr><th>Coin</th><th>Eröffnet (UTC)</th><th>Geschlossen (UTC)</th><th>Einsatz</th><th>Kosten</th><th>Ergebnis netto</th><th>Ausstiegsgrund</th></tr></thead>
         <tbody>{data.closed.map(({ position: p, token }) => <tr key={p.id}>
-          <td><strong>{token.symbol ?? token.name ?? "Unbekannter Token"}</strong><small className="paper-mint">{token.mint}</small></td>
+          <td><strong>{token.symbol ?? token.name ?? "Unbekannter Token"}</strong><span className="mint-cell"><a href={`https://solscan.io/token/${token.mint}`} target="_blank" rel="noreferrer noopener" className="paper-mint" title={token.mint}>{token.mint.slice(0, 4)}…{token.mint.slice(-4)}</a><CopyButton value={token.mint} label="Mint-Adresse" /></span></td>
           <td>{date(p.openedAt)}</td><td>{date(p.closedAt!)}</td><td>{fmt(p.entryNotionalMinor)}</td>
           <td>{fmt(p.costsPaidMinor)}</td><td className={p.realizedPnlMinor - p.costsPaidMinor < 0n ? "paper-negative" : "paper-positive"}>{fmt(p.realizedPnlMinor - p.costsPaidMinor)}</td>
           <td>{p.exitReason ?? "—"}</td>

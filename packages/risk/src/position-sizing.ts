@@ -18,6 +18,8 @@ export type SizingConstraint =
   | "LIQUIDITY"
   | "PORTFOLIO_CAP"
   | "CONFIDENCE"
+  /** Der vom Betreiber gewuenschte Einsatz je Trade. */
+  | "FIXED_NOTIONAL"
   | "BELOW_MINIMUM";
 
 export interface SizingInputs {
@@ -30,6 +32,19 @@ export interface SizingInputs {
   readonly evConfidence: number;
   /** Unterhalb dieses Volumens lohnt sich der Trade nach Kosten nicht. */
   readonly minimumNotional: Money;
+  /**
+   * Fester Einsatz je Trade, wie vom Betreiber eingestellt.
+   *
+   * Bewusst eine WEITERE Obergrenze und kein Ersatz fuer die anderen. Der
+   * Unterschied ist wichtig: wer 500 € einstellt und ein Papier-Konto mit 3000 €
+   * hat, bekommt nicht 500 €, sondern die Portfolio-Obergrenze — und
+   * `bindingConstraint` sagt, welche Grenze gebunden hat. Ein Wunsch, der die
+   * Obergrenzen ueberschreibt, waere eine Buchfuehrung, die mehr ausgibt als
+   * vorhanden ist, und damit eine erfundene Statistik.
+   *
+   * `undefined` heisst: keine Vorgabe, es gilt wie bisher das Risikobudget.
+   */
+  readonly fixedNotional?: Money;
   readonly parameters: StrategyParameters;
 }
 
@@ -102,6 +117,9 @@ export function computePositionSize(input: SizingInputs): SizingResult {
     LIQUIDITY: input.maxNotionalByLiquidity,
     PORTFOLIO_CAP: byPortfolioCap,
     CONFIDENCE: byConfidence,
+    // Ohne Vorgabe darf dieser Kandidat nicht binden. Hier 0 einzusetzen waere
+    // die naheliegende Abkuerzung und wuerde jeden Trade verhindern.
+    FIXED_NOTIONAL: input.fixedNotional ?? byRisk,
   } as const;
 
   let bindingConstraint: Exclude<SizingConstraint, "BELOW_MINIMUM"> = "RISK_BUDGET";

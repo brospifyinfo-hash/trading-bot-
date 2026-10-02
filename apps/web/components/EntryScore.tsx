@@ -77,6 +77,15 @@ export function EntryScore({
 
       <p>
         <strong>
+          Einsatz je Trade:{" "}
+          {setting.entryNotionalMinor === null
+            ? "nach Risikobudget"
+            : `bis ${(Number(setting.entryNotionalMinor) / 100).toLocaleString("de-DE")} EUR`}
+        </strong>
+      </p>
+
+      <p>
+        <strong>
           {setting.mode === "OFFENSIV"
             ? "Modus: offensiv — entscheidet mit Teildaten."
             : "Modus: vorsichtig — nur mit vollständigen Pflichtdaten."}
@@ -136,7 +145,13 @@ export function EntryScore({
       )}
 
       {aenderbar ? (
-        <EntryScoreForm aktuell={setting.score} modus={setting.mode} min={min} max={max} />
+        <EntryScoreForm
+          aktuell={setting.score}
+          modus={setting.mode}
+          einsatzMinor={setting.entryNotionalMinor}
+          min={min}
+          max={max}
+        />
       ) : (
         <>
           <h3>Aendern</h3>

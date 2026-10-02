@@ -38,9 +38,26 @@ export function isPaperMode(value: unknown): value is PaperSettingMode {
   return value === "VORSICHTIG" || value === "OFFENSIV";
 }
 
+/** Obergrenze fuer den Einsatz je Trade, in Cent. 10.000 € — eine Plausibilitaetsgrenze. */
+export const ENTRY_NOTIONAL_MAX_MINOR = 1_000_000n;
+
+/**
+ * Taugt dieser Wert als Einsatz je Trade?
+ *
+ * `null` ist gueltig und heisst „keine Vorgabe". 0 ist NICHT gueltig: ein
+ * Einsatz von null ist kein Trade, und ihn als „keine Vorgabe" zu lesen waere
+ * eine stille Umdeutung.
+ */
+export function isValidEntryNotional(value: unknown): value is bigint | null {
+  if (value === null) return true;
+  return typeof value === "bigint" && value > 0n && value <= ENTRY_NOTIONAL_MAX_MINOR;
+}
+
 export interface EntryScoreSetting {
   readonly score: number;
   readonly mode: PaperSettingMode;
+  /** Einsatz je Trade in Cent. `null` = keine Vorgabe, Risikobudget gilt. */
+  readonly entryNotionalMinor: bigint | null;
   /**
    * Woher der Wert stammt.
    *
@@ -77,6 +94,7 @@ export async function loadEntryScore(db: Database): Promise<EntryScoreSetting> {
     return {
       score: ENTRY_SCORE_DEFAULT,
       mode: "VORSICHTIG",
+      entryNotionalMinor: null,
       source: "DEFAULT",
       updatedAt: null,
       updatedBy: null,
@@ -93,6 +111,12 @@ export async function loadEntryScore(db: Database): Promise<EntryScoreSetting> {
     // Ein unbekannter Wert in der Spalte wird NICHT als offensiv gelesen. Die
     // vorsichtige Lesart ist bei einer unklaren Einstellung die richtige.
     mode: isPaperMode(row.mode) ? row.mode : "VORSICHTIG",
+    // Ein unmoeglicher Wert in der Spalte wird als „keine Vorgabe" gelesen und
+    // nicht als Einsatz. Der CHECK verhindert ihn, aber verlassen wird sich
+    // darauf nicht.
+    entryNotionalMinor: isValidEntryNotional(row.entryNotionalMinor)
+      ? row.entryNotionalMinor
+      : null,
     source: "SAVED",
     updatedAt: row.updatedAt,
     updatedBy: row.updatedBy,
@@ -115,11 +139,25 @@ export async function saveEntryScore(
     readonly at: Date;
     /** Weggelassen heisst: Modus unveraendert lassen. */
     readonly mode?: PaperSettingMode;
+    /**
+     * Weggelassen heisst: Einsatz unveraendert lassen.
+     *
+     * Ausdruecklich `undefined` gegen `null` unterschieden: `undefined` ist
+     * „nicht angefasst", `null` ist „Vorgabe aufheben". Beides in einem Wert
+     * zu fuehren hiesse, eine Loeschung nicht ausdruecken zu koennen.
+     */
+    readonly entryNotionalMinor?: bigint | null;
   },
 ): Promise<EntryScoreSetting> {
   if (!isValidEntryScore(input.score)) {
     throw new Error(
       `Einstiegsschwelle muss eine ganze Zahl zwischen ${String(ENTRY_SCORE_MIN)} und ${String(ENTRY_SCORE_MAX)} sein`,
+    );
+  }
+
+  if (input.entryNotionalMinor !== undefined && !isValidEntryNotional(input.entryNotionalMinor)) {
+    throw new Error(
+      `Einsatz je Trade muss groesser als 0 und hoechstens ${String(ENTRY_NOTIONAL_MAX_MINOR / 100n)} sein`,
     );
   }
 
@@ -140,7 +178,11 @@ export async function saveEntryScore(
     }
 
     const vorher = await tx
-      .select({ score: paperSettings.entryScore, mode: paperSettings.mode })
+      .select({
+        score: paperSettings.entryScore,
+        mode: paperSettings.mode,
+        notional: paperSettings.entryNotionalMinor,
+      })
       .from(paperSettings)
       .where(eq(paperSettings.id, "singleton"))
       .limit(1);
@@ -151,6 +193,8 @@ export async function saveEntryScore(
     const bisher = vorher[0];
     const mode: PaperSettingMode =
       input.mode ?? (bisher !== undefined && isPaperMode(bisher.mode) ? bisher.mode : "VORSICHTIG");
+    const entryNotionalMinor =
+      input.entryNotionalMinor !== undefined ? input.entryNotionalMinor : (bisher?.notional ?? null);
 
     await tx
       .insert(paperSettings)
@@ -158,12 +202,16 @@ export async function saveEntryScore(
         id: "singleton",
         entryScore: input.score,
         mode,
+        entryNotionalMinor,
         updatedAt: input.at,
         updatedBy: input.actor,
       })
       .onConflictDoUpdate({
         target: paperSettings.id,
-        set: { entryScore: input.score, mode, updatedAt: input.at, updatedBy: input.actor },
+        set: {
+          entryScore: input.score, mode, entryNotionalMinor,
+          updatedAt: input.at, updatedBy: input.actor,
+        },
       });
 
     await tx.insert(systemEvents).values({
@@ -174,6 +222,9 @@ export async function saveEntryScore(
         nach: input.score,
         modusVon: bisher?.mode ?? null,
         modusNach: mode,
+        einsatzVon: bisher?.notional === undefined || bisher.notional === null
+          ? null : String(bisher.notional),
+        einsatzNach: entryNotionalMinor === null ? null : String(entryNotionalMinor),
         durch: input.actor,
       },
     });
@@ -181,6 +232,7 @@ export async function saveEntryScore(
     return {
       score: input.score,
       mode,
+      entryNotionalMinor,
       source: "SAVED" as const,
       updatedAt: input.at,
       updatedBy: input.actor,

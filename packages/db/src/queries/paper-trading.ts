@@ -13,7 +13,12 @@ export async function loadPaperTrading(input: { db: Database; strategyName: stri
       db: tx, strategyId: family.id, initialCash: PAPER_INITIAL_CASH, asOf: input.now,
     });
     if (account.kind !== "READY") return { kind: "BLOCKED" as const, updatedAt: input.now };
-    const rows = await tx.select({ position: schema.paperPositions, token: schema.tokens })
+    // Die Strategieversion wandert mit. Sie traegt Schwelle UND Modus im Namen
+    // (`2.0.0-s10-offensiv`), und damit ist an jeder einzelnen Position
+    // ablesbar, unter welcher Regel sie entstanden ist. Ohne sie waere die
+    // Historie eine Liste von Trades ohne Zusammenhang.
+    const rows = await tx.select({ position: schema.paperPositions, token: schema.tokens,
+      version: schema.strategyVersions.version })
       .from(schema.paperPositions)
       .innerJoin(schema.strategyVersions, eq(schema.strategyVersions.id, schema.paperPositions.strategyVersionId))
       .innerJoin(schema.tokens, eq(schema.tokens.id, schema.paperPositions.tokenId))

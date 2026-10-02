@@ -3,7 +3,7 @@ import { PaperSniper } from "@/components/PaperSniper";
 import { PAPER_STRATEGY_ID, paperCandidate } from "@sae/config";
 import { loadPaperTrading } from "@sae/db";
 import { PaperTrading } from "@/components/PaperTrading";
-import { loadDashboardState, isRecentObservation, loadEntryScore, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, type Panel } from "@sae/db";
+import { loadDashboardState, isRecentObservation, loadEntryScore, loadSettingsHistory, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, type Panel } from "@sae/db";
 import { darfAendern, schutzAktiv } from "@/app/actions";
 
 import { db } from "@/lib/db";
@@ -11,6 +11,7 @@ import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/r
 
 import { BotStatusBar } from "@/components/BotStatusBar";
 import { EntryScore } from "@/components/EntryScore";
+import { History } from "@/components/History";
 import { WorkerStatus } from "@/components/WorkerStatus";
 import { OperatingStatus } from "@/components/OperatingStatus";
 
@@ -169,12 +170,14 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
   let account: Awaited<ReturnType<typeof loadPaperTrading>>;
   let state: Awaited<ReturnType<typeof loadDashboardState>>;
   let schwelle: Awaited<ReturnType<typeof loadEntryScore>>;
+  let verlauf: Awaited<ReturnType<typeof loadSettingsHistory>>;
   try {
     // Modulebene statt Request-Handler: siehe lib/db.ts.
     sniper = await loadPaperSniper(db());
     state = await loadDashboardState({ db: db(), now: new Date() });
     account = await loadPaperTrading({ db: db(), strategyName: PAPER_STRATEGY_ID, now: new Date() });
     schwelle = await loadEntryScore(db());
+    verlauf = await loadSettingsHistory(db());
   } catch (error: unknown) {
     // Der Fehler wird nur klassifiziert, nie ausgegeben: eine
     // Postgres-Fehlermeldung enthaelt die Verbindungszeichenfolge samt Passwort.
@@ -227,6 +230,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           min={ENTRY_SCORE_MIN}
           max={ENTRY_SCORE_MAX}
         />
+        <History data={account} settings={verlauf} />
         <PaperSniper data={sniper} />
         <OperatingStatus run={state.latestDecisionRun} now={state.generatedAt} />
         <section className="panel">

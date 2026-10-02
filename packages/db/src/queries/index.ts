@@ -6,3 +6,4 @@ export * from "./paper-trading";
 
 export * from "./sniper";
 export * from "./paper-settings";
+export * from "./history";
