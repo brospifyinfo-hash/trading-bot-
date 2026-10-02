@@ -22,6 +22,16 @@ export interface PitSnapshot {
    * die Frage, fuer die `Observation` seine Quelle mitfuehrt.
    */
   readonly sourceProviderId: string | null;
+  /**
+   * Qualitaetsstufe der Quelle, die diesen Punkt geliefert hat.
+   *
+   * Stand in der Spalte und nicht in diesem Typ — und damit war ein
+   * gespeicherter Snapshot nicht selbst beurteilbar: ob er eine
+   * Einstiegsentscheidung tragen KANN, haengt an Stufe und Alter, und die
+   * Stufe fehlte. Wer den Snapshot liest, muss das ohne zweite Abfrage
+   * entscheiden koennen.
+   */
+  readonly sourceTier: "PRIMARY" | "SECONDARY" | "FALLBACK" | null;
   /** Alter des Datenpunkts beim Abruf, in Sekunden. `null` = unbekannt. */
   readonly sourceFreshnessSeconds: number | null;
   readonly priceUsd: number | null;

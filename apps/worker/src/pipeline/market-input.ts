@@ -1,14 +1,15 @@
 import type { Clock, DataProvenance, TokenId } from "@sae/core";
-import { TEST_FIXTURE_PROVIDER_PREFIX } from "@sae/core";
+import { providerId, TEST_FIXTURE_PROVIDER_PREFIX } from "@sae/core";
 import { loadEnv, providerEnvSchema, type KnownProviderId } from "@sae/config";
 import {
   buildMarketDataChain,
   fetchMarketFromChain,
+  snapshotSupportsEntry,
   type MarketDataAdapter,
   type MarketFields,
 } from "@sae/pipeline";
 import type { FeatureVector } from "@sae/scoring";
-import type { PitReader } from "@sae/db";
+import type { PitReader, PitSnapshot } from "@sae/db";
 
 import { buildFeatureVector } from "./feature-build";
 import type { ProviderStatus } from "@sae/providers";
@@ -184,20 +185,64 @@ export async function resolveMarketInput(
     };
   }
 
-  // Use this acquisition for both the feature vector and entry quality gate.
+  const asOf = clock.now();
+  const frisch: PitSnapshot = {
+    ...result.data.value, tokenId: request.tokenId, observedAt: result.data.observedAt,
+    sourceProviderId: String(result.data.providerId), sourceTier: result.data.tier,
+    sourceFreshnessSeconds: result.data.freshnessSeconds,
+    finalScore: null, dataCompleteness: 0, scoreEngineVersion: null,
+  };
+
+  /**
+   * Welcher Snapshot die Entscheidung tragen soll.
+   *
+   * Frischer ist besser, und deshalb gewinnt der gerade geholte — aber nur,
+   * solange er eine Einstiegsentscheidung ueberhaupt tragen KANN. Konnte er
+   * das nicht, wurde bis hierher trotzdem er genommen, und das hat 24 Stunden
+   * lang jeden Einstieg verhindert:
+   *
+   * Der Auffrischungslauf holt sich alle 20 Sekunden einen vollstaendigen
+   * Snapshot vom Router — mit Preiseinfluss und Ausstiegsfaehigkeit — und
+   * schreibt ihn in die Datenbank. Die Entscheidung holte sich danach einen
+   * EIGENEN Datensatz, fiel bei schweigendem Router auf die Marktdatenquelle
+   * zurueck (die keine Route rechnet und keinen Zeitstempel liefert) und
+   * tauschte damit einen vollstaendigen Snapshot gegen einen unvollstaendigen.
+   * Anschliessend fehlten drei der dreizehn Pflichtfelder, `finalScore` wurde
+   * `null`, und `null` wird VOR der Schwelle geprueft — eine Schwelle von 10
+   * und eine von 95 fuehrten zum identischen `REJECT / DATA_INCOMPLETE`.
+   *
+   * Es werden ausdruecklich KEINE Felder aus zwei Snapshots gemischt; das
+   * waere eine erfundene Reihe (siehe `feature-build.ts`). Es wird zwischen
+   * zwei in sich geschlossenen Snapshots EINER gewaehlt, und seine Herkunft
+   * wandert mit — sonst stuende in der Aufzeichnung die falsche Quelle.
+   */
+  const frischTraegt = snapshotSupportsEntry({
+    providerId: result.data.providerId,
+    tier: result.data.tier,
+    freshnessSeconds: result.data.freshnessSeconds,
+    contributors: [],
+  }).allowed;
+
+  const gespeichert =
+    frischTraegt || request.pit === undefined
+      ? null
+      : await request.pit.snapshotAt(request.tokenId, asOf);
+  const gespeichertTraegt =
+    gespeichert !== null && gespeichert.sourceProviderId !== null && entryCapable(gespeichert, asOf);
+
+  const gewaehlt = gespeichertTraegt && gespeichert !== null ? gespeichert : frisch;
+  const getauscht = gewaehlt !== frisch;
+
+  // Use the chosen acquisition for both the feature vector and entry quality gate.
   // Historical comparisons remain anchored to this provider and observation time.
   const features =
     request.pit === undefined
       ? null
       : await buildFeatureVector({
           pit: request.pit,
-          currentSnapshot: {
-            ...result.data.value, tokenId: request.tokenId, observedAt: result.data.observedAt,
-            sourceProviderId: String(result.data.providerId), sourceFreshnessSeconds: result.data.freshnessSeconds,
-            finalScore: null, dataCompleteness: 0, scoreEngineVersion: null,
-          },
+          currentSnapshot: gewaehlt,
           tokenId: request.tokenId,
-          asOf: clock.now(),
+          asOf,
           firstSeenAt: request.firstSeenAt ?? null,
         });
 
@@ -206,21 +251,59 @@ export async function resolveMarketInput(
     market: result.data.value,
     features,
     // Alles vor dem erfolgreichen Versuch. `OK` steht nur am letzten.
-    fallbackFrom: result.attempts
-      .filter((a) => a.outcome !== "OK")
-      .map((a) => `${String(a.providerId)}=${a.outcome}`),
-    // Unveraendert aus der Kette. Bei DexScreener ist das `null`.
-    freshnessSeconds: result.data.freshnessSeconds,
+    fallbackFrom: [
+      ...result.attempts
+        .filter((a) => a.outcome !== "OK")
+        .map((a) => `${String(a.providerId)}=${a.outcome}`),
+      // Dass getauscht wurde, gehoert in die Aufzeichnung. Ein stiller Tausch
+      // waere derselbe Fehler wie der stille Downgrade, nur in die andere
+      // Richtung.
+      ...(getauscht ? [`gespeichert=${String(gewaehlt.sourceProviderId)}`] : []),
+    ],
+    freshnessSeconds: gewaehlt.sourceFreshnessSeconds,
+    // Die Herkunft des GEWAEHLTEN Snapshots, nicht die des Abrufs. Stuende
+    // hier der Abruf, behauptete die Aufzeichnung eine Quelle, aus der die
+    // Zahlen nicht stammen — und das Einstiegstor beurteilte die falsche.
     provenance: {
       sourceType: "LIVE",
-      sourceProvider: String(result.data.providerId),
-      sourceTier: result.data.tier,
-      sourceTimestamp: clock.now(),
+      sourceProvider: String(gewaehlt.sourceProviderId),
+      sourceTier: gewaehlt.sourceTier,
+      sourceTimestamp: asOf,
       // ACHTUNG beim Lesen: `observedAt` ist UNSERE Kenntniszeit, nicht die
       // Messzeit des Anbieters. Die Differenz zu `sourceTimestamp` ist
       // deshalb keine Frische, sondern die Dauer des eigenen Abrufs.
-      dataTimestamp: result.data.observedAt,
+      dataTimestamp: gewaehlt.observedAt,
       dataQuality: 0,
     },
   };
+}
+
+/**
+ * Kann dieser GESPEICHERTE Snapshot eine Einstiegsentscheidung tragen?
+ *
+ * Dieselbe Frage wie `snapshotSupportsEntry`, aber fuer eine Zeile aus der
+ * Datenbank — und mit einem Unterschied, der entscheidend ist: das Alter.
+ *
+ * `sourceFreshnessSeconds` ist das Alter beim ABRUF. Es als heutiges Alter zu
+ * lesen hiesse, eine zehn Minuten alte Zeile fuer acht Sekunden frisch zu
+ * halten — genau die Sorte Fehler, die dieses System an jeder anderen Stelle
+ * vermeidet. Das ehrliche Alter ist die Summe aus beidem: wie lange die Zeile
+ * bei uns liegt, plus wie alt sie beim Abruf schon war.
+ *
+ * `null` bleibt dabei unbekannt und nicht null: eine Quelle ohne Zeitstempel
+ * traegt keinen Einstieg, und das gilt gespeichert genauso wie frisch.
+ */
+function entryCapable(snapshot: PitSnapshot, asOf: Date): boolean {
+  // Ohne Stufe ist die Guete der Quelle unbekannt, und unbekannt traegt keinen
+  // Einstieg — dieselbe Vorgabe wie ueberall sonst.
+  if (snapshot.sourceTier === null) return false;
+  if (snapshot.sourceFreshnessSeconds === null) return false;
+  const liegezeit = (asOf.getTime() - snapshot.observedAt.getTime()) / 1_000;
+  if (liegezeit < 0) return false;
+  return snapshotSupportsEntry({
+    providerId: providerId(String(snapshot.sourceProviderId)),
+    tier: snapshot.sourceTier,
+    freshnessSeconds: liegezeit + snapshot.sourceFreshnessSeconds,
+    contributors: [],
+  }).allowed;
 }

@@ -104,6 +104,7 @@ function mapSnapshot(row: SnapshotRow): PitSnapshot {
     tokenId: row.tokenId,
     observedAt: row.observedAt,
     sourceProviderId: row.sourceProviderId,
+    sourceTier: row.sourceTier,
     sourceFreshnessSeconds: row.sourceFreshnessSeconds,
     priceUsd: row.priceUsd,
     marketCapUsd: row.marketCapUsd,

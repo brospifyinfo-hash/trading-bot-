@@ -5,7 +5,7 @@ import { buildFeatureVector } from "../feature-build";
 
 it("scores the current acquisition, never replacing missing current fields with older values", async () => {
   const now = new Date("2026-10-01T08:00:00Z"), id = tokenId("current-token");
-  const current: PitSnapshot = { tokenId: id, observedAt: now, sourceProviderId: "jupiter-quote",
+  const current: PitSnapshot = { tokenId: id, observedAt: now, sourceProviderId: "jupiter-quote", sourceTier: "PRIMARY",
     sourceFreshnessSeconds: 1, priceUsd: 2, liquidityUsd: null, marketCapUsd: 100000,
     volume24hUsd: 5000, volume5mUsd: 1000, buys5m: 20, sells5m: 10,
     priceImpactBps: 50, exitCapacityRatio: 5, holders: null, finalScore: null,

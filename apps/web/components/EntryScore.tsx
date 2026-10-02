@@ -1,4 +1,4 @@
-import type { EntryScoreSetting } from "@sae/db";
+import type { DecisionRunReport, EntryScoreSetting } from "@sae/db";
 
 import { EntryScoreForm } from "./EntryScoreForm";
 
@@ -20,6 +20,7 @@ import { EntryScoreForm } from "./EntryScoreForm";
 export function EntryScore({
   setting,
   benutzt,
+  run,
   aenderbar,
   geschuetzt,
   min,
@@ -27,6 +28,8 @@ export function EntryScore({
 }: {
   readonly setting: EntryScoreSetting;
   readonly benutzt: number | null;
+  /** Der letzte Lauf — fuer die Frage, ob die Schwelle ueberhaupt gewirkt hat. */
+  readonly run: DecisionRunReport | null;
   /** Darf hier gerade geaendert werden — offen oder angemeldet. */
   readonly aenderbar: boolean;
   /** Ist ein Passwort hinterlegt? Entscheidet nur, WAS hier zu lesen ist. */
@@ -35,6 +38,20 @@ export function EntryScore({
   readonly max: number;
 }) {
   const wirksam = benutzt === null || benutzt === setting.score;
+  /**
+   * Hat die Schwelle im letzten Lauf ueberhaupt etwas entschieden?
+   *
+   * Die Frage, die hier gefehlt hat — und ihr Fehlen hat den Betreiber 24
+   * Stunden kosten lassen: er stellte die Schwelle auf 10, es wurde nichts
+   * gekauft, und nichts sagte, dass die Zahl in dieser Lage voellig
+   * wirkungslos ist. Kommt bei keinem Coin eine Gesamtbewertung zustande,
+   * wird die Schwelle nie verglichen — die Ablehnung passiert vorher.
+   *
+   * `bestScore` ist der hoechste Score des Laufs. Ist er `null`, obwohl Coins
+   * geprueft wurden, hatte kein einziger vollstaendige Pflichtdaten.
+   */
+  const ohneWirkung =
+    run !== null && run.bestScore === null && (run.processed ?? 0) > 0;
 
   return (
     <section className="panel">
@@ -53,6 +70,18 @@ export function EntryScore({
         uebrigen Tore offen sind. Niedriger heisst mehr Einstiege und schlechtere
         Durchschnittsqualitaet, hoeher heisst seltener und waehlerischer.
       </p>
+
+      {ohneWirkung && (
+        <p className="placeholder" role="status">
+          <strong>DIE SCHWELLE HAT NICHTS ENTSCHIEDEN</strong>
+          <br />
+          Im letzten Lauf wurden {run?.processed ?? 0} Coins geprueft und bei keinem kam
+          eine Gesamtbewertung zustande. Dann wird die Schwelle gar nicht verglichen: ein
+          Coin mit unvollstaendigen Pflichtdaten wird abgelehnt, bevor es um die Zahl geht.
+          Eine Aenderung hier bewirkt in dieser Lage nichts — auch nicht nach unten.
+          Der Grund steht in der Betriebsdiagnose unter „Fehlende erhobene Datenfelder".
+        </p>
+      )}
 
       {!wirksam && (
         <p className="placeholder" role="status">

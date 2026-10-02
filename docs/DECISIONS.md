@@ -5956,3 +5956,96 @@ aussieht, waere der eigentliche Fehler.
 
 Validierung: 159 Dateien / 1615 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich.
+
+## §144 — Warum eine Schwelle von 10 nichts bewirkt hat (2026-10-02)
+
+Der Betreiber stand 24 Stunden auf Einstiegsschwelle 10 — praktisch „kauf
+alles" — und es wurde kein einziges Mal gekauft. Die Ursache besteht aus zwei
+Teilen, und der erste erklaert, warum der Regler nicht helfen konnte.
+
+### Teil 1: `null` ist keine niedrige Zahl
+
+`computePaperLaunchScores` setzt `finalScore` auf `null`, sobald EIN einziges
+der dreizehn Pflichtfelder fehlt. Die Entscheidungsmaschine prueft `null`
+ZUERST:
+
+```
+finalScore === null  →  REJECT, rejectionReasons: ["DATA_INCOMPLETE"]
+```
+
+Die Schwelle wird danach nie verglichen. Eine Schwelle von 10 und eine von 95
+fuehren damit zum identischen Ergebnis. Der Regler im Dashboard konnte an
+diesem Zustand nichts aendern, und nichts sagte das — das ist der eigentliche
+Fehler an dieser Sache: nicht dass ein Tor zu war, sondern dass die Oberflaeche
+einen Hebel anbot, der am zugezogenen Tor nichts ausrichtet.
+
+Besonders tueckisch ist die Zahl daneben: `dataCompleteness` lag bei 10 von 13,
+also bei 77 Prozent. Die Datenlage sieht reichhaltig aus, und trotzdem ist
+keine Entscheidung moeglich.
+
+### Teil 2: die Entscheidung tauschte gute Daten gegen schlechte
+
+Zu dem fehlenden Feld kam es so: der Auffrischungslauf holt sich alle 20
+Sekunden einen vollstaendigen Snapshot vom Router — mit Preiseinfluss und
+Ausstiegsfaehigkeit — und schreibt ihn in die Datenbank. Nachgewiesen im
+Betrieb durch `exitProbe: OK=5` und `entryReady: 4`.
+
+Die Entscheidung holte sich danach einen EIGENEN Datensatz. Schwieg der Router
+dabei, fiel die Kette auf die Marktdatenquelle zurueck, die keine Route rechnet
+und keinen Zeitstempel liefert. Damit tauschte die Entscheidung einen
+vollstaendigen Snapshot gegen einen unvollstaendigen und lehnte anschliessend
+sich selbst ab — mit `REJECT_DATA_INCOMPLETE`, also einem Grund, der nach einem
+Datenproblem aussieht, obwohl die Daten in der Datenbank lagen.
+
+Drei Felder fehlten, und sie haengen an einem: `priceImpactBps` kommt nur vom
+Router, `exitCapacityRatio` ebenfalls, und `expectedCostBps` wird AUS
+`priceImpactBps` gerechnet. Ein schweigender Router kostet also drei der
+dreizehn Pflichtfelder auf einen Schlag.
+
+### Die Reparatur
+
+`resolveMarketInput` waehlt jetzt, welcher Snapshot die Entscheidung tragen
+soll. Frischer ist besser und gewinnt — aber nur, solange der frische eine
+Einstiegsentscheidung ueberhaupt tragen KANN. Kann er es nicht und der
+gespeicherte kann es, wird der gespeicherte genommen.
+
+Drei Punkte, auf die es dabei ankommt:
+
+- **Es werden keine Felder gemischt.** Das waere eine erfundene Reihe (siehe
+  `feature-build.ts`: „Eine Reihe muss aus einer Reihe kommen"). Gewaehlt wird
+  zwischen zwei in sich geschlossenen Snapshots EINER.
+- **Die Herkunft wandert mit.** Provenance, Stufe und Frische kommen jetzt vom
+  gewaehlten Snapshot. Stuende dort weiter der Abruf, behauptete die
+  Aufzeichnung eine Quelle, aus der die Zahlen nicht stammen — und das
+  Einstiegstor beurteilte die falsche.
+- **Das Alter wird ehrlich gerechnet.** `sourceFreshnessSeconds` ist das Alter
+  beim ABRUF. Es als heutiges Alter zu lesen hiesse, eine zehn Minuten alte
+  Zeile fuer acht Sekunden frisch zu halten. Das ehrliche Alter ist die Summe:
+  Liegezeit bei uns plus Alter beim Abruf. Ohne Stufe oder ohne Frische gilt
+  der gespeicherte Snapshot als nicht tragfaehig — unbekannt bleibt unbekannt.
+
+`PitSnapshot` traegt dafuer jetzt `sourceTier`. Die Spalte war immer gefuellt,
+stand aber nicht im Typ — und damit war ein gespeicherter Snapshot nicht selbst
+beurteilbar.
+
+Dass getauscht wurde, steht im Log (`rueckfall: gespeichert=jupiter-quote`).
+Ein stiller Tausch waere derselbe Fehler wie der stille Downgrade, nur in die
+andere Richtung.
+
+### Und das Dashboard sagt es jetzt
+
+Kommt in einem Lauf bei keinem Coin eine Gesamtbewertung zustande, steht im
+Feld „Einstiegsschwelle": **DIE SCHWELLE HAT NICHTS ENTSCHIEDEN**, mit der
+Zahl der geprueften Coins und dem Hinweis, dass eine Aenderung in dieser Lage
+nichts bewirkt — auch nicht nach unten. Genau die Auskunft, die 24 Stunden
+gefehlt hat.
+
+Ausdruecklich NICHT geaendert: `minDataCompleteness: 1` und die Pflichtliste
+der dreizehn Felder. Sie zu lockern wuerde Einstiege auf luckenhaften Daten
+erlauben, und die Papier-Statistik ist die Grundlage jeder spaeteren Aussage.
+Das waere eine Strategieentscheidung und keine Reparatur.
+
+Validierung: 159 Dateien / 1617 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Der Reproduktionstest schlug vor der Aenderung fehl
+(`expected { kind: 'MISSING' } to match { kind: 'OBSERVED', value: 50 }`) und
+besteht danach.

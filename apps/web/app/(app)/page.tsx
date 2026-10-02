@@ -206,6 +206,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
         <EntryScore
           setting={schwelle}
           benutzt={state.latestDecisionRun?.entryThreshold ?? null}
+          run={state.latestDecisionRun}
           aenderbar={aenderbar}
           geschuetzt={geschuetzt}
           min={ENTRY_SCORE_MIN}
