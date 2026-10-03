@@ -85,3 +85,124 @@ it("beachtet Groessengrenze und Hoechstalter aus den Einstellungen", async () =>
     expect(alle.map((t) => t.id)).toContain(unbekannt);
   } finally { await close(); }
 }, 60_000);
+
+/**
+ * Warum ein Coin NICHT im Suchraum ist.
+ *
+ * Die Gegenprobe zum Filter: jede Ablehnung muss einen Namen haben. Steht
+ * `beobachtet` auf 0, soll diese Auszaehlung sagen, woran es liegt — sonst
+ * sieht eine richtige Leere genauso aus wie ein kaputter Bot, und das ist in
+ * diesem Projekt schon dreimal passiert (§140, §144, §145).
+ */
+it("nennt fuer jeden bekannten Coin den Grund, warum er draussen ist", async () => {
+  const { countUniverseExclusions } = await import("../../queries/universe");
+  const { db, close } = await createTestDatabase();
+  try {
+    const now = new Date("2026-10-03T12:00:00Z");
+    const anlegen = async (
+      mint: string,
+      snapshot: Record<string, unknown> | null,
+      over: Record<string, unknown> = {},
+    ) => {
+      const [token] = await db.insert(tokens).values({
+        mint, discoverySource: "test", state: "SCREENING", ...over,
+      }).returning();
+      if (snapshot !== null) {
+        await db.insert(tokenSnapshots).values({
+          tokenId: token!.id, observedAt: new Date(now.getTime() - 60_000),
+          sourceProviderId: "dexscreener", sourceTier: "PRIMARY", dataCompleteness: 1,
+          priceUsd: 0.001, liquidityUsd: 50_000, marketCapUsd: 2_000_000,
+          volume24hUsd: 20_000, ...snapshot,
+        });
+      }
+      return token!.id;
+    };
+
+    const neu = new Date(now.getTime() - 5 * 60_000);
+    await anlegen("u-ok", {}, { launchedAt: neu });
+    await anlegen("u-gesperrt", {}, { blacklistedAt: now, launchedAt: neu });
+    await anlegen("u-keine-daten", null, { launchedAt: neu });
+    await anlegen("u-duenn", { liquidityUsd: 100 }, { launchedAt: neu });
+    await anlegen("u-gross", { marketCapUsd: 900_000_000 }, { launchedAt: neu });
+    await anlegen("u-ohne-alter", {}, {});
+    await anlegen("u-alt", {}, { launchedAt: new Date(now.getTime() - 10 * 86_400_000) });
+
+    const gruende = await countUniverseExclusions(db, now, {
+      maxMarketCapUsd: 5_000_000n, maxCoinAgeMinutes: 60,
+    });
+
+    expect(gruende["OK"]).toBe(1);
+    expect(gruende["GESPERRT"]).toBe(1);
+    expect(gruende["KEINE_AKTUELLEN_DATEN"]).toBe(1);
+    expect(gruende["ZU_WENIG_LIQUIDITAET"]).toBe(1);
+    expect(gruende["ZU_GROSS"]).toBe(1);
+    expect(gruende["ALTER_UNBEKANNT"]).toBe(1);
+    expect(gruende["ZU_ALT"]).toBe(1);
+
+    // Jeder bekannte Coin steht in genau einem Topf. Eine Auszaehlung, die
+    // nicht aufgeht, laedt dazu ein, die Luecke fuer einen eigenen Grund zu
+    // halten.
+    const summe = Object.values(gruende).reduce((n, x) => n + x, 0);
+    expect(summe).toBe(7);
+
+    // Ohne Altersgrenze wandern die beiden Alters-Faelle nach OK.
+    const ohneAlter = await countUniverseExclusions(db, now, { maxMarketCapUsd: 5_000_000n });
+    expect(ohneAlter["OK"]).toBe(3);
+    expect(ohneAlter["ALTER_UNBEKANNT"]).toBeUndefined();
+    expect(ohneAlter["ZU_ALT"]).toBeUndefined();
+
+    // Und die Auszaehlung stimmt mit dem Filter ueberein: so viele OK, so
+    // viele in der Liste. Zwei Zahlen, die auseinanderlaufen koennen, waeren
+    // schlimmer als eine.
+    const liste = await selectActivePaperTokens(db, now, 20, false, {
+      maxMarketCapUsd: 5_000_000n, maxCoinAgeMinutes: 60,
+    });
+    expect(liste).toHaveLength(gruende["OK"] ?? 0);
+  } finally { await close(); }
+}, 60_000);
+
+/**
+ * Die Entstehungszeit nachtragen.
+ *
+ * Ohne dieses Nachtragen ist die Altersgrenze aus §149 eine Falle:
+ * `launched_at` wird nur beim Uebergang aus dem Zustand `DISCOVERED`
+ * geschrieben, und fehlte die Zeit dort, bleibt sie dauerhaft leer — der Coin
+ * faellt bei gesetzter Grenze fuer immer heraus, obwohl der Anbieter die Zeit
+ * bei jedem Marktdaten-Abruf mitschickt.
+ */
+it("traegt fehlende Entstehungszeiten nach, ohne vorhandene zu ueberschreiben", async () => {
+  const { backfillLaunchedAt } = await import("../discovery");
+  const { db, close } = await createTestDatabase();
+  try {
+    const now = new Date("2026-10-03T12:00:00Z");
+    const neu = new Date(now.getTime() - 5 * 60_000);
+    const alt = new Date(now.getTime() - 10 * 86_400_000);
+
+    await db.insert(tokens).values([
+      { mint: "b-leer", discoverySource: "test" },
+      { mint: "b-vorhanden", discoverySource: "test", launchedAt: alt },
+    ]);
+
+    const geschrieben = await backfillLaunchedAt(db, [
+      { mint: "b-leer", createdAt: neu },
+      // Vorhandener Wert: wird NICHT ueberschrieben. Die Entstehungszeit
+      // eines Pools aendert sich nicht, und ein abweichender zweiter Wert
+      // waere ein Hinweis auf einen anderen Pool, kein Grund zum Verwerfen.
+      { mint: "b-vorhanden", createdAt: neu },
+      // Zukunft: abgewiesen. Eingetragen wuerde sie jede Altersrechnung
+      // verdrehen.
+      { mint: "b-leer", createdAt: new Date(now.getTime() + 86_400_000) },
+      // Unbekannter Mint: kein Fehler, nur keine Zeile.
+      { mint: "b-gibt-es-nicht", createdAt: neu },
+    ], now);
+
+    expect(geschrieben).toBe(1);
+    const zeilen = await db.select({ mint: tokens.mint, launchedAt: tokens.launchedAt })
+      .from(tokens);
+    expect(zeilen.find((z) => z.mint === "b-leer")?.launchedAt).toEqual(neu);
+    expect(zeilen.find((z) => z.mint === "b-vorhanden")?.launchedAt).toEqual(alt);
+
+    // Zweiter Durchlauf aendert nichts mehr.
+    expect(await backfillLaunchedAt(db, [{ mint: "b-leer", createdAt: alt }], now)).toBe(0);
+  } finally { await close(); }
+}, 60_000);

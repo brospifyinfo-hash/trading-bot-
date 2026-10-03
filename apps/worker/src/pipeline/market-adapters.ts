@@ -188,6 +188,24 @@ export interface MarketAdapterDeps {
   readonly clock: Clock;
   /** Optional: sammelt die Ablehnungsgruende der Marktauswahl. */
   readonly rejections?: RejectionTally;
+  /**
+   * Optional: nimmt die Entstehungszeit des gewaehlten Pools entgegen.
+   *
+   * Ein Seitenkanal, und zwar aus Augenmass: `pairCreatedAt` steht in jeder
+   * DexScreener-Antwort und wurde hier bisher nur fuer die Auswahl benutzt
+   * (`minPoolAgeSeconds`) und danach verworfen. Gebraucht wird es an einer
+   * ganz anderen Stelle — `tokens.launched_at` wird NUR beim Uebergang aus
+   * dem Zustand `DISCOVERED` geschrieben, und fehlte die Zeit dort, bleibt
+   * sie dauerhaft leer. Die Altersgrenze aus §149 schliesst solche Coins
+   * dann fuer immer aus.
+   *
+   * Der naheliegende Weg waere, `pairCreatedAt` in `MarketFields`
+   * aufzunehmen. Das ist der Kettenwert, den zwei Dutzend Dateien
+   * konstruieren, und ein Pflichtfeld dort haette jede davon angefasst — fuer
+   * eine Angabe, die niemand in der Bewertung braucht. Ein Seitenkanal neben
+   * der bereits bestehenden Ablehnungsablage ist hier das kleinere Mittel.
+   */
+  readonly onPoolCreated?: (mint: string, createdAt: Date) => void;
 }
 
 /**
@@ -248,7 +266,12 @@ function quoteSourceAdapter(deps: MarketAdapterDeps): MarketDataAdapter | null {
           recordCompanion: (): void => {},
         };
   const begleiter = dexScreenerChainAdapter(
-    { env: deps.env, clock: deps.clock, ...(begleitGruende === undefined ? {} : { rejections: begleitGruende }) },
+    { env: deps.env, clock: deps.clock,
+      ...(begleitGruende === undefined ? {} : { rejections: begleitGruende }),
+      // Auch der Begleitabruf traegt die Entstehungszeit heraus. Sonst
+      // lernte sie das System nur auf dem Pfad, den die Kette gerade NICHT
+      // benutzt, sobald der Router vorn steht.
+      ...(deps.onPoolCreated === undefined ? {} : { onPoolCreated: deps.onPoolCreated }) },
     true,
   );
 
@@ -412,6 +435,12 @@ export function dexScreenerChainAdapter(deps: MarketAdapterDeps, collectYoungPoo
       if (chosen.priceUsd === null) return null;
 
       const raw = byPool.get(chosen.poolAddress);
+      // Die Entstehungszeit des GEWAEHLTEN Pools, nicht die des ersten in der
+      // Antwort. Sie beschreibt denselben Markt, aus dem auch der Preis kommt.
+      const entstanden = raw?.pairCreatedAt;
+      if (entstanden !== undefined && entstanden !== null) {
+        deps.onPoolCreated?.(wanted, entstanden);
+      }
       return {
         value: {
           priceUsd: chosen.priceUsd,

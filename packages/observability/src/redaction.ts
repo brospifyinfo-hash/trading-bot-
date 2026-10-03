@@ -91,6 +91,11 @@ export const LOG_ALLOWLIST: ReadonlySet<string> = new Set([
   // Wer vor der liefernden Quelle nichts hergab. Anbieterkennungen und
   // Ausgangsarten, beide aus geschlossenen Aufzaehlungen.
   "rueckfall",
+  // Wo die bekannten Coins bleiben: Etiketten aus `UniverseExclusion`, also
+  // eine geschlossene Aufzaehlung aus eigenem Code.
+  "suchraum",
+  // Wie viele Pool-Entstehungszeiten nachgetragen wurden. Ein Zaehler.
+  "written", "launchedAtWritten",
 ]);
 
 /**

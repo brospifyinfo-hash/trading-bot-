@@ -39,6 +39,14 @@ export interface DecisionRunReport {
   readonly entryThresholdSource: "SAVED" | "DEFAULT" | "SET" | null;
   /** Unter welchem Modus dieser Lauf entschieden hat. `null` bei alten Laeufen. */
   readonly entryMode: "VORSICHTIG" | "OFFENSIV" | null;
+  /**
+   * Wo die bekannten Coins bleiben — Grund -> Anzahl.
+   *
+   * `null` bei Laeufen, die es noch nicht aufgezeichnet haben. Ohne diese
+   * Angabe ist eine leere Beobachtungsliste nicht von einem Ausfall zu
+   * unterscheiden.
+   */
+  readonly universe: Readonly<Record<string, number>> | null;
   readonly sizing: SizingReport | null;
   readonly accounts?: readonly { label: string; entryThreshold: number; outcomes: Readonly<Record<string, number>> }[];
 }
@@ -98,6 +106,7 @@ export function parseDecisionRun(result: unknown, finishedAt: Date): DecisionRun
         : null,
     entryMode:
       r?.entryMode === "VORSICHTIG" || r?.entryMode === "OFFENSIV" ? r.entryMode : null,
+    universe: counts(r?.universe),
     sizing: sizingReport(r?.sizing),
     ...(Array.isArray(r?.accounts) ? { accounts: r.accounts.flatMap((value: unknown) => {
       const a = record(value);

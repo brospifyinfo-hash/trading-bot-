@@ -74,11 +74,26 @@ export const consumerRole: RoleHandler = {
     // werden — und die Auftraege laufen im Zyklus nacheinander, es kann sich
     // also nichts vermischen.
     const rejections = createRejectionTally();
+    /*
+     * Entstehungszeiten, die der Anbieter unterwegs mitgeliefert hat.
+     *
+     * Dieselbe Bauart wie die Ablehnungsablage daneben: der Adapter traegt
+     * ein, der Auffrischungslauf leert und schreibt. Sie liegt hier, weil
+     * hier die Adapter gebaut werden, und die Auftraege laufen im Zyklus
+     * nacheinander — es kann sich also nichts vermischen.
+     *
+     * Eine Map und keine Liste: derselbe Coin kommt in einem Lauf mehrfach
+     * vor, und die Zeit ist jedes Mal dieselbe.
+     */
+    const poolZeiten = new Map<string, Date>();
     const providerEnv = loadEnv(providerEnvSchema, process.env);
     const adapters = buildMarketAdapters({
       env: providerEnv,
       clock: systemClock,
       rejections,
+      onPoolCreated: (mint, createdAt) => {
+        if (!poolZeiten.has(mint)) poolZeiten.set(mint, createdAt);
+      },
     });
 
     // Der Anbieterzustand kommt aus den PERSISTIERTEN Messungen des
@@ -102,6 +117,7 @@ export const consumerRole: RoleHandler = {
         env: process.env,
         adapters,
         rejections,
+        poolZeiten,
         // Ohne Messung: UNAVAILABLE. Ohne Messung ist nichts bekannt, und ein
         // unbekannter Zustand darf keinen Abruf tragen.
         statusOf: (id: KnownProviderId): ProviderStatus => known.get(id) ?? "UNAVAILABLE",

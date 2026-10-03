@@ -11,6 +11,8 @@ import {
   ProviderReadinessStore,
   PostgresCheckpointStore,
   selectTrackedTokens,
+  backfillLaunchedAt,
+  countUniverseExclusions,
   selectActivePaperTokens,
   seedEntryScoreFromEnv,
   type ClaimedJob,
@@ -86,6 +88,16 @@ export interface HandlerDeps {
       tokens: number;
     };
   };
+  /**
+   * Entstehungszeiten der Pools, die der Anbieter unterwegs mitgeliefert hat.
+   *
+   * Dieselbe Bauart wie `rejections`: der Adapter traegt ein, der
+   * Auffrischungslauf leert und schreibt sie nach `tokens.launched_at`. Ohne
+   * dieses Nachtragen bleibt die Entstehungszeit dauerhaft leer, wo die
+   * Anreicherung beim ersten Durchlauf nichts geliefert hat — und die
+   * Altersgrenze aus §149 schliesst solche Coins dann fuer immer aus.
+   */
+  readonly poolZeiten?: Map<string, Date>;
 }
 
 /** Ergebnis eines Auftrags, der auf Daten wartet statt welche zu erfinden. */
@@ -391,6 +403,23 @@ class EvaluateOpportunityHandler implements JobHandler {
           maxCoinAgeMinutes: schwelle.maxCoinAgeMinutes,
         })
       : await selectTrackedTokens(this.deps.db, MAX_TOKENS_TRACKED);
+    /*
+     * Warum der Suchraum so gross ist, wie er ist.
+     *
+     * Ohne diese Auszaehlung sagt `beobachtet: 0` nur, dass nichts bewertet
+     * wurde — und bei gesetzter Altersgrenze ist das eine wahrscheinliche
+     * Lage, die genauso aussieht wie ein kaputter Bot. Besonders
+     * `ALTER_UNBEKANNT`: `tokens.launched_at` wird nur beim Uebergang aus
+     * `DISCOVERED` geschrieben, und fehlt die Pool-Entstehungszeit dort,
+     * bleibt sie dauerhaft leer.
+     */
+    const suchraum = candidate
+      ? await countUniverseExclusions(this.deps.db, systemClock.now(), {
+          maxMarketCapUsd: schwelle.maxMarketCapUsd,
+          maxCoinAgeMinutes: schwelle.maxCoinAgeMinutes,
+        })
+      : {};
+
     if (tokens.length === 0) return waitingForData(candidate
       ? "Keine Coins mit ausreichenden aktuellen Marktdaten in der aktiven Paper-Liste; die breite Suche laeuft weiter."
       : "Keine beobachteten Tokens.");
@@ -583,6 +612,9 @@ class EvaluateOpportunityHandler implements JobHandler {
         // Bauart keinen Einstieg tragen kann. Ohne diese Zeile sieht man am
         // Ende nur das Ergebnis und nicht den Weg dorthin.
         ...(Object.keys(rueckfaelle).length > 0 ? { rueckfall: tally(rueckfaelle) } : {}),
+        // Wo die bekannten Coins bleiben. `OK=3 ZU_GROSS=120 ALTER_UNBEKANNT=530`
+        // beantwortet die Frage, die `beobachtet: 3` offenlaesst.
+        ...(Object.keys(suchraum).length > 0 ? { suchraum: tally(suchraum) } : {}),
         ...(bester === null
           ? {}
           : {
@@ -614,6 +646,7 @@ class EvaluateOpportunityHandler implements JobHandler {
         schwelle.entryNotionalMinor === null ? null : String(schwelle.entryNotionalMinor),
       maxMarketCapUsd: String(schwelle.maxMarketCapUsd),
       maxCoinAgeMinutes: schwelle.maxCoinAgeMinutes,
+      universe: suchraum,
       sizing: candidate ? null : paperSizingDiagnostics(),
       strategy: candidate ? PAPER_CANDIDATE_SELECTOR : "legacy",
       accounts,
@@ -658,10 +691,36 @@ class MarketRefreshHandler implements JobHandler {
     const exploration = await refreshMarketData(ROTATION_MARKET + ":explore-v2", {
       ...refreshDeps, tokens: broad, maxUnitsPerRun: Math.max(1, 5 - focused.processed),
     });
+    /*
+     * Die Entstehungszeiten nachtragen, die unterwegs angefallen sind.
+     *
+     * Erst HIER und nicht im Adapter: der Adapter liest Marktdaten und soll
+     * keine Tokenzeilen schreiben. Nachgetragen wird nur, wo noch nichts
+     * steht — ein vorhandener Wert bleibt unberuehrt.
+     *
+     * Ohne dieses Nachtragen bleibt `launched_at` dauerhaft leer, wo die
+     * Anreicherung beim ersten Durchlauf nichts geliefert hat, und die
+     * Altersgrenze aus §149 schliesst solche Coins fuer immer aus.
+     */
+    const zeiten = this.deps.poolZeiten;
+    let nachgetragen = 0;
+    if (zeiten !== undefined && zeiten.size > 0) {
+      const eintraege = [...zeiten].map(([mint, createdAt]) => ({ mint, createdAt }));
+      zeiten.clear();
+      nachgetragen = await backfillLaunchedAt(this.deps.db, eintraege, systemClock.now());
+      if (nachgetragen > 0) {
+        this.deps.logger.info(
+          { role: "market-data", written: nachgetragen },
+          "Pool-Entstehungszeiten nachgetragen",
+        );
+      }
+    }
+
     return { status: "OK", activeTokens: active.length, explorationTokens: broad.length,
       processed: focused.processed + exploration.processed,
       ingested: focused.ingested + exploration.ingested,
       entryReady: focused.entryReady + exploration.entryReady,
+      launchedAtWritten: nachgetragen,
       focused, exploration };
 
   }

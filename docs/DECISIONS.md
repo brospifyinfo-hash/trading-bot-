@@ -6415,3 +6415,63 @@ offensiv genauso streng wie vorsichtig, ein grosser Coin faellt ohne Angabe
 heraus und mit hoeherer Grenze herein, und bei gesetztem Hoechstalter fallen
 sowohl der alte als auch der mit unbekannter Entstehungszeit heraus. Neue
 Migration `0019_universe_limits.sql`.
+
+## §150 — Zwei Fallen in meinem eigenen §149 (2026-10-03)
+
+Nach dem Einbau der Suchraum-Grenzen habe ich sie gegen die Wirklichkeit
+geprueft, statt sie fuer fertig zu halten. Zwei Fallen kamen heraus, beide in
+meinem eigenen Code von einem Tag vorher.
+
+### Falle 1: die Altersgrenze schliesst dauerhaft aus
+
+Die Grenze rechnet an `tokens.launched_at`. Geschrieben wird diese Spalte
+ausschliesslich in `applyDiscoveryOutcomes`, und zwar nur solange ein Token im
+Zustand `DISCOVERED` ist UND die Anreicherung die Pool-Entstehungszeit
+mitgeliefert hat. Fehlte sie dort, bleibt sie dauerhaft leer — der Token
+verlaesst den Zustand und wird nie wieder angefasst.
+
+Mit gesetzter Altersgrenze faellt so ein Coin damit fuer immer heraus, obwohl
+DexScreener `pairCreatedAt` bei jedem Marktdaten-Abruf mitschickt. Die
+Einstellung haette also nicht „nur neue Coins" bedeutet, sondern „nur Coins,
+bei denen die Anreicherung beim allerersten Durchlauf geklappt hat".
+
+Behoben durch Nachtragen: `backfillLaunchedAt` schreibt die Zeit, wo noch
+nichts steht. Ein vorhandener Wert wird nie ueberschrieben — die Entstehung
+eines Pools aendert sich nicht, und ein abweichender zweiter Wert waere ein
+Hinweis auf einen anderen Pool desselben Tokens, kein Grund, den ersten zu
+verwerfen. Eine Zeit in der Zukunft wird abgewiesen; sie kann nur aus einem
+Anbieterfehler stammen und wuerde jede Altersrechnung verdrehen.
+
+Der Weg dorthin ist ein Seitenkanal (`onPoolCreated`) neben der bereits
+bestehenden Ablehnungsablage, und das ist eine Abwaegung: der naheliegende Weg
+waere `pairCreatedAt` in `MarketFields`. Das ist der Kettenwert, den
+zweiundzwanzig Dateien konstruieren, und ein Pflichtfeld dort haette jede
+davon angefasst — fuer eine Angabe, die in der Bewertung niemand braucht.
+Nachgetragen wird im Auffrischungslauf und nicht im Adapter: ein Adapter liest
+Marktdaten und soll keine Tokenzeilen schreiben.
+
+### Falle 2: eine leere Liste ohne Grund
+
+`beobachtet: 0` sagt, dass nichts bewertet wurde. Bei gesetzter Altersgrenze
+ist das eine WAHRSCHEINLICHE Lage — und sie sieht genauso aus wie ein kaputter
+Bot. Dasselbe Muster wie §140, §144 und §145, und beinahe zum vierten Mal.
+
+`countUniverseExclusions` zaehlt jetzt alle bekannten Coins nach dem Grund,
+der sie draussen haelt — in derselben Prioritaetsreihenfolge wie der Filter
+selbst, damit bei einem Coin, der zugleich zu gross und zu alt ist, nicht die
+Spaltenreihenfolge entscheidet. Im Log steht
+`suchraum: OK=3 ZU_GROSS=120 ALTER_UNBEKANNT=530`, im Dashboard ein eigenes
+Panel mit einer Zeile je Grund und ausgeschriebener Bedeutung.
+
+Ein Test haelt beide Seiten zusammen: die Zahl der `OK` muss mit der Laenge
+der tatsaechlichen Liste uebereinstimmen, und die Summe aller Gruende mit der
+Zahl der bekannten Coins. Zwei Zahlen, die auseinanderlaufen koennen, waeren
+schlimmer als eine — und eine Auszaehlung, die nicht aufgeht, laedt dazu ein,
+die Luecke fuer einen eigenen Grund zu halten.
+
+Steht `OK` auf 0, sagt das Panel ausdruecklich, dass der Bot in dieser Lage
+nichts kaufen KANN und warum — statt dass die Null wieder als Defekt gelesen
+wird.
+
+Validierung: 159 Dateien / 1647 Tests bestanden, Lint und Typpruefung sauber,
+Web-Build erfolgreich. Keine neue Migration.

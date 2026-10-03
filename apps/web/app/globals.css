@@ -515,3 +515,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Zahlen in Tabellen duerfen umbrechen, wenn eine Zelle zwei Angaben traegt. */
 .paper-table td small { display: block; font-weight: 400; margin-top: 3px; }
 .paper-table td strong { font-family: var(--mono); }
+
+/* Die Zeile, die zaehlt: wie viele Coins tatsaechlich bewertet werden. */
+.paper-table tr[data-ok="true"] td { color: var(--text); }
+.paper-table tr[data-ok="true"] strong { color: var(--accent); font-size: 15px; }

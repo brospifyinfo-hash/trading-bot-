@@ -461,3 +461,39 @@ export async function selectActivePaperTokens(
     .map((r) => ({ id: r.id, mint: r.mint, firstSeenAt: new Date(r.first_seen_at) }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
+
+/**
+ * Traegt die Entstehungszeit eines Pools nach.
+ *
+ * `tokens.launched_at` wird in `applyDiscoveryOutcomes` nur gesetzt, solange
+ * ein Token im Zustand `DISCOVERED` ist, und nur wenn die Anreicherung die
+ * Zeit mitgeliefert hat. Fehlte sie dort, blieb sie dauerhaft leer — und die
+ * Altersgrenze aus §149 schliesst solche Coins dann fuer immer aus, auch wenn
+ * der Anbieter die Zeit bei jedem spaeteren Marktdaten-Abruf mitschickt.
+ *
+ * Nachgetragen wird ausschliesslich, wo noch NICHTS steht (`is null`). Ein
+ * vorhandener Wert wird nie ueberschrieben: die Entstehungszeit eines Pools
+ * aendert sich nicht, und ein abweichender zweiter Wert waere ein Hinweis auf
+ * einen anderen Pool desselben Tokens — kein Grund, den ersten zu verwerfen.
+ *
+ * Eine Zeit in der ZUKUNFT wird abgewiesen. Sie kann nur aus einem
+ * Anbieterfehler stammen, und eingetragen wuerde sie jede Altersrechnung
+ * verdrehen.
+ */
+export async function backfillLaunchedAt(
+  db: Database,
+  entries: readonly { readonly mint: string; readonly createdAt: Date }[],
+  now: Date,
+): Promise<number> {
+  let geschrieben = 0;
+  for (const entry of entries) {
+    if (!Number.isFinite(entry.createdAt.getTime()) || entry.createdAt > now) continue;
+    const rows = await db
+      .update(tokens)
+      .set({ launchedAt: entry.createdAt })
+      .where(and(eq(tokens.mint, entry.mint), isNull(tokens.launchedAt)))
+      .returning({ mint: tokens.mint });
+    geschrieben += rows.length;
+  }
+  return geschrieben;
+}
