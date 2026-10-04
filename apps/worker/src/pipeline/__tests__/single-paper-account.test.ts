@@ -202,3 +202,79 @@ it("vermerkt einen angeforderten Verkauf, ohne die Position zu schliessen", asyn
     expect(ereignisse.map((e) => e.kind)).toContain("POSITION_CLOSE_CANCELLED");
   } finally { await close(); }
 }, 60_000);
+
+/**
+ * Der Fehler, der 4.657 Auftraege umgebracht hat — als Test.
+ *
+ * `ensurePaperCandidateVersion` verlangt zu Recht, dass ein Versionsname genau
+ * einen Parametersatz bezeichnet. Der Name trug aber nur Schwelle und Modus,
+ * waehrend `maxMarketCapUsd` seit §149 ein Parameter war. Der Betreiber
+ * aenderte die Groessengrenze im Dashboard — und ab diesem Moment starb jeder
+ * `PAPER_SNIPER`-Auftrag mit „Stored candidate version differs or is retired",
+ * ununterbrochen vom 2026-10-01 bis zum 2026-10-04.
+ *
+ * Es war kein Fehler der Pruefung. Es war ein Fehler des Namens.
+ */
+it("legt bei geaenderter Groessengrenze eine NEUE Version an statt zu werfen", async () => {
+  const { db, close } = await createTestDatabase();
+  try {
+    const at = new Date("2026-10-04T12:00:00Z");
+
+    // Genau die Abfolge aus dem Betrieb: erst laeuft es mit der
+    // Voreinstellung, dann dreht der Betreiber an der Groessengrenze.
+    const vorher = await ensurePaperCandidateVersion(
+      db, at, paperCandidate(10, "OFFENSIV", { maxMarketCapUsd: 5_000_000 }),
+    );
+    const nachher = await ensurePaperCandidateVersion(
+      db, at, paperCandidate(10, "OFFENSIV", { maxMarketCapUsd: 1_000_000 }),
+    );
+
+    expect(vorher.id).not.toBe(nachher.id);
+    expect(vorher.version).not.toBe(nachher.version);
+    expect(nachher.created).toBe(true);
+
+    // Und ein zweiter Lauf mit denselben Einstellungen legt NICHTS Neues an.
+    // Sonst entstuende bei jedem Takt eine Version, und die Buchfuehrung
+    // zerfiele in tausend Einzelstuecke.
+    const noch = await ensurePaperCandidateVersion(
+      db, at, paperCandidate(10, "OFFENSIV", { maxMarketCapUsd: 1_000_000 }),
+    );
+    expect(noch.id).toBe(nachher.id);
+    expect(noch.created).toBe(false);
+
+    // Die Familie bleibt dieselbe — das Konto wechselt nicht.
+    const familien = await db.select({ name: schema.strategies.name }).from(schema.strategies);
+    expect(familien.map((f) => f.name)).toEqual([PAPER_STRATEGY_ID]);
+  } finally { await close(); }
+}, 60_000);
+
+/**
+ * Wenn es doch einmal abweicht, muss die Meldung sagen WO.
+ *
+ * Der Fingerabdruck macht den Parameterfall unmoeglich — aber eine
+ * zurueckgezogene Version gibt es weiterhin, und ein von Hand uebergebener
+ * Kandidat auch. Die alte Meldung war ein Satz fuer drei verschiedene Gruende,
+ * und genau daran hat die Suche nach der Ursache vier Tage gehangen.
+ */
+it("nennt das abweichende Feld, nicht nur die Tatsache", async () => {
+  const { db, close } = await createTestDatabase();
+  try {
+    const at = new Date("2026-10-04T12:00:00Z");
+    const echt = paperCandidate(10, "OFFENSIV");
+    await ensurePaperCandidateVersion(db, at, echt);
+
+    // Derselbe Name, andere Parameter — nur von Hand herstellbar, denn der
+    // Fingerabdruck wuerde den Namen mitziehen.
+    const gefaelscht = {
+      ...echt,
+      parameters: {
+        ...echt.parameters,
+        entryGates: { ...echt.parameters.entryGates, maxTop10HolderSharePct: 42 },
+      },
+    };
+
+    await expect(ensurePaperCandidateVersion(db, at, gefaelscht)).rejects.toThrow(
+      /entryGates\.maxTop10HolderSharePct/,
+    );
+  } finally { await close(); }
+}, 60_000);

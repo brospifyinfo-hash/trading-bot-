@@ -118,6 +118,70 @@ export interface PaperLimits {
 /** Voreinstellung: klein. Ein Memecoin-Versuch sucht keine etablierten Werte. */
 export const MAX_MARKET_CAP_DEFAULT_USD = 5_000_000;
 
+/**
+ * Der Fingerabdruck der Parameter.
+ *
+ * ### Der Fehler, den das behebt
+ *
+ * `ensurePaperCandidateVersion` verlangt — zu Recht —, dass ein Versionsname
+ * GENAU EINEN Parametersatz bezeichnet. Weicht der gespeicherte Satz vom
+ * uebergebenen ab, bricht es ab, statt eine unveraenderliche Version
+ * umzuschreiben.
+ *
+ * Der Versionsname wurde aber von Hand gepflegt und trug nur Schwelle und
+ * Modus. `maxMarketCapUsd` ist seit §149 ein PARAMETER, stand aber nie im
+ * Namen. In dem Moment, in dem der Betreiber die Groessengrenze im Dashboard
+ * aenderte, zeigten derselbe Name und ein anderer Inhalt aufeinander — und
+ * jeder `PAPER_SNIPER`-Auftrag starb. 4.657 Mal, von 2026-10-01 bis
+ * ununterbrochen jetzt, immer mit demselben Satz, den niemand lesen konnte.
+ *
+ * Und ich hatte den Fehler in §152 gerade verlaengert: `maxTop10HolderSharePct`
+ * von 100 auf 90, ohne den Namen zu beruehren.
+ *
+ * ### Warum ein Hash und keine Pflege von Hand
+ *
+ * Jede Pflege von Hand ist dieselbe Falle, nur spaeter. Entsteht der Name AUS
+ * den Parametern, dann heisst „Parameter geaendert" automatisch „neue
+ * Version": die neue Zeile wird angelegt, die alte bleibt fuer die
+ * Positionen, die daran haengen, und das Tor kann aus diesem Grund nie mehr
+ * schliessen. Aus einer Tretmine wird eine Tautologie.
+ *
+ * Bewusst KEIN Krypto-Hash: hier gibt es keinen Gegner, der Parameter waehlt,
+ * sondern nur die Frage „ist das derselbe Satz wie vorher". 64 Bit reichen
+ * dafuer um Groessenordnungen, und eine reine Rechnung ohne `node:crypto`
+ * haelt dieses Paket auch im Browser-Bundle der Oberflaeche lauffaehig.
+ */
+function kanonisch(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(kanonisch).join(",")}]`;
+  const eintraege = Object.entries(value as Record<string, unknown>)
+    // Sortiert, sonst haengt der Abdruck an der Reihenfolge der Schluessel —
+    // und die haengt an der Reihenfolge der Spreads im Code.
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${eintraege.map(([k, v]) => `${JSON.stringify(k)}:${kanonisch(v)}`).join(",")}}`;
+}
+
+function fnv1a(text: string, offset: number): number {
+  let h = offset >>> 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    // Beide Bytes der Codeeinheit, nicht nur das untere: sonst fallen
+    // Zeichen jenseits von ASCII zusammen.
+    h = Math.imul(h ^ (c & 0xff), 0x01000193) >>> 0;
+    h = Math.imul(h ^ ((c >>> 8) & 0xff), 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+const hex8 = (n: number): string => n.toString(16).padStart(8, "0");
+
+/** 16 Hexzeichen. Gleiche Parameter, gleicher Abdruck — und umgekehrt. */
+export function parameterFingerprint(parameters: unknown): string {
+  const text = kanonisch(parameters);
+  return `${hex8(fnv1a(text, 0x811c9dc5))}${hex8(fnv1a(text, 0x01000193))}`;
+}
+
 export function paperCandidate(
   score: number,
   mode: PaperMode = "VORSICHTIG",
@@ -130,19 +194,7 @@ export function paperCandidate(
   readonly maxRoundTripCostBps: number;
   readonly parameters: ReturnType<typeof parseStrategyParameters>;
 } {
-  return {
-    ...MEMECOIN_PAPER_CANDIDATE,
-    strategyId: PAPER_STRATEGY_ID,
-    // Schwelle UND Modus stehen im Versionsnamen. Zwei Laeufe mit
-    // verschiedenen Einstellungen koennen damit nie dieselbe unveraenderliche
-    // Version benutzen, und im Nachhinein ist an jeder Entscheidung ablesbar,
-    // wogegen sie gemessen wurde. Das ist die einzige Stelle, an der der
-    // Offensiv-Modus eine Spur hinterlassen MUSS: eine Papier-Statistik, die
-    // vorsichtige und offensive Einstiege vermengt, beantwortet keine Frage.
-    version: mode === "OFFENSIV"
-      ? `2.0.0-s${String(score)}-offensiv`
-      : `2.0.0-s${String(score)}`,
-    parameters: parseStrategyParameters({
+  const parameters = parseStrategyParameters({
       ...MEMECOIN_PAPER_CANDIDATE.parameters,
       entryGates: {
         ...MEMECOIN_PAPER_CANDIDATE.parameters.entryGates,
@@ -216,6 +268,21 @@ export function paperCandidate(
               paperMaxRoundTripCostBps: 600,
             }),
       },
-    }),
+  });
+
+  return {
+    ...MEMECOIN_PAPER_CANDIDATE,
+    strategyId: PAPER_STRATEGY_ID,
+    // Schwelle und Modus stehen LESBAR im Namen: im Nachhinein muss an jeder
+    // Entscheidung ablesbar sein, wogegen sie gemessen wurde, und eine
+    // Papier-Statistik, die vorsichtige und offensive Einstiege vermengt,
+    // beantwortet keine Frage.
+    //
+    // Der Fingerabdruck dahinter traegt den REST — alles, was sich aendern
+    // kann, ohne dass jemand an den Namen denkt. Siehe
+    // `parameterFingerprint`: das ist die Reparatur von 4.657 gestorbenen
+    // Auftraegen.
+    version: `2.0.0-s${String(score)}${mode === "OFFENSIV" ? "-offensiv" : ""}-${parameterFingerprint(parameters)}`,
+    parameters,
   };
 }

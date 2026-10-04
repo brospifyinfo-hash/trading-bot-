@@ -6851,3 +6851,108 @@ ihn sehen darf.
 
 Validierung: gemessen 165 Dateien / 1716 Tests bestanden, davon 12 neu. Lint
 und Typpruefung sauber, Web-Build erfolgreich. Keine Migration.
+
+## §155 — 4.657 toter Auftraege, eine Ursache: der Versionsname (2026-10-04)
+
+Das Dead-Letter-Panel aus §154 hat beim ersten Blick geliefert, wonach dieses
+Projekt seit Wochen gesucht hat. Der Bericht des Betreibers:
+
+| Anzahl | Auftrag | Klasse | Zeitraum |
+|---|---|---|---|
+| 4.657 | `PAPER_SNIPER` | UNKNOWN | 2026-10-01T08:52:47Z bis 2026-10-04T20:52:00Z |
+| 2.430 | `REFRESH_MARKET_DATA` | UNKNOWN | 2026-09-10 bis 2026-09-12 |
+| 609 | `EVALUATE_OPPORTUNITY` | UNKNOWN | 2026-09-11 bis 2026-09-12 |
+
+Und alle zwanzig angezeigten Fehlertexte wortgleich:
+
+> `Stored candidate version differs or is retired; create a new version instead`
+
+Der jueungste Eintrag lag EINE MINUTE vor dem Abruf. Das ist kein Altlastfeld,
+das laeuft gerade.
+
+### Die Ursache
+
+`ensurePaperCandidateVersion` verlangt, dass ein Versionsname genau einen
+Parametersatz bezeichnet, und bricht sonst ab, statt eine unveraenderliche
+Version umzuschreiben. Das ist richtig und soll so bleiben.
+
+Der Name wurde aber von HAND gepflegt und trug nur Schwelle und Modus:
+`2.0.0-s10-offensiv`. `maxMarketCapUsd` ist seit §149 ein Parameter, stand
+aber nie im Namen. In dem Moment, in dem der Betreiber die Groessengrenze im
+Dashboard aenderte, zeigten derselbe Name und ein anderer Inhalt aufeinander —
+und jeder Sniper-Auftrag starb. Seit dem 1. Oktober, 08:52, ununterbrochen.
+Der letzte abgeschlossene Bewertungslauf war 08:50:27 desselben Tages.
+
+Das Tor hat nicht versagt. Es hat genau das gemeldet, was es sehen sollte. Nur
+las es niemand, weil es als Freitext in `job_queue.last_error` landete — bis
+§154 es sichtbar gemacht hat. Fuenf Fehler dieser Familie in diesem Projekt
+(§140, §144, §145, §150, und dieser), und dieser war der teuerste: er hat drei
+Tage Betrieb vollstaendig stillgelegt.
+
+**Und ich hatte ihn in §152 gerade verlaengert.** `maxTop10HolderSharePct` von
+100 auf 90, ohne den Namen zu beruehren — derselbe Fehler, 24 Stunden alt.
+
+### Die Reparatur
+
+Der Versionsname entsteht jetzt AUS den Parametern:
+`2.0.0-s10-offensiv-<16 Hexzeichen>`. Der Abdruck ist ein FNV-1a ueber die
+kanonische Form (Schluessel sortiert, sonst haengt er an der Reihenfolge der
+Spreads im Code).
+
+Damit heisst „Parameter geaendert" automatisch „neue Version": die neue Zeile
+wird angelegt, die alte bleibt fuer die Positionen, die an ihr haengen, und
+das Tor kann aus diesem Grund nie wieder schliessen. **Aus einer Tretmine wird
+eine Tautologie.** Jede Pflege von Hand waere dieselbe Falle, nur spaeter.
+
+Bewusst kein Krypto-Hash: es gibt hier keinen Gegner, der Parameter waehlt,
+nur die Frage „ist das derselbe Satz". 64 Bit reichen dafuer um
+Groessenordnungen, und eine reine Rechnung ohne `node:crypto` haelt
+`@sae/config` auch im Bundle der Oberflaeche lauffaehig.
+
+Die lesbaren Teile bleiben: ohne Schwelle und Modus im Namen waere an einer
+alten Position nicht mehr ablesbar, wogegen sie gemessen wurde.
+
+### Die Meldung nennt jetzt das Feld
+
+Drei verschiedene Ursachen hatten einen gemeinsamen Satz: Version fehlt,
+Version zurueckgezogen, Parameter weichen ab. Jetzt hat jede ihren eigenen,
+und bei abweichenden Parametern stehen die PFADE dabei
+(`entryGates.maxTop10HolderSharePct`) — ohne Werte, denn die Meldung landet im
+Dashboard und eine Fehlermeldung ist der falsche Ort, um Zahlen
+auszuschuetten.
+
+Ein Fehler, der seine Ursache nicht nennt, kostet nicht einen Auftrag, sondern
+Wochen. Das ist die Lehre, und sie ist in diesem Projekt jetzt fuenfmal
+bezahlt.
+
+### Die Restfalle, abgesichert statt umgebaut
+
+`MEMECOIN_PAPER_CANDIDATE.version` ist weiter fest `1.0.0`. Wer seine
+Parameter aendert, ohne diese Zahl anzufassen, baut den Fehler an der
+Voreinstellungs-Stelle wieder. Eine eingefrorene Konstante umzubauen waere
+hier die groessere Aenderung; stattdessen haelt ein Abdruck im Test sie fest.
+Aendert jemand irgendein Feld, schlaegt der Test fehl und sagt, was zu tun ist
+— Version heben UND Abdruck ersetzen, niemals nur den Abdruck.
+
+### Woran der Betreiber den Erfolg erkennt
+
+Die 4.657 Zeilen bleiben stehen. Sie werden NICHT geloescht: sie sind das
+Protokoll dieses Fehlers, und „keine Datenbank loeschen" gilt. Der Beweis ist
+die Spalte *Zeitraum*: steht bei `PAPER_SNIPER / UNKNOWN` der Wert unter
+„neuester" nach dem Deployment still, waehrend die Uhr weiterlaeuft, dann
+stirbt kein neuer Auftrag mehr.
+
+### Was damit NICHT behoben ist
+
+`REFRESH_MARKET_DATA` (2.430) und `EVALUATE_OPPORTUNITY` (609) sind aus dem
+11./12. September und seither nicht wiedergekehrt. Sie haben eine eigene,
+aeltere Ursache, und sie ist in diesen Zahlen nicht enthalten — die
+Fehlertexte dazu sind aus den zwanzig juengsten verdraengt. Offen.
+
+Erfreulicher Nebenbefund aus demselben Bericht: `rugcheck` steht auf
+CONNECTED, Schema `rugcheck-report-v1@2026-09-10`, letzter Erfolg 20:53:11.
+`RUGCHECK_BASE_URL` ist also nicht nur gesetzt, sondern funktioniert — die
+Sicherheitsdaten aus §152 fliessen, sobald wieder Auftraege durchkommen.
+
+Validierung: gemessen 165 Dateien / 1725 Tests bestanden, davon 9 neu. Lint
+und Typpruefung sauber, Web-Build erfolgreich. Keine Migration.

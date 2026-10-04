@@ -79,7 +79,13 @@ it("creates a separate immutable candidate version and refuses mismatching store
     expect(one.id).not.toBe(h.strategyVersionId);
     expect(two.created).toBe(false);
     await h.db.update(schema.strategyVersions).set({ parameters: {} }).where(eq(schema.strategyVersions.id, one.id));
-    await expect(ensurePaperCandidateVersion(h.db, at)).rejects.toThrow("differs or is retired");
+    // Die Meldung nennt jetzt die betroffenen Felder statt eines Sammelsatzes
+    // fuer drei verschiedene Ursachen. Der alte Satz „differs or is retired"
+    // stand 4.657 Mal im Dead Letter, ohne zu sagen WAS abwich — und genau
+    // daran hat die Ursachensuche vier Tage gehangen.
+    await expect(ensurePaperCandidateVersion(h.db, at)).rejects.toThrow(
+      /Stored parameters of 1\.0\.0 do not parse:.*entryGates/,
+    );
     const [row] = await h.db.select().from(schema.strategyVersions).where(eq(schema.strategyVersions.id, one.id));
     expect(row?.parameters).toEqual({});
   } finally { await h.close(); }
