@@ -10,6 +10,7 @@ import { db } from "@/lib/db";
 import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/readiness";
 
 import { BotStatusBar } from "@/components/BotStatusBar";
+import { CoinLookup } from "@/components/CoinLookup";
 import { EntryScore } from "@/components/EntryScore";
 import { History } from "@/components/History";
 import { Universe } from "@/components/Universe";
@@ -232,6 +233,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           max={ENTRY_SCORE_MAX}
         />
         <Universe run={state.latestDecisionRun} />
+        <CoinLookup />
         <History data={account} settings={verlauf} />
         <PaperSniper data={sniper} />
         <OperatingStatus run={state.latestDecisionRun} now={state.generatedAt} />

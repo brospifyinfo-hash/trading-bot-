@@ -519,3 +519,18 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Die Zeile, die zaehlt: wie viele Coins tatsaechlich bewertet werden. */
 .paper-table tr[data-ok="true"] td { color: var(--text); }
 .paper-table tr[data-ok="true"] strong { color: var(--accent); font-size: 15px; }
+
+/* Suche nach einem einzelnen Coin: das Feld nimmt einen ganzen Link auf. */
+.form--inline .field--wide { width: min(520px, 100%); flex: 1 1 320px; }
+
+/* Tor fuer Tor. Das Urteil ist die Spalte, auf die man schaut — sie bekommt
+   Farbe, die Begruendung bleibt lesbarer Text. „unbekannt" ist bewusst NICHT
+   gruen: der Wert wurde nicht gemessen, und das ist keine Unbedenklichkeit. */
+.paper-table tr[data-verdict] td.status {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; white-space: nowrap;
+}
+.paper-table tr[data-verdict="OK"] td.status { color: var(--ok); }
+.paper-table tr[data-verdict="BLOCKIERT"] td.status { color: var(--bad); font-weight: 700; }
+.paper-table tr[data-verdict="UNBEKANNT"] td.status { color: var(--warn); }
+.paper-table tr[data-verdict="BLOCKIERT"] { background: color-mix(in srgb, var(--bad) 7%, transparent); }
+.paper-table tr[data-verdict] td:last-child { white-space: normal; max-width: 70ch; }

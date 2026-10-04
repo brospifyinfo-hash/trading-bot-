@@ -6475,3 +6475,102 @@ wird.
 
 Validierung: 159 Dateien / 1647 Tests bestanden, Lint und Typpruefung sauber,
 Web-Build erfolgreich. Keine neue Migration.
+
+## §151 — Die Frage „warum DIESER nicht?" gehoert ins Dashboard (2026-10-04)
+
+Der Betreiber hat zweimal dasselbe gefragt, mit einem Link auf einen
+bestimmten Coin: warum hat der Bot da nicht gekauft. Beide Male war meine
+beste Antwort eine Vermutung aus Logzeilen, und beim zweiten Mal kam sie mit
+der Begruendung, der Bot sei „extrem scheisse — erstens weil er nicht
+investiert, und zweitens weil er nur in Muell investiert".
+
+Diese beiden Vorwuerfe widersprechen sich scheinbar, und genau diese
+Kombination ist die Signatur des Fehlers aus §149: die Datentore waren zu
+(also kein Einstieg), und der Groessendeckel stand offen (also, wenn doch
+einer kam, in etwas Beliebiges). Dass ich das nur VERMUTEN konnte, ist das
+eigentliche Problem. Ein System, dessen Entscheidungen man nur erraten kann,
+ist nicht debuggbar — und die vier Fehler §140, §144, §145 und §149 waren
+alle vom selben Typ: eine richtig rechnende Mechanik, die wie ein Defekt
+aussah, weil ihr Ergebnis eine unbegruendete Null war.
+
+Der Link, den der Betreiber geschickt hat, liess sich ausserdem nicht
+nachsehen: `api.dexscreener.com` ist aus diesem Container durch die
+Netzwerkregel gesperrt (403 auf CONNECT). Umgehen war ausgeschlossen, und
+Zahlen zu erfinden erst recht. Also das Werkzeug bauen, statt weiter zu raten.
+
+### `explainCoin`: Tor fuer Tor, aus gespeicherten Daten
+
+Eine Adresse hinein, und heraus kommt eine Liste von Toren mit Urteil
+(`OK` / `BLOCKIERT` / `UNBEKANNT`), dem gemessenen Wert UND der Grenze, gegen
+die er geprueft wurde. Sechs Entscheidungen daran sind nicht beliebig:
+
+**1. Der Suchraum kommt zuerst, und er wird gelesen, nicht nachgerechnet.**
+Die beiden Fragen „passiert er die Filter" und „kommt er im Budget von 20
+Pruefungen je Lauf dran" werden mit derselben Abfrage beantwortet, die der
+Worker benutzt (`selectActivePaperTokens`) — einmal weit, einmal mit dem
+echten Budget. Eine zweite, nachgebaute Fassung der Filterlogik waere
+irgendwann von der ersten abgewichen, und dann haette die Diagnoseseite
+erklaert, warum ein Coin gekauft worden waere, den der Bot nie ansieht.
+„Er passiert alles, liegt aber auf Platz 21" ist eine eigene Antwort und
+keine Ablehnung.
+
+**2. Der Modus steht in den Parametern, nicht im Text.** Die Haelfte der
+Tore ist modusabhaengig: Halterkonzentration 60 % gegen 100 %, fehlende
+Ausfuehrungsdaten als Ausschluss gegen Wissenslucke, Kaufanteil 30 % gegen 0.
+Eine Auskunft, die im offensiven Modus die vorsichtigen Grenzen nennt, ist
+schlimmer als keine — sie schickt den Betreiber hinter einen Grund, der gar
+nicht gilt. Tests halten beide Modi gegeneinander.
+
+**3. `UNBEKANNT` ist ein eigenes Urteil, nicht gruen.** Ein nicht gemessener
+Wert ist keine Unbedenklichkeit. Er bekommt die Warnfarbe und den Satz, in
+welchem Modus er aufhaelt und in welchem nicht.
+
+**4. Was auch offensiv blockiert, sagt warum.** Die drei Sicherheitsbefunde
+und `riskLevel = CRITICAL` sind BEFUNDE, keine Wissenslucken; dasselbe gilt
+fuer die Groessengrenze und fuer die Liquiditaetsschwelle von 5.000 USD, die
+im Suchraum-SQL steht und vom Offensiv-Modus gar nicht erreicht wird. Dass
+der offensive Modus diese eine Grenze NICHT aufmacht, steht jetzt im Befund
+— es ist sonst die naechstliegende falsche Erwartung.
+
+**5. Protokoll und Rechnung bleiben getrennt.** Die Tore rechnen den HEUTIGEN
+Stand gegen die HEUTIGEN Einstellungen; was der Bot damals selbst notiert hat,
+steht getrennt daneben (`rejectionReasons` aus `opportunities`, mit seinem
+eigenen Zeitstempel). Beides zu vermengen waere eine Nachstellung, die keine
+ist. Weichen sie ab, haben sich Daten oder Einstellungen geaendert, und das
+ist dann die Auskunft.
+
+**6. „Nicht in der Datenbank" ist die wichtigste Antwort.** Kennt das System
+die Adresse nicht, hat die SUCHE sie nie gefunden — dann haette keine
+Einstellung der Welt diesen Coin gekauft, und die Frage ist eine nach den
+Datenquellen, nicht nach den Einstiegsregeln. Diese Unterscheidung war in den
+Logzeilen nicht zu sehen.
+
+### Zwei Dinge, die beim Bauen auffielen
+
+**Der DexScreener-Link traegt die Adresse des HANDELSPAARS, nicht die des
+Coins.** Genau diesen Link klebt man ein, weil man den Coin genau dort
+angeschaut hat. Eine Suche, die darauf „nicht gefunden" antwortet, waere
+formal richtig und praktisch eine Falschauskunft. `explainCoin` loest deshalb
+auch ueber `token_pools.address` auf und sagt, welcher Weg es war.
+`adresseAusEingabe` nimmt ausserdem den ganzen Link und holt die Adresse
+heraus — und weist ab, was keine Adresse ist, statt einen Tippfehler als
+Suchbegriff weiterzugeben: „nicht gefunden" waere dann eine Aussage ueber den
+Coin gewesen statt ueber die Eingabe.
+
+**`token_pools.created_at` kennt die Entstehungszeit womoeglich, waehrend
+`tokens.launched_at` leer ist.** Das ist dann kein Datenmangel des Anbieters,
+sondern ein Uebertragungsfehler bei uns — also genau der Fall, den §150
+nachtraegt. Das Alter-Tor unterscheidet die beiden jetzt ausdruecklich. Ohne
+diese Unterscheidung haette die Seite einen eigenen Bug als Eigenschaft der
+Datenquelle ausgegeben.
+
+### Was die Seite nicht ist
+
+Sie ist keine Vorhersage und kein Gewinnversprechen. Sie sagt, warum eine
+Entscheidung so ausfiel, und nicht, ob sie richtig war. Sie ist lesend und
+ohne Anmeldung erreichbar: sie aendert nichts, und eine Diagnose, die man
+erst freischalten muss, wird nicht benutzt.
+
+Validierung: 161 Dateien / 1671 Tests bestanden (24 davon neu), Lint und
+Typpruefung sauber, Web-Build erfolgreich mit neuer Route `/coin`. Keine neue
+Migration — die Seite liest nur.
