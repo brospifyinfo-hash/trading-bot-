@@ -134,6 +134,13 @@
       "when": 1791010000000,
       "tag": "0019_universe_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791020000000,
+      "tag": "0020_copy_wallets",
+      "breakpoints": true
     }
   ]
 }

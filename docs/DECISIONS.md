@@ -6668,3 +6668,97 @@ Validierung: 15 neue Tests (12 in `offensive-gates.test.ts`, 3 in
 `feature-build.test.ts`), alle bestanden; Lint und Typpruefung sauber,
 Web-Build erfolgreich. Keine Migration. Die Gesamtzahl der Suite steht in
 §153, wo sie gemessen wurde.
+
+## §153 — Vorbild-Wallets: die Liste zuerst, der Kopierer getrennt (2026-10-04)
+
+Der Betreiber will Wallet-Adressen einkleben und deren Trades nachbilden
+lassen, mehrere auf einmal. Das besteht aus zwei Stuecken mit sehr
+unterschiedlichem Risiko, und sie werden deshalb getrennt geliefert:
+
+1. **Die Liste** — Tabelle, Pflege, Anzeige. Haengt an nichts Externem und ist
+   mit diesem Eintrag fertig.
+2. **Der Kopierer** — liest die Swaps einer Wallet von der Kette. Braucht
+   `SOLANA_RPC_URL` und einen an einer echten Antwort geprueften Vertrag fuer
+   `getSignaturesForAddress`/`getTransaction`. Aus dieser Umgebung ist kein
+   Solana-RPC erreichbar, der Vertrag ist also nicht belegbar. Nach der Regel
+   dieses Projekts (siehe `solana/mint.ts`, `SCHEMA_UNVERIFIED`) wird er
+   gebaut und lehnt bis zum Beleg jede Antwort ab — erfunden wird er nicht.
+
+### Das Wichtigste an diesem Eintrag ist die Leermeldung
+
+Das Panel sagt ausdruecklich `LISTE WIRD NOCH NICHT GELESEN`. Eine gepflegte
+Liste, von der niemand kopiert, sieht genauso aus wie eine, die funktioniert —
+und dieses Projekt hat diesen Fehler viermal gemacht (§140, §144, §145, §150).
+Es ist die billigste Stelle, ihn ein fuenftes Mal zu machen, und die teuerste,
+ihn zu uebersehen: der Betreiber haette wochenlang auf Trades gewartet, die
+nie kommen koennen.
+
+### Einkleben verzeiht, raten tut es nicht
+
+Adressen kommen in Rudeln und unsauber: eine pro Zeile, fuenf durch Kommas,
+dazwischen ein Solscan-Link. `parseWalletList` nimmt das alles. Zwei
+Entscheidungen darin sind nicht beliebig:
+
+**Die naheliegende Regel „erstes Wort ist die Adresse, der Rest ist der Name"
+ist eine Falle.** Wer fuenf Adressen in eine Zeile klebt, haette vier davon als
+Namen der ersten gespeichert — und es nicht gemerkt, weil die Liste danach
+plausibel aussieht. Ein Name geht deshalb nur in der ausdruecklichen Form
+`Adresse = Name`; jede andere Zeile ist eine Liste von Adressen.
+
+**Ein Link mit zwei Adressen wird abgewiesen, nicht geraten.** Bei genau einer
+Adresse im Pfad ist sie gemeint. Bei zwei waere jede Wahl ein Muenzwurf, und
+der Preis eines falsch uebernommenen Vorbilds ist, dass still die Trades eines
+Fremden kopiert werden.
+
+Was nicht lesbar war, steht WOERTLICH in der Rueckmeldung — nicht als
+„n Fehler". Eine Adresse mit einem Tippfehler liegt sonst in der Liste und
+sieht monatelang aus wie eine Wallet, die einfach nicht handelt. Das haelt man
+dann fuer eine Eigenschaft der Wallet.
+
+### Was die Tabelle traegt und warum
+
+- **Base58 und Laenge als CHECK in der Datenbank**, nicht nur im Formular. Ein
+  Formular ist eine Anzeigeentscheidung; wer die Anfrage direkt stellt, umgeht
+  es.
+- **`active` statt loeschen.** Eine Wallet, von der kopiert wurde, hat
+  Positionen erzeugt. Hart geloescht zeigen die auf nichts, und „von wem kam
+  dieser Trade" ist nicht mehr beantwortbar. `removeCopyWallet` entfernt
+  deshalb nur, was noch nie etwas erzeugt hat, und sagt sonst `HAT_TRADES`.
+  Zum Aufhoeren genuegt `active = false`.
+- **`last_checked_at` UND `last_signature`.** Der Zeitstempel allein genuegt
+  nicht: mehrere Transaktionen teilen einen Slot, und ein Wiederanlauf wuerde
+  sie doppelt kopieren. Der Wasserstand laeuft ausserdem nur vorwaerts, und
+  die Pruefung steht im SQL, damit sie auch bei zwei gleichzeitigen Laeufen
+  haelt.
+- **`null` heisst „noch nie gelesen" und loest KEINE Historie aus.** Eine
+  Wallet mit zwei Jahren Geschichte haette beim Hinzufuegen hunderte
+  Positionen auf einmal erzeugt, alle mit Preisen von damals. Das waere
+  Look-Ahead in Reinform. Kopiert wird ab dem Hinzufuegen.
+- **Obergrenze 50.** Mehr Vorbilder heissen nicht mehr Erkenntnis, und die
+  Liste steht ohne Passwort offen, wenn der Betreiber das so eingestellt hat.
+
+### Die drei Saetze, die im Panel stehen muessen
+
+Kopieren hat Eigenschaften, die man beim Einrichten gern annimmt und beim
+Auswerten teuer bezahlt. Sie stehen deshalb in der Oberflaeche und nicht nur
+hier:
+
+1. **Wer kopiert, ist zweiter.** Uebernommen wird ein Kauf, NACHDEM er auf der
+   Kette steht — also spaeter und zu einem anderen Preis. Das ist keine
+   Schwaeche der Umsetzung, sondern die Natur der Sache.
+2. **Verkaeufe folgen den eigenen Ausstiegsregeln**, nicht denen des Vorbilds.
+   Ein Vorbild zu kopieren, das besser aussteigt als einsteigt, bringt sonst
+   die schlechtere Haelfte.
+3. **Kopierte Trades werden getrennt ausgewertet.** Sonst stuende spaeter in
+   einer einzigen Zahl, wie gut „der Bot" ist, und niemand koennte mehr sagen,
+   welcher Teil davon eine fremde Entscheidung war. Dieselbe
+   Kategorientrennung, auf der das ganze System ruht.
+
+Validierung: gemessen 163 Dateien / 1704 Tests bestanden, davon 18 neu fuer
+diesen Eintrag. Lint und Typpruefung sauber, Web-Build erfolgreich. Migration
+`0020_copy_wallets` angelegt und vom Test-Harness gegen echtes PostgreSQL
+ausgefuehrt — **noch nicht in der Produktionsdatenbank gefahren.**
+
+(Die Zahlen in §152 waren beim Schreiben geschaetzt und sind dort auf das
+Gemessene korrigiert. Eine geschaetzte Zahl in einer Validierungszeile ist
+genau die Sorte Angabe, die dieses Projekt nicht fuehren will.)

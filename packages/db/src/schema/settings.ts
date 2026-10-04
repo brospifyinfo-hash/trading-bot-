@@ -1,4 +1,4 @@
-import { bigint, check, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 /**
@@ -98,5 +98,70 @@ export const paperSettings = pgTable(
       "paper_settings_entry_notional",
       sql`${t.entryNotionalMinor} IS NULL OR ${t.entryNotionalMinor} > 0`,
     ),
+  ],
+);
+
+/**
+ * Die Wallets, deren Trades kopiert werden sollen.
+ *
+ * Eine eigene Tabelle und ausdruecklich keine Spalte in `paper_settings`: das
+ * ist eine Liste, keine Einstellung. Sie waechst, sie schrumpft, und jeder
+ * Eintrag traegt eigene Herkunft und eigenen Zeitpunkt — eine Liste in einem
+ * JSON-Feld haette das alles verloren und waere nicht abfragbar.
+ *
+ * ### Warum `active` und nicht loeschen
+ *
+ * Eine Wallet, die einmal kopiert wurde, hat Positionen erzeugt. Loescht man
+ * sie hart, zeigen diese Positionen auf nichts mehr, und die spaetere Frage
+ * „von wem kam dieser Trade" ist nicht mehr beantwortbar. `active = false`
+ * stoppt das Kopieren und behaelt die Zuordnung. Geloescht wird nur, was noch
+ * nie etwas erzeugt hat — und das entscheidet die Abfrage, nicht der Knopf.
+ */
+export const copyWallets = pgTable(
+  "copy_wallets",
+  {
+    /** Die Adresse selbst ist der Schluessel: dieselbe Wallet zweimal gibt es nicht. */
+    address: text("address").primaryKey(),
+    /**
+     * Freier Name, damit die Liste lesbar bleibt.
+     *
+     * `null` heisst „ohne Namen" und nicht „leer": ein Pflichtfeld haette dazu
+     * gefuehrt, dass beim Einfuegen von zwanzig Adressen zwanzig Platzhalter
+     * entstehen, die niemand pflegt.
+     */
+    label: text("label"),
+    /** Kopiert der Bot von dieser Wallet? Siehe Kommentar oben. */
+    active: boolean("active").notNull().default(true),
+    addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+    /** „dashboard" oder „umgebung" — dieselbe Unterscheidung wie in `paper_settings`. */
+    addedBy: text("added_by").notNull(),
+    /**
+     * Bis zu welchem Zeitpunkt die Trades dieser Wallet schon gelesen wurden.
+     *
+     * Der Wasserstand des Kopierers. `null` heisst „noch nie gelesen" — und
+     * dann wird ausdruecklich NICHT die ganze Historie kopiert, sondern ab
+     * jetzt begonnen. Eine Wallet mit zwei Jahren Historie haette sonst beim
+     * Hinzufuegen hunderte Positionen auf einmal erzeugt, alle mit Preisen von
+     * damals. Das waere Look-Ahead in Reinform.
+     */
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    /**
+     * Die jüngste Signatur, die verarbeitet wurde.
+     *
+     * Der Zeitstempel allein genuegt nicht: mehrere Transaktionen teilen
+     * denselben Slot, und ein Wiederanlauf wuerde sie doppelt kopieren. Die
+     * Signatur ist eindeutig.
+     */
+    lastSignature: text("last_signature"),
+    /** Wie viele Trades von dieser Wallet uebernommen wurden. Nur Anzeige. */
+    copiedCount: integer("copied_count").notNull().default(0),
+  },
+  (t) => [
+    // Base58 und Laenge in der DATENBANK, nicht nur im Formular. Eine Adresse
+    // mit einem Tippfehler ist keine Adresse, und sie wuerde hier still als
+    // „nie gehandelt" liegen, statt als Fehler aufzufallen.
+    check("copy_wallets_address_shape", sql`char_length(${t.address}) between 32 and 44`),
+    check("copy_wallets_label_length", sql`${t.label} is null or char_length(${t.label}) <= 60`),
+    check("copy_wallets_copied_count", sql`${t.copiedCount} >= 0`),
   ],
 );

@@ -14,9 +14,15 @@ import {
   isValidMaxMarketCap,
   MAX_MARKET_CAP_CEILING,
   ENTRY_NOTIONAL_MAX_MINOR,
+  MAX_COPY_WALLETS,
+  addCopyWallets,
   cancelPositionClose,
+  isValidWalletAddress,
+  parseWalletList,
+  removeCopyWallet,
   requestPositionClose,
   saveEntryScore,
+  setCopyWalletActive,
 } from "@sae/db";
 
 import { db } from "@/lib/db";
@@ -31,10 +37,13 @@ import {
 /**
  * Die schreibenden Handlungen der Oberflaeche.
  *
- * Es sind genau drei, und das ist Absicht: anmelden, abmelden, Schwelle
- * setzen. Jede weitere Schreibmoeglichkeit waere eine eigene Entscheidung.
+ * Jede einzelne ist eine eigene Entscheidung gewesen: anmelden, abmelden,
+ * Schwelle setzen, Position verkaufen, Vorbild-Wallets pflegen. Die Liste
+ * waechst nicht aus Bequemlichkeit — eine Schreibmoeglichkeit mehr ist eine
+ * Angriffsflaeche mehr, und sie steht ohne Passwort offen, wenn der Betreiber
+ * das so eingestellt hat.
  *
- * Alle drei pruefen ihre Voraussetzungen SERVERSEITIG. Ein Formular, das nur
+ * Alle pruefen ihre Voraussetzungen SERVERSEITIG. Ein Formular, das nur
  * dann angezeigt wird, wenn man angemeldet ist, ist keine Pruefung — es ist
  * eine Anzeigeentscheidung, und wer die Anfrage direkt stellt, umgeht sie.
  */
@@ -281,4 +290,98 @@ export async function positionVerkaufen(
   return zuruecknehmen
     ? "Anforderung zurueckgenommen. Die Position bleibt offen."
     : "Verkauf angefordert. Der Worker fuehrt ihn im naechsten Takt aus — mit echtem Quote, nicht mit einem geschaetzten Kurs.";
+}
+
+/**
+ * Wallets hinzufuegen, deren Trades kopiert werden sollen.
+ *
+ * Eine Eingabe, viele Adressen. Was nicht lesbar war, wird GEMELDET und nicht
+ * verschluckt: eine Adresse mit einem Tippfehler liegt sonst still in der
+ * Liste und sieht monatelang aus wie eine Wallet, die einfach nicht handelt.
+ */
+export async function walletsHinzufuegen(
+  _zustand: string | null,
+  formData: FormData,
+): Promise<string> {
+  if (!(await darfAendern())) return "Nicht angemeldet.";
+
+  const eingabe = formData.get("adressen");
+  if (typeof eingabe !== "string" || eingabe.trim().length === 0) {
+    return "Keine Adresse eingegeben.";
+  }
+  if (eingabe.length > 20_000) {
+    return "Die Eingabe ist zu lang. Bitte in kleineren Blocken einfuegen.";
+  }
+
+  const gelesen = parseWalletList(eingabe);
+  if (gelesen.gueltig.length === 0) {
+    return gelesen.ungueltig.length === 0
+      ? "Keine Adresse erkannt."
+      : `Keine gueltige Adresse erkannt. Nicht lesbar: ${gelesen.ungueltig.slice(0, 5).join(", ")}`;
+  }
+
+  const ergebnis = await addCopyWallets(db(), gelesen.gueltig, "dashboard");
+  revalidatePath("/");
+
+  const teile: string[] = [];
+  if (ergebnis.angelegt.length > 0) {
+    teile.push(`${String(ergebnis.angelegt.length)} hinzugefuegt`);
+  }
+  if (ergebnis.bekannt.length > 0) {
+    teile.push(`${String(ergebnis.bekannt.length)} waren schon drin`);
+  }
+  if (gelesen.doppelt.length > 0) {
+    teile.push(`${String(gelesen.doppelt.length)} doppelt in der Eingabe`);
+  }
+  if (gelesen.ungueltig.length > 0) {
+    teile.push(
+      `nicht lesbar: ${gelesen.ungueltig.slice(0, 5).join(", ")}${gelesen.ungueltig.length > 5 ? " …" : ""}`,
+    );
+  }
+  if (ergebnis.kind === "LIMIT_REACHED") {
+    teile.push(
+      `${String(ergebnis.abgewiesen.length)} nicht mehr aufgenommen — die Liste ist bei ${String(MAX_COPY_WALLETS)} voll`,
+    );
+  }
+  return `${teile.join(" · ")}.`;
+}
+
+/** Kopieren von einer Wallet anhalten oder wieder aufnehmen. */
+export async function walletSchalten(
+  _zustand: string | null,
+  formData: FormData,
+): Promise<string> {
+  if (!(await darfAendern())) return "Nicht angemeldet.";
+
+  const adresse = formData.get("adresse");
+  if (!isValidWalletAddress(adresse)) return "Unbekannte Adresse.";
+  const einschalten = formData.get("aktiv") === "ja";
+
+  const ok = await setCopyWalletActive(db(), adresse, einschalten);
+  revalidatePath("/");
+  if (!ok) return "Diese Wallet steht nicht in der Liste.";
+  return einschalten
+    ? "Kopieren wieder aufgenommen. Gelesen wird ab jetzt, nicht rueckwirkend."
+    : "Kopieren angehalten. Laufende Positionen bleiben offen — sie schliesst der Bot nach seinen Ausstiegsregeln oder Sie von Hand.";
+}
+
+/** Eine Wallet aus der Liste nehmen. Nur, wenn nie von ihr kopiert wurde. */
+export async function walletEntfernen(
+  _zustand: string | null,
+  formData: FormData,
+): Promise<string> {
+  if (!(await darfAendern())) return "Nicht angemeldet.";
+
+  const adresse = formData.get("adresse");
+  if (!isValidWalletAddress(adresse)) return "Unbekannte Adresse.";
+
+  const ergebnis = await removeCopyWallet(db(), adresse);
+  revalidatePath("/");
+  if (ergebnis === "ENTFERNT") return "Wallet entfernt.";
+  if (ergebnis === "NICHT_GEFUNDEN") return "Diese Wallet steht nicht in der Liste.";
+  return (
+    "Von dieser Wallet wurde schon kopiert — sie bleibt deshalb in der Liste. " +
+    "Sonst waere nicht mehr nachvollziehbar, woher die Trades kamen. " +
+    "Zum Aufhoeren genuegt „Anhalten“."
+  );
 }

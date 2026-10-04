@@ -3,7 +3,7 @@ import { PaperSniper } from "@/components/PaperSniper";
 import { PAPER_STRATEGY_ID, paperCandidate } from "@sae/config";
 import { loadPaperTrading } from "@sae/db";
 import { PaperTrading } from "@/components/PaperTrading";
-import { loadDashboardState, isRecentObservation, loadEntryScore, loadSettingsHistory, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, type Panel } from "@sae/db";
+import { loadDashboardState, isRecentObservation, loadCopyWallets, loadEntryScore, loadSettingsHistory, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, MAX_COPY_WALLETS, type Panel } from "@sae/db";
 import { darfAendern, schutzAktiv } from "@/app/actions";
 
 import { db } from "@/lib/db";
@@ -11,6 +11,7 @@ import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/r
 
 import { BotStatusBar } from "@/components/BotStatusBar";
 import { CoinLookup } from "@/components/CoinLookup";
+import { CopyWallets } from "@/components/CopyWallets";
 import { EntryScore } from "@/components/EntryScore";
 import { History } from "@/components/History";
 import { Universe } from "@/components/Universe";
@@ -173,6 +174,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
   let state: Awaited<ReturnType<typeof loadDashboardState>>;
   let schwelle: Awaited<ReturnType<typeof loadEntryScore>>;
   let verlauf: Awaited<ReturnType<typeof loadSettingsHistory>>;
+  let wallets: Awaited<ReturnType<typeof loadCopyWallets>>;
   try {
     // Modulebene statt Request-Handler: siehe lib/db.ts.
     sniper = await loadPaperSniper(db());
@@ -180,6 +182,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
     account = await loadPaperTrading({ db: db(), strategyName: PAPER_STRATEGY_ID, now: new Date() });
     schwelle = await loadEntryScore(db());
     verlauf = await loadSettingsHistory(db());
+    wallets = await loadCopyWallets(db());
   } catch (error: unknown) {
     // Der Fehler wird nur klassifiziert, nie ausgegeben: eine
     // Postgres-Fehlermeldung enthaelt die Verbindungszeichenfolge samt Passwort.
@@ -233,6 +236,15 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           max={ENTRY_SCORE_MAX}
         />
         <Universe run={state.latestDecisionRun} />
+        <CopyWallets
+          wallets={wallets}
+          aenderbar={aenderbar}
+          geschuetzt={geschuetzt}
+          max={MAX_COPY_WALLETS}
+          /* Der Kopierer existiert als Liste, aber noch nicht als Lauf. Das
+             darf die Oberflaeche nicht verschweigen — siehe §140 und §144. */
+          kopiererLaeuft={false}
+        />
         <CoinLookup />
         <History data={account} settings={verlauf} />
         <PaperSniper data={sniper} />

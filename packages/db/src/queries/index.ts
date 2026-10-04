@@ -10,3 +10,4 @@ export * from "./history";
 export * from "./close-request";
 export * from "./universe";
 export * from "./explain-coin";
+export * from "./copy-wallets";
