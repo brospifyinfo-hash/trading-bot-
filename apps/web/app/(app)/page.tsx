@@ -8,6 +8,7 @@ import { darfAendern, schutzAktiv } from "@/app/actions";
 
 import { db } from "@/lib/db";
 import { checkWebEnv, classifyDatabaseFailure, type WebReadiness } from "@/lib/readiness";
+import { scrubFehlertext } from "@/lib/scrub";
 
 import { BotStatusBar } from "@/components/BotStatusBar";
 import { CoinLookup } from "@/components/CoinLookup";
@@ -583,29 +584,28 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
               </table>
             </div>
 
-            {aenderbar && state.deadLetters.length > 0 ? (
+            {state.deadLetters.length > 0 && (
               <>
                 <h3>Die jüngsten Fehlertexte</h3>
                 <ul className="failures">
                   {state.deadLetters.map((j) => (
                     <li key={`${j.kind}-${j.enqueuedAt.toISOString()}`}>
                       <b>{j.kind}</b> nach {j.attempts} Versuchen:{" "}
-                      {j.lastError ?? "ohne Begruendung"}
+                      {scrubFehlertext(j.lastError) ?? "ohne lesbare Begründung"}
                     </li>
                   ))}
                 </ul>
+                <p className="hint">
+                  <strong>Diese Texte sind bereinigt, nicht garantiert sauber.</strong>{" "}
+                  Zugangsdaten in Verbindungszeichenfolgen, benannte Schlüssel, JWTs und
+                  lange Hex-Ketten werden vor der Anzeige entfernt. Das ist eine
+                  Verbotsliste und kennt nur, was ihr beigebracht wurde — anders als die
+                  Logredaktion, die mit einer Erlaubnisliste arbeitet. Für einen Freitext
+                  gibt es keine Erlaubnisliste.
+                  {!geschuetzt &&
+                    " Und weil kein Passwort hinterlegt ist, liest das hier jeder, der die Adresse kennt."}
+                </p>
               </>
-            ) : (
-              <p className="hint">
-                <strong>Die Fehlertexte stehen hier nicht.</strong>{" "}
-                {geschuetzt
-                  ? "Zum Lesen anmelden."
-                  : "Es ist kein Passwort hinterlegt — diese Seite ist damit für jeden lesbar, " +
-                    "der die Adresse kennt. Ein Fehlertext kommt aus einer Ausnahme und kann " +
-                    "die Verbindungszeichenfolge samt Passwort enthalten; ihn offen anzuzeigen " +
-                    "wäre der teuerste Komfort dieses Dashboards. Die Klassen oben sind eigene " +
-                    "Etiketten und deshalb unbedenklich."}
-              </p>
             )}
 
             <p className="hint">

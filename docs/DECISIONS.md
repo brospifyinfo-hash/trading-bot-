@@ -6815,16 +6815,39 @@ Dabei ist eine Sicherheitsfrage aufgefallen, die vorher niemand gestellt hat:
 das Panel zeigte `last_error` **roh** an. Das ist Freitext aus einer Ausnahme,
 und eine Postgres-Meldung enthaelt die Verbindungszeichenfolge samt Passwort.
 Die Seite laeuft auf ausdruecklichen Wunsch des Betreibers OHNE Anmeldung —
-jeder, der die Adresse kennt, liest mit. Die Fehlertexte stehen deshalb jetzt
-nur noch mit Anmeldung; die Auszaehlung daneben ist fuer alle lesbar, weil
-`kind` und Fehlerklasse geschlossene Aufzaehlungen aus eigenem Code sind. Die
-Seite sagt auch, warum sie den Text zurueckhaelt, statt ihn stillschweigend
-weggelassen zu haben.
+jeder, der die Adresse kennt, liest mit.
+
+**Mein erster Versuch war falsch, und ich habe ihn im selben Zug korrigiert.**
+Ich habe die Texte hinter `darfAendern()` geschoben und das als Schutz
+beschrieben. `darfAendern()` ist aber genau dann `true`, wenn KEIN Passwort
+gesetzt ist — in der Konfiguration des Betreibers also immer. Der Schutz tat
+nichts, und die Beschreibung behauptete ihn trotzdem. Mit gesetztem Passwort
+waere das Gegenteil passiert: der Betreiber haette die Texte gar nicht mehr
+gesehen, ausgerechnet bei 6688 gescheiterten Auftraegen ohne lesbare Ursache.
+
+Richtig ist Bereinigen statt Verstecken. `scrubFehlertext` entfernt
+Zugangsdaten aus Verbindungszeichenfolgen, benannte Schluessel (auch mit
+Vorsilbe wie `DB_PASSWORD` oder `X-API-KEY`), Schema-Woerter wie `Bearer`
+samt folgendem Wert, JWTs und lange Hex-Ketten — und laesst stehen, was die
+Diagnose braucht: Hostname, Fehlercode, Mint-Adresse. Der Text ist damit fuer
+alle lesbar.
+
+Drei der Muster hat erst je ein Test aufgedeckt: `\b` vor `password` greift
+bei `DB_PASSWORD` nicht, weil `_` ein Wortzeichen ist; ein einfacher
+Anfuehrungsstrich muss mitgefangen und hinten wieder verlangt werden; und ohne
+uebersprungenes `Bearer` gilt das Schema-Wort als Wert und das Geheimnis
+bleibt stehen. Eine Verbotsliste ohne Tests ist eine Vermutung.
+
+Die Oberflaeche sagt ausdruecklich, dass die Texte **bereinigt und nicht
+garantiert sauber** sind. Die Logredaktion dieses Projekts arbeitet mit einer
+ERLAUBNISLISTE, und das ist der bessere Ansatz; fuer einen Freitext gibt es
+aber keine Liste zulaessiger Fehlermeldungen. Eine Zusicherung, die ich nicht
+halten kann, waere schlimmer als der Hinweis auf die Luecke.
 
 Ein Fund am Rande, und ein erfreulicher: `job_queue_dead_has_reason` verlangt
 in der DATENBANK, dass ein toter Auftrag eine Begruendung traegt. Alle 6688
 Zeilen haben also einen Grund. Die Frage war nie, ob er da ist, sondern wer
 ihn sehen darf.
 
-Validierung: gemessen 164 Dateien / 1709 Tests bestanden, davon 5 neu. Lint
+Validierung: gemessen 165 Dateien / 1716 Tests bestanden, davon 12 neu. Lint
 und Typpruefung sauber, Web-Build erfolgreich. Keine Migration.
