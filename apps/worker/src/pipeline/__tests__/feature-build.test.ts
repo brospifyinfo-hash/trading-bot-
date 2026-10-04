@@ -429,3 +429,111 @@ it("uses stored RugCheck holder counts without borrowing future reports", async 
   const unchanged = await buildFeatureVector({ pit: reader(), tokenId: asTokenId(isolatedId), asOf: T0, firstSeenAt: null });
   expect(unchanged?.holder.holders).toMatchObject({ kind: "OBSERVED", value: 1234 });
 });
+
+/**
+ * Die Ausfuehrungsfelder, wenn die Marktdatenquelle den Lauf gewonnen hat.
+ *
+ * Gespeichert wird je Auffrischung nur EIN Snapshot, von genau einem Anbieter.
+ * Preiseinfluss und Ausstiegsfaehigkeit kennt aber nur ein Router — eine
+ * Marktdatenquelle schreibt dort `null`. Gewann sie den Lauf, standen die
+ * beiden Felder auf `null`, obwohl der Router sie Sekunden vorher gemessen und
+ * gespeichert hatte.
+ *
+ * Im vorsichtigen Modus ist das ein Ausschluss. Der Bot hat also Token wegen
+ * fehlender Daten abgelehnt, die er selbst erhoben hatte — und im Log stand
+ * `exitProbe: OK=5` neben `execution_exitCapacityRatio=9`. Die beiden Zahlen
+ * widersprachen sich, und niemand hat es gesehen.
+ */
+describe("Ausfuehrungsfelder aus einem anderen Snapshot", () => {
+  const MEME2 = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R";
+
+  async function aufbau(input: {
+    readonly routerVorMs: number | null;
+    readonly marktVorMs: number;
+  }): Promise<string> {
+    const [row] = await db
+      .insert(schema.tokens)
+      .values({
+        mint: `${MEME2.slice(0, 40)}${String(Math.floor(Math.random() * 9000) + 1000)}`,
+        discoverySource: "dexscreener",
+        state: "SCREENING",
+        firstSeenAt: new Date(T0.getTime() - 3_600_000),
+      })
+      .returning({ id: schema.tokens.id });
+    const id = row!.id;
+
+    if (input.routerVorMs !== null) {
+      await db.insert(schema.tokenSnapshots).values({
+        tokenId: id,
+        observedAt: new Date(T0.getTime() - input.routerVorMs),
+        priceUsd: 0.001, liquidityUsd: 90_000, marketCapUsd: 2_000_000,
+        volume24hUsd: 50_000, buys5m: 12, sells5m: 5,
+        // Der Router hat gemessen.
+        priceImpactBps: 140, exitCapacityRatio: 4.2,
+        dataCompleteness: 0.4, sourceProviderId: "jupiter-quote", sourceTier: "PRIMARY",
+        ingestKey: `router-${id}`,
+      });
+    }
+
+    // Und danach gewinnt die Marktdatenquelle den Lauf: dieselbe Tabelle,
+    // dieselbe Spalte, aber `null`.
+    await db.insert(schema.tokenSnapshots).values({
+      tokenId: id,
+      observedAt: new Date(T0.getTime() - input.marktVorMs),
+      priceUsd: 0.001, liquidityUsd: 90_000, marketCapUsd: 2_000_000,
+      volume24hUsd: 50_000, buys5m: 12, sells5m: 5,
+      priceImpactBps: null, exitCapacityRatio: null,
+      dataCompleteness: 0.4, sourceProviderId: "dexscreener", sourceTier: "PRIMARY",
+      ingestKey: `markt-${id}`,
+    });
+    return id;
+  }
+
+  it("nimmt die Messung des Routers, mit DESSEN Quelle und DESSEN Zeitpunkt", async () => {
+    const id = await aufbau({ routerVorMs: 40_000, marktVorMs: 10_000 });
+    const v = await buildFeatureVector({
+      pit: reader(), tokenId: asTokenId(id), asOf: T0, firstSeenAt: null,
+    });
+    if (v === null) throw new Error("Vorbedingung");
+
+    expect(isPresent(v.execution.exitCapacityRatio)).toBe(true);
+    expect(isPresent(v.execution.priceImpactBps)).toBe(true);
+    if (!isPresent(v.execution.exitCapacityRatio)) throw new Error("Vorbedingung");
+    expect(v.execution.exitCapacityRatio.value).toBe(4.2);
+
+    // Das Alter ist SICHTBAR und nicht wegdefiniert: der Wert traegt den
+    // Zeitpunkt der Routermessung, nicht den des gewaehlten Snapshots.
+    expect(v.execution.exitCapacityRatio.observedAt.toISOString()).toBe(
+      new Date(T0.getTime() - 40_000).toISOString(),
+    );
+    expect(v.execution.exitCapacityRatio.source).toBe("jupiter-quote");
+
+    // Und die Kostenschaetzung rechnet mit demselben Preiseinfluss, statt ihn
+    // als „nicht erhoben" zu melden.
+    expect(isPresent(v.execution.expectedCostBps)).toBe(true);
+  });
+
+  it("nimmt sie NICHT, wenn sie zu alt ist — die Grenze ist die der Einstiegsdaten", async () => {
+    // Zehn Minuten: weit jenseits von `HARD_LIMITS.maxDataAgeMs`. Ein
+    // Preiseinfluss von vor zehn Minuten beschreibt einen anderen Pool.
+    const id = await aufbau({ routerVorMs: 600_000, marktVorMs: 10_000 });
+    const v = await buildFeatureVector({
+      pit: reader(), tokenId: asTokenId(id), asOf: T0, firstSeenAt: null,
+    });
+    if (v === null) throw new Error("Vorbedingung");
+
+    expect(isMissing(v.execution.exitCapacityRatio)).toBe(true);
+    expect(isMissing(v.execution.priceImpactBps)).toBe(true);
+  });
+
+  it("bleibt fehlend, wenn es gar keine Routermessung gibt", async () => {
+    const id = await aufbau({ routerVorMs: null, marktVorMs: 10_000 });
+    const v = await buildFeatureVector({
+      pit: reader(), tokenId: asTokenId(id), asOf: T0, firstSeenAt: null,
+    });
+    if (v === null) throw new Error("Vorbedingung");
+
+    // Kein Ersatzwert, keine 0. Fehlend mit Grund, wie jedes andere Feld.
+    expect(isMissing(v.execution.exitCapacityRatio)).toBe(true);
+  });
+});

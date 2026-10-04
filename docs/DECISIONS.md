@@ -6574,3 +6574,97 @@ erst freischalten muss, wird nicht benutzt.
 Validierung: 161 Dateien / 1671 Tests bestanden (24 davon neu), Lint und
 Typpruefung sauber, Web-Build erfolgreich mit neuer Route `/coin`. Keine neue
 Migration — die Seite liest nur.
+
+## §152 — Offensiv heisst „ohne Daten entscheiden", nicht „gegen Daten entscheiden" (2026-10-04)
+
+Der Betreiber hat zwei Vorwuerfe erhoben, die sich zu widersprechen scheinen:
+der Bot kauft nicht, und wenn er kauft, kauft er Muell. Beide sind berechtigt,
+und sie haben zusammen eine Wurzel — eine Verwechslung, die ich selbst in §146
+eingebaut habe.
+
+### Die Verwechslung
+
+Der Offensiv-Modus sollte eines leisten: nicht auf Daten warten, die FEHLEN.
+Im Profil wurde daraus auch „Daten ignorieren, die DA SIND":
+
+- `maxTop10HolderSharePct: 100` — eine Grenze von 100 % ist keine Lockerung,
+  sondern die Abschaffung des Tors. Sie laesst eine GEMESSENE
+  Halterkonzentration von 97 % durch, und das ist die Signatur eines Rugs,
+  keine Wissenslucke. Jetzt 90: laesst praktisch alles durch, was handelbar
+  ist, und haelt genau das Extrem auf.
+- Das Ausstiegstor entfiel offensiv GANZ — auch dann, wenn die Messung vorlag
+  und sagte, die Position kommt nicht wieder heraus. Jetzt dieselbe Form wie
+  das Liquiditaetstor, das es von Anfang an richtig hatte: fehlende Angabe
+  offen, gemessene Unterschreitung zu.
+
+Eine gemessene Falle offensiv zu betreten bringt keinen einzigen Trade mehr,
+den man haben will. Beide Aenderungen kosten heute uebrigens NULL Trades:
+beide Felder sind derzeit auf allen Token ungemessen, das Tor greift also
+ohnehin nicht. Sie wirken erst, wenn die Daten kommen — und dann genau auf die
+Pools, die man nicht haben will. Das ist der ganze Punkt.
+
+Der Offensiv-Modus hatte bis hierher **keinen einzigen Test**, und er ist der,
+in dem der Betreiber faehrt. `offensive-gates.test.ts` nagelt die Trennlinie
+jetzt fest: Wissenslucke offen, Befund zu, und zwar Feld fuer Feld.
+
+### Der Fund, der die Ablehnungen wirklich erklaert
+
+Im Log des Betreibers standen zwei Zahlen direkt nebeneinander:
+`exitProbe: OK=5` und `execution_exitCapacityRatio=9` als fehlendes Feld. Die
+beiden widersprechen sich — die Verkaufssonde hatte gemessen, und die
+Entscheidung sah die Messung nicht.
+
+Die Ursache: je Auffrischung wird genau EIN Snapshot gespeichert, von genau
+einem Anbieter. Preiseinfluss und Ausstiegsfaehigkeit kennt aber nur ein
+Router; eine Marktdatenquelle schreibt dort `null` (zu Recht — sie rechnet
+keine Route). Gewann DexScreener den Lauf, standen beide Felder auf `null`,
+obwohl Jupiter sie Sekunden vorher gemessen und in dieselbe Tabelle
+geschrieben hatte. Im vorsichtigen Modus ist das ein Ausschluss: der Bot hat
+Token wegen fehlender Daten abgelehnt, die er selbst erhoben hatte.
+
+`buildFeatureVector` nimmt die Messung jetzt aus dem juengsten Snapshot, der
+sie wirklich hat — mit DESSEN Quelle und DESSEN Zeitpunkt, das Alter bleibt
+also sichtbar und wird nicht wegdefiniert. Die Frist ist
+`HARD_LIMITS.maxDataAgeMs` und ausdruecklich keine neue Zahl: genau so alt
+darf ein Datenpunkt fuer eine Einstiegsentscheidung ueberhaupt sein.
+
+Erlaubt ist das, weil beides PUNKTMESSUNGEN sind. Beim Momentum bleibt es
+verboten, und die Datei sagt auch warum: eine Differenz zwischen zwei
+Anbietern misst auch den Unterschied der Anbieter. Dieselbe Unterscheidung
+wendet die Datei bereits auf `holders` an — der Fall ist also kein Sonderweg,
+sondern die vorhandene Regel auf zwei weitere Felder.
+
+Keine Anbieterliste im Code: ein Snapshot mit einem Wert in einem Router-Feld
+KANN nur von einem Router stammen, weil die Marktdatenquelle dort `null`
+schreibt. Eine Liste von Anbieternamen waere dasselbe Wissen, nur verderblich.
+
+### Was NICHT behoben ist, und die wichtigste Zahl dieses Eintrags
+
+`token_security` wird im Betrieb von niemandem befuellt. Der Kommentar steht
+seit Monaten in `feature-build.ts`: „Heute der Regelfall." Der Grund ist eine
+fehlende Umgebungsvariable, nicht fehlender Code — `enrichSecurity` ist
+gebaut, verdrahtet und getestet, und gibt `NOT_CONFIGURED` zurueck, solange
+`RUGCHECK_BASE_URL` leer ist. Der Endpunkt ist gegen zwei echte Antworten
+geprueft (`docs/providers/rugcheck.md`, 2026-09-10) und braucht keinen
+Schluessel.
+
+Das ist die eigentliche Antwort auf beide Vorwuerfe des Betreibers:
+
+- **Vorsichtig** fehlen damit vier der dreizehn Pflichtfelder — jeder Token
+  wird abgelehnt. Null Einstiege.
+- **Offensiv** werden die vier uebergangen — gekauft wird ohne jede
+  Rug-Pruefung. Einstiege in Muell.
+
+Eine Variable, zwei Symptome, die aussehen wie zwei getrennte Fehler.
+
+Nebenbefund: `minSecurityScore` und `minMomentumScore` stehen im Schema und in
+beiden Profilen, werden aber von KEINEM Tor gelesen. Im vorsichtigen Modus
+behauptet `minSecurityScore: 50` einen Schutz, den es nicht gibt. Nicht in
+diesem Eintrag behoben, weil ein neues Tor den vorsichtigen Modus noch
+strenger machen wuerde — das Gegenteil der Richtung, in die der Betreiber
+will. Festgehalten, damit es nicht als Schutz gelesen wird.
+
+Validierung: 15 neue Tests (12 in `offensive-gates.test.ts`, 3 in
+`feature-build.test.ts`), alle bestanden; Lint und Typpruefung sauber,
+Web-Build erfolgreich. Keine Migration. Die Gesamtzahl der Suite steht in
+§153, wo sie gemessen wurde.

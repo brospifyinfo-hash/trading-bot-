@@ -2,6 +2,7 @@ import { missing, observed, providerId, type Maybe, type ProviderId, type TokenI
 import type { PitReader, PitSecurity, PitSnapshot } from "@sae/db";
 import type { FeatureVector } from "@sae/scoring";
 import { bps, eur } from "@sae/core";
+import { HARD_LIMITS } from "@sae/config";
 import { DEFAULT_FEES, DEFAULT_LATENCY, estimateExecutionCosts } from "@sae/simulation";
 
 import { PAPER_NOTIONAL } from "./opportunity-pipeline";
@@ -53,6 +54,28 @@ const WINDOW_1H_MS = 60 * 60 * 1_000;
  * Prozentzahl gehoerte zu einem anderen Zeitraum als ihr Name sagt.
  */
 const WINDOW_TOLERANCE_MS = 90 * 1_000;
+
+/**
+ * Wie alt eine Ausfuehrungsmessung aus einem ANDEREN Snapshot sein darf.
+ *
+ * Preiseinfluss und Ausstiegsfaehigkeit kennt nur, wer eine Route rechnet —
+ * eine Marktdatenquelle schreibt dort `null`. Gespeichert wird aber je
+ * Auffrischung nur EIN Snapshot, von genau einem Anbieter. Gewann in diesem
+ * Lauf die Marktdatenquelle, standen die beiden Felder auf `null`, obwohl der
+ * Router sie Sekunden vorher gemessen und gespeichert hatte. Im vorsichtigen
+ * Modus ist das ein Ausschluss — der Bot lehnte also Token wegen fehlender
+ * Daten ab, die er selbst erhoben hatte.
+ *
+ * Die Grenze ist `HARD_LIMITS.maxDataAgeMs` und ausdruecklich keine neue Zahl:
+ * genau so alt darf ein Datenpunkt fuer eine Einstiegsentscheidung ueberhaupt
+ * sein. Die Messung behaelt dabei IHRE Quelle und IHREN Zeitpunkt, das Alter
+ * ist also sichtbar und nicht wegdefiniert.
+ *
+ * Erlaubt ist das hier, weil beides PUNKTMESSUNGEN sind. Beim Momentum bleibt
+ * es verboten (siehe `priceHistory`): eine Differenz zwischen zwei Anbietern
+ * misst auch den Unterschied der Anbieter.
+ */
+const EXECUTION_FALLBACK_MAX_AGE_MS = HARD_LIMITS.maxDataAgeMs;
 
 /**
  * Wie weit zurueck die Historie geladen wird.
@@ -125,6 +148,16 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
   const holdersAnHourAgo = at(history.filter((s) => s.holders !== null &&
     s.sourceProviderId === latest.sourceProviderId), asOf.getTime() - WINDOW_1H_MS);
 
+  // Die Ausfuehrungsfelder duerfen aus einem anderen, nahe gelegenen Snapshot
+  // kommen — siehe `EXECUTION_FALLBACK_MAX_AGE_MS`. Steht der Wert schon im
+  // gewaehlten Snapshot, wird nichts gesucht.
+  const ausstiegQuelle = latest.exitCapacityRatio !== null
+    ? latest
+    : juengsteMessung(history, asOf, (s) => s.exitCapacityRatio);
+  const impactQuelle = latest.priceImpactBps !== null
+    ? latest
+    : juengsteMessung(history, asOf, (s) => s.priceImpactBps);
+
   return {
     tokenId: input.tokenId,
     asOf,
@@ -164,14 +197,14 @@ export async function buildFeatureVector(input: FeatureBuildInput): Promise<Feat
       largestClusterSharePct: notCollected(),
     },
     execution: {
-      expectedCostBps: expectedCostBps(latest),
+      expectedCostBps: expectedCostBps(impactQuelle ?? latest),
       // Gemessen mit einer zweiten Router-Anfrage in der Verkaufsrichtung
       // (`measureExitCapacity`). Vorher stand hier `notCollected()`, mit dem
       // Hinweis, dass die Pool-Reserve fehlt — richtig, aber folgenschwer: die
       // Ausstiegsfaehigkeit ist ein HARTES Tor, und ohne sie wurde JEDER Token
       // mit `DATA_INCOMPLETE` abgelehnt, gleich wie gut er war (§119).
-      exitCapacityRatio: of(latest, latest.exitCapacityRatio),
-      priceImpactBps: of(latest, latest.priceImpactBps),
+      exitCapacityRatio: of(ausstiegQuelle ?? latest, (ausstiegQuelle ?? latest).exitCapacityRatio),
+      priceImpactBps: of(impactQuelle ?? latest, (impactQuelle ?? latest).priceImpactBps),
     },
     pending: {
       smartMoneyBuyers: notCollected(),
@@ -216,6 +249,32 @@ function securityFeatures(security: PitSecurity | null, asOf: Date): FeatureVect
     topHolderSharePct: of(security.topHolderSharePct),
     riskLevel: of(security.riskLevel),
   };
+}
+
+/**
+ * Der juengste Snapshot, in dem dieses Feld wirklich gemessen wurde.
+ *
+ * Ohne Anbieterliste: ein Snapshot mit einem Wert in einem Router-Feld KANN
+ * nur von einem Router stammen, weil die Marktdatenquelle dort `null`
+ * schreibt. Eine Liste von Anbieternamen waere dasselbe Wissen, nur
+ * verderblich.
+ *
+ * `null`, wenn es keine solche Messung innerhalb der Frist gibt. Dann bleibt
+ * das Feld fehlend — mit Grund, wie jedes andere.
+ */
+function juengsteMessung(
+  history: readonly PitSnapshot[],
+  asOf: Date,
+  feld: (s: PitSnapshot) => number | null,
+): PitSnapshot | null {
+  let best: PitSnapshot | null = null;
+  for (const s of history) {
+    if (feld(s) === null) continue;
+    if (s.observedAt > asOf) continue;
+    if (asOf.getTime() - s.observedAt.getTime() > EXECUTION_FALLBACK_MAX_AGE_MS) continue;
+    if (best === null || s.observedAt > best.observedAt) best = s;
+  }
+  return best;
 }
 
 /**

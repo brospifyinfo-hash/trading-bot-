@@ -165,7 +165,14 @@ export function paperCandidate(
               minSecurityScore: 0,
               minMomentumScore: 0,
               minLiquidityUsd: 1,
-              maxTop10HolderSharePct: 100,
+              // NICHT 100. Eine Grenze von 100 % ist keine Lockerung, sondern
+              // die Abschaffung des Tors: sie laesst eine GEMESSENE
+              // Halterkonzentration von 97 % durch, und das ist die Signatur
+              // eines Rugs, keine Wissenslucke. 90 % laesst praktisch alles
+              // durch, was handelbar ist, und haelt genau das Extrem auf.
+              // Fehlt die Messung, greift das Tor ohnehin nicht — darum ging
+              // es beim Offensiv-Modus.
+              maxTop10HolderSharePct: 90,
               // Die Groesse bleibt die Groesse — auch offensiv. Siehe
               // `PaperLimits`.
               maxMarketCapUsd: limits.maxMarketCapUsd,

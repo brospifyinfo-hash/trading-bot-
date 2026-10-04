@@ -93,15 +93,18 @@ const GATES: readonly Gate[] = [
   // trotzdem eine Falle sein, weil die Position nicht wieder herausgeht.
   (ctx) => {
     const ratio = ctx.features.execution.exitCapacityRatio;
-    // Im Offensiv-Modus entfaellt dieses Tor ganz — und das ist die
-    // folgenschwerste der Lockerungen, deshalb steht sie hier ausgeschrieben:
-    // ohne Ausstiegspruefung kann eine Papier-Position in einem Pool landen,
-    // der sie nicht wieder hergibt. Auf Papier kostet das kein Geld, aber die
-    // spaetere Auswertung muss wissen, dass sie es mit solchen Positionen zu
-    // tun hat — dafuer traegt der Offensiv-Modus seine eigene
-    // Strategieversion.
-    if (ctx.parameters.entryGates.paperOffensive === true) return null;
-    if (!isPresent(ratio)) return "DATA_INCOMPLETE";
+    // Wie bei der Liquiditaet: FEHLEND und GEMESSEN ZU NIEDRIG sind zwei
+    // verschiedene Dinge, und der Offensiv-Modus oeffnet nur das erste.
+    //
+    // Vorher entfiel dieses Tor offensiv GANZ — auch dann, wenn die Messung
+    // vorlag und sagte, die Position kommt nicht wieder heraus. Das war die
+    // Verwechslung, die den Offensiv-Modus teuer gemacht hat: „warte nicht auf
+    // Daten, die fehlen" wurde zu „ignoriere Daten, die da sind". Eine
+    // gemessene Falle ist keine Wissenslucke, und sie offensiv zu betreten
+    // bringt keinen einzigen Trade mehr, den man haben will.
+    if (!isPresent(ratio)) {
+      return ctx.parameters.entryGates.paperOffensive === true ? null : "DATA_INCOMPLETE";
+    }
     return ratio.value < ctx.parameters.risk.minExitCapacityRatio
       ? "EXIT_CAPACITY_INSUFFICIENT"
       : null;
