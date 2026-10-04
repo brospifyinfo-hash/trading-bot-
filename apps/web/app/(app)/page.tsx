@@ -3,7 +3,7 @@ import { PaperSniper } from "@/components/PaperSniper";
 import { PAPER_STRATEGY_ID, paperCandidate } from "@sae/config";
 import { loadPaperTrading } from "@sae/db";
 import { PaperTrading } from "@/components/PaperTrading";
-import { loadDashboardState, isRecentObservation, loadCopyWallets, loadEntryScore, loadSettingsHistory, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, MAX_COPY_WALLETS, type Panel } from "@sae/db";
+import { loadDashboardState, isRecentObservation, loadCopyWallets, loadDeadLetterBreakdown, loadEntryScore, loadSettingsHistory, ENTRY_SCORE_MIN, ENTRY_SCORE_MAX, ENTRY_SCORE_DEFAULT, MAX_COPY_WALLETS, type Panel } from "@sae/db";
 import { darfAendern, schutzAktiv } from "@/app/actions";
 
 import { db } from "@/lib/db";
@@ -175,6 +175,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
   let schwelle: Awaited<ReturnType<typeof loadEntryScore>>;
   let verlauf: Awaited<ReturnType<typeof loadSettingsHistory>>;
   let wallets: Awaited<ReturnType<typeof loadCopyWallets>>;
+  let gescheitert: Awaited<ReturnType<typeof loadDeadLetterBreakdown>>;
   try {
     // Modulebene statt Request-Handler: siehe lib/db.ts.
     sniper = await loadPaperSniper(db());
@@ -183,6 +184,7 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
     schwelle = await loadEntryScore(db());
     verlauf = await loadSettingsHistory(db());
     wallets = await loadCopyWallets(db());
+    gescheitert = await loadDeadLetterBreakdown(db());
   } catch (error: unknown) {
     // Der Fehler wird nur klassifiziert, nie ausgegeben: eine
     // Postgres-Fehlermeldung enthaelt die Verbindungszeichenfolge samt Passwort.
@@ -241,9 +243,11 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           aenderbar={aenderbar}
           geschuetzt={geschuetzt}
           max={MAX_COPY_WALLETS}
-          /* Der Kopierer existiert als Liste, aber noch nicht als Lauf. Das
-             darf die Oberflaeche nicht verschweigen — siehe §140 und §144. */
-          kopiererLaeuft={false}
+          /* Eine Eigenschaft DIESER Programmversion, kein Messwert: der
+             Kopierer ist noch nicht gebaut. Beim Einbau wird daraus `true`,
+             und ab dann entscheidet `lastCheckedAt` aus der Datenbank, was
+             die Meldung sagt — nicht diese Zeile. */
+          kopiererGebaut={false}
         />
         <CoinLookup />
         <History data={account} settings={verlauf} />
@@ -542,16 +546,74 @@ export default async function DashboardPage(): Promise<React.ReactNode> {
           )}
         </section>
 
-        {state.deadLetters.length > 0 && (
-          <section className="panel">
-            <h2>Dead Letters</h2>
-            <ul className="failures">
-              {state.deadLetters.map((j) => (
-                <li key={`${j.kind}-${j.enqueuedAt.toISOString()}`}>
-                  <b>{j.kind}</b> nach {j.attempts} Versuchen: {j.lastError ?? "ohne Begruendung"}
-                </li>
-              ))}
-            </ul>
+        {gescheitert.gesamt > 0 && (
+          <section className="panel" data-tone="alarm">
+            <h2>Endgültig gescheiterte Aufträge</h2>
+            <p>
+              <strong>{gescheitert.gesamt.toLocaleString("de-DE")}</strong> Aufträge haben
+              alle Versuche aufgebraucht und werden nicht wiederholt. Bisher stand hier nur
+              diese Zahl — eine Warnung, mit der sich nichts anfangen ließ. Jetzt steht
+              daneben, welcher Auftrag und welche Fehlerklasse.
+            </p>
+            <div className="paper-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Anzahl</th>
+                    <th>Auftrag</th>
+                    <th>Fehlerklasse</th>
+                    <th>Zeitraum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gescheitert.gruppen.map((g) => (
+                    <tr key={`${g.kind}-${g.failureClass}`}>
+                      <td>
+                        <strong>{g.anzahl.toLocaleString("de-DE")}</strong>
+                      </td>
+                      <td className="paper-mint">{g.kind}</td>
+                      <td className="status">{g.failureClass}</td>
+                      <td>
+                        {g.aeltester.toISOString()}
+                        <small>bis {g.neuester.toISOString()}</small>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {aenderbar && state.deadLetters.length > 0 ? (
+              <>
+                <h3>Die jüngsten Fehlertexte</h3>
+                <ul className="failures">
+                  {state.deadLetters.map((j) => (
+                    <li key={`${j.kind}-${j.enqueuedAt.toISOString()}`}>
+                      <b>{j.kind}</b> nach {j.attempts} Versuchen:{" "}
+                      {j.lastError ?? "ohne Begruendung"}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="hint">
+                <strong>Die Fehlertexte stehen hier nicht.</strong>{" "}
+                {geschuetzt
+                  ? "Zum Lesen anmelden."
+                  : "Es ist kein Passwort hinterlegt — diese Seite ist damit für jeden lesbar, " +
+                    "der die Adresse kennt. Ein Fehlertext kommt aus einer Ausnahme und kann " +
+                    "die Verbindungszeichenfolge samt Passwort enthalten; ihn offen anzuzeigen " +
+                    "wäre der teuerste Komfort dieses Dashboards. Die Klassen oben sind eigene " +
+                    "Etiketten und deshalb unbedenklich."}
+              </p>
+            )}
+
+            <p className="hint">
+              Eine große Zahl heißt nicht automatisch Datenverlust: gescheiterte Aufträge
+              haben keine Entscheidung und keine Position erzeugt. Sie heißt, dass dieser
+              Auftragstyp dauerhaft nicht durchkommt — und solange er es nicht tut, fehlt
+              das, was er liefern sollte.
+            </p>
           </section>
         )}
 

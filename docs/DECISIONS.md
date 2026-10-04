@@ -6762,3 +6762,69 @@ ausgefuehrt — **noch nicht in der Produktionsdatenbank gefahren.**
 (Die Zahlen in §152 waren beim Schreiben geschaetzt und sind dort auf das
 Gemessene korrigiert. Eine geschaetzte Zahl in einer Validierungszeile ist
 genau die Sorte Angabe, die dieses Projekt nicht fuehren will.)
+
+## §154 — Die Oberflaeche hat etwas behauptet, das sie nicht gelesen hat (2026-10-04)
+
+Der Betreiber hat `SOLANA_RPC_URL` bei Railway gesetzt. Das Panel sagte danach
+weiter, die Liste werde nicht gelesen, **weil `SOLANA_RPC_URL` nicht
+hinterlegt sei**. Er hat gemeldet, dass das nicht zusammenpasst. Er hatte
+recht, und es war gleich doppelt falsch.
+
+**Erstens** war die Angabe ein Literal. `kopiererLaeuft={false}` stand als
+Konstante in der Seite, und der Text daneben nannte einen Grund, den niemand
+gemessen hatte. Eine Oberflaeche, die eine Ursache BEHAUPTET statt sie zu
+lesen, ist schlimmer als eine, die schweigt: sie schickt den Betreiber an
+einen Schalter, der nichts aendert — und genau das ist passiert.
+
+**Zweitens** haette das Lesen gar nicht funktioniert. Die Oberflaeche laeuft
+bei Vercel, die Variablen des Workers stehen bei Railway. Sie kann die
+Umgebung des Workers nicht sehen. Diese Lehre steht in diesem Projekt schon
+ausgeschrieben — an `entryThresholdSource`, mit genau derselben Begruendung:
+„Liest die Oberflaeche ihre eigene Umgebung, zeigt sie eine Zahl an, mit der
+nie jemand entschieden hat." Ich habe sie ein zweites Mal gebraucht.
+
+Der wahre Grund war ausserdem ein anderer: der Kopierer ist noch nicht gebaut.
+Daran aendert keine Variable etwas. Ich habe „ich habe es nicht gebaut" als
+„die Konfiguration fehlt" dargestellt, und das ist die unangenehmere Sorte
+Fehler, weil sie nach einer Aufgabe fuer den Betreiber aussieht.
+
+Behoben:
+
+- Die Meldung nennt jetzt den wahren Grund — der Kopierer existiert in dieser
+  Programmversion nicht — und sagt ausdruecklich, dass das **keine Frage der
+  Konfiguration** ist.
+- Der Schalter heisst `kopiererGebaut` und ist im Code als Eigenschaft der
+  Programmversion dokumentiert, nicht als Messwert.
+- Ob der Kopierer je GELAUFEN ist, wird gemessen: `lastCheckedAt` schreibt
+  ausschliesslich der Worker. Steht es nirgends, sagt das Panel „noch keine
+  Wallet gelesen" — und ausdruecklich NICHT, woran es liegt, weil es das nicht
+  wissen kann.
+
+### Und die 6688
+
+Im Bericht stand ausserdem: 6688 Eintraege im Dead Letter. Das Dashboard
+zeigte dazu `dead: 6688` und sonst nichts — eine Warnung, mit der sich nichts
+anfangen liess. Dieselbe stille Null wie §140, §144, §145 und §150, nur mit
+einer grossen Zahl statt einer kleinen.
+
+`loadDeadLetterBreakdown` zaehlt jetzt nach `kind` und `last_failure_class`
+mit Zeitraum. Aus „6688" wird „PAPER_SNIPER / UNAVAILABLE: 6688, seit dem
+…" — ein Satz, aus dem eine Handlung folgt.
+
+Dabei ist eine Sicherheitsfrage aufgefallen, die vorher niemand gestellt hat:
+das Panel zeigte `last_error` **roh** an. Das ist Freitext aus einer Ausnahme,
+und eine Postgres-Meldung enthaelt die Verbindungszeichenfolge samt Passwort.
+Die Seite laeuft auf ausdruecklichen Wunsch des Betreibers OHNE Anmeldung —
+jeder, der die Adresse kennt, liest mit. Die Fehlertexte stehen deshalb jetzt
+nur noch mit Anmeldung; die Auszaehlung daneben ist fuer alle lesbar, weil
+`kind` und Fehlerklasse geschlossene Aufzaehlungen aus eigenem Code sind. Die
+Seite sagt auch, warum sie den Text zurueckhaelt, statt ihn stillschweigend
+weggelassen zu haben.
+
+Ein Fund am Rande, und ein erfreulicher: `job_queue_dead_has_reason` verlangt
+in der DATENBANK, dass ein toter Auftrag eine Begruendung traegt. Alle 6688
+Zeilen haben also einen Grund. Die Frage war nie, ob er da ist, sondern wer
+ihn sehen darf.
+
+Validierung: gemessen 164 Dateien / 1709 Tests bestanden, davon 5 neu. Lint
+und Typpruefung sauber, Web-Build erfolgreich. Keine Migration.

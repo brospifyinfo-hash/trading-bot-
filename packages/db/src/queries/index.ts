@@ -11,3 +11,4 @@ export * from "./close-request";
 export * from "./universe";
 export * from "./explain-coin";
 export * from "./copy-wallets";
+export * from "./dead-letters";

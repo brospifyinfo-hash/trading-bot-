@@ -58,24 +58,39 @@ export function CopyWallets({
   aenderbar,
   geschuetzt,
   max,
-  kopiererLaeuft,
+  kopiererGebaut,
 }: {
   readonly wallets: readonly CopyWalletRow[];
   readonly aenderbar: boolean;
   readonly geschuetzt: boolean;
   readonly max: number;
   /**
-   * Liest der Worker diese Liste schon?
+   * Gibt es den Kopierer in DIESER Programmversion?
    *
-   * Steht das auf `false`, ist die Liste eine Liste und sonst nichts. Das MUSS
-   * hier stehen: eine gepflegte Liste, von der niemand kopiert, sieht genauso
-   * aus wie eine, die funktioniert — dieselbe stille Null wie in §140 und
-   * §144.
+   * Eine Eigenschaft des Codes, kein Messwert — und deshalb auch keine Frage
+   * der Konfiguration. Ob er je GELAUFEN ist, wird dagegen gemessen:
+   * `lastCheckedAt` schreibt der Worker, und nur er.
+   *
+   * Diese Unterscheidung stand hier zuerst falsch. Die Meldung behauptete,
+   * `SOLANA_RPC_URL` sei nicht hinterlegt — gelesen hat die Seite das nie,
+   * und sie KANN es nicht: die Oberflaeche laeuft bei Vercel, die Variablen
+   * des Workers stehen bei Railway. Genau diese Lehre steht schon an
+   * `entryThresholdSource`, und ich habe sie ein zweites Mal gebraucht. Was
+   * die Oberflaeche ueber den Worker sagt, muss aus der Datenbank kommen.
    */
-  readonly kopiererLaeuft: boolean;
+  readonly kopiererGebaut: boolean;
 }) {
   const [meldung, formAction, laeuft] = useActionState(walletsHinzufuegen, null);
   const aktive = wallets.filter((w) => w.active).length;
+  // Gemessen, nicht behauptet: den Zeitstempel schreibt ausschliesslich der
+  // Worker, wenn er die Wallet wirklich gelesen hat.
+  const zuletztGelesen = wallets.reduce<Date | null>(
+    (spaetester, w) =>
+      w.lastCheckedAt === null ? spaetester
+        : spaetester === null || w.lastCheckedAt > spaetester ? w.lastCheckedAt
+          : spaetester,
+    null,
+  );
 
   return (
     <section className="panel">
@@ -86,17 +101,28 @@ export function CopyWallets({
         <code>Adresse = Name</code>.
       </p>
 
-      {!kopiererLaeuft && (
+      {!kopiererGebaut ? (
         <p className="placeholder" role="status">
-          <strong>LISTE WIRD NOCH NICHT GELESEN</strong>
+          <strong>DEN KOPIERER GIBT ES IN DIESER VERSION NOCH NICHT</strong>
           <br />
-          Die Liste lässt sich jetzt pflegen, aber es kopiert noch niemand von ihr. Dafür
-          fehlt der Zugang zur Kette: der Kopierer liest die Swaps einer Wallet über{" "}
-          <code>SOLANA_RPC_URL</code>, und solange die nicht hinterlegt ist, bleibt diese
-          Liste eine Liste. Das steht hier, damit eine gepflegte Liste nicht wie ein
-          laufender Kopierer aussieht.
+          Die Liste lässt sich pflegen, aber es liest sie niemand — weil der Teil, der die
+          Swaps einer Wallet von der Kette holt, noch nicht gebaut ist. Das ist{" "}
+          <strong>keine Frage der Konfiguration</strong>: daran ändert auch eine gesetzte{" "}
+          <code>SOLANA_RPC_URL</code> nichts. Sie wird gebraucht, sobald der Kopierer da
+          ist. Das steht hier, damit eine gepflegte Liste nicht wie ein laufender Kopierer
+          aussieht.
         </p>
-      )}
+      ) : zuletztGelesen === null ? (
+        <p className="placeholder" role="status">
+          <strong>NOCH KEINE WALLET GELESEN</strong>
+          <br />
+          Der Kopierer ist gebaut, hat aber noch keine einzige Wallet gelesen. Entweder
+          läuft der Worker nicht, oder ihm fehlt der Zugang zur Kette. Woran es liegt, sagt
+          diese Seite ausdrücklich NICHT: die Oberfläche läuft bei Vercel und sieht die
+          Umgebung des Workers nicht. Sie zeigt, was der Worker GETAN hat — und das ist
+          hier: nichts.
+        </p>
+      ) : null}
 
       {wallets.length === 0 ? (
         <p className="placeholder">
